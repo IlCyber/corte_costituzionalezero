@@ -1,12 +1,27 @@
 const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', parties: 'cz_parties', partyFields: 'cz_party_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', session: 'cz_session' };
 const defaultCounters = { Sentenze: 1, Ordinanze: 1, Decreti: 1, 'Documenti generali': 1 };
 const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentare', limit: 10 }, { id: 'sostituto', name: 'Sostituto', limit: 5 }], fields: [] };
+const API_URL = 'api.php';
+const LOCAL_AUTH_KEYS = { users: 'cz_local_users', registrations: 'cz_local_registration_requests', resets: 'cz_local_password_reset_requests', roles: 'cz_local_roles' };
+const PERMISSION_CATALOG = [
+  { key: 'documents', label: 'Documenti', group: 'Archivio' }, { key: 'templates', label: 'Template', group: 'Archivio' }, { key: 'odg', label: 'ODG', group: 'Archivio' },
+  { key: 'documents_pdf', label: 'Scarica PDF', group: 'Documenti' },
+  { key: 'parties', label: 'Partiti', group: 'Archivi istituzionali' }, { key: 'companies', label: 'Aziende', group: 'Archivi istituzionali' }, { key: 'parliament', label: 'Parlamento', group: 'Archivi istituzionali' },
+  { key: 'government', label: 'Governo', group: 'Archivi istituzionali' }, { key: 'composition', label: 'Composizione della Corte', group: 'Archivi istituzionali' }, { key: 'interpretations', label: 'Interpretazioni', group: 'Archivi istituzionali' },
+  { key: 'settings', label: 'Impostazioni', group: 'Configurazione' }, { key: 'users', label: 'Utenti e permessi', group: 'Amministrazione' }
+];
+const PERMISSION_ACTIONS = [['view', 'Vedere'], ['create', 'Creare'], ['edit', 'Modificare'], ['delete', 'Eliminare'], ['approve', 'Approvare'], ['download', 'Scaricare']];
 let editingDocumentId = null;
+let editingTemplateId = null;
 let editingPartyId = null;
 let editingCompanyId = null;
 let editingParliamentId = null;
 let editingMemberId = null;
 let savedEditorRange = null;
+let remoteMode = false;
+let remoteSaveTimer = null;
+let currentUser = null;
+let csrfToken = '';
 
 function normalizeParliamentSettings(settings = {}) {
   const safeSettings = settings && typeof settings === 'object' ? settings : {};
@@ -38,11 +53,30 @@ const state = {
   interpretations: readStorage(STORAGE_KEYS.interpretations, []),
   interpretationSettings: { fields: Array.isArray(readStorage(STORAGE_KEYS.interpretationSettings, {}).fields) ? readStorage(STORAGE_KEYS.interpretationSettings, {}).fields : [] }
 };
+const localAuth = {
+  users: readStorage(LOCAL_AUTH_KEYS.users, [{ id: 'local-admin', username: 'admin@localhost', displayName: 'Amministratore locale', role: 'admin', isPrimaryAdmin: true, mustChangeCredentials: true, password: 'zero2026' }]),
+  registrations: readStorage(LOCAL_AUTH_KEYS.registrations, []),
+  resets: readStorage(LOCAL_AUTH_KEYS.resets, []),
+  roles: readStorage(LOCAL_AUTH_KEYS.roles, [{ id: 'local-admin-role', name: 'Amministratore', roleKey: 'admin', isSystem: true, permissions: { '*': { view: true, create: true, edit: true, delete: true, approve: true, download: true } } }, { id: 'local-guest-role', name: 'Ospite', roleKey: 'guest', isSystem: true, permissions: { documents: { view: true } } }]),
+  logs: readStorage('cz_local_security_logs', [])
+};
+if (localAuth.users.length === 1 && localAuth.users[0].username === 'admin@localhost' && localAuth.users[0].mustChangeCredentials === undefined) {
+  localAuth.users[0].mustChangeCredentials = true;
+  localStorage.setItem(LOCAL_AUTH_KEYS.users, JSON.stringify(localAuth.users));
+}
 
 function ensureOdgCategory() {
   if (!state.categories.some(category => category.name === 'ODG')) state.categories.push({ name: 'ODG' });
   if (!Object.prototype.hasOwnProperty.call(state.counters, 'ODG')) state.counters.ODG = 1;
   writeStorage(STORAGE_KEYS.categories, state.categories);
+  writeStorage(STORAGE_KEYS.counters, state.counters);
+}
+
+function ensureDemoOdg() {
+  if (state.documents.some(document => document.category === 'ODG')) return;
+  state.documents.unshift({ id: crypto.randomUUID(), title: 'ODG di esempio - Seduta della Corte', category: 'ODG', number: nextNumber('ODG'), year: String(new Date().getFullYear()), date: today(), body: '<h2>Ordine del giorno</h2><p>Esame delle questioni iscritte alla seduta della Corte Costituzionale.</p><ol><li>Approvazione del verbale precedente.</li><li>Esame dei fascicoli iscritti.</li><li>Comunicazioni della Presidenza.</li></ol>', image: '', templateName: '', status: 'da valutare', createdAt: new Date().toISOString() });
+  advanceCounter('ODG', state.documents[0].number);
+  writeStorage(STORAGE_KEYS.documents, state.documents);
   writeStorage(STORAGE_KEYS.counters, state.counters);
 }
 
@@ -59,10 +93,155 @@ function normalizeInstitutionSettings(settings, defaults) {
 function readStorage(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
-function writeStorage(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
+function writeStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+  if (remoteMode) queueRemoteSave(permissionForStorageKey(key));
+}
+async function apiRequest(action, options = {}) {
+  let response;
+  try {
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (csrfToken && options.method === 'POST') headers['X-CSRF-Token'] = csrfToken;
+    response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
+      credentials: 'same-origin',
+      headers,
+      ...options,
+    });
+  } catch {
+    throw new Error('BACKEND_UNAVAILABLE');
+  }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) throw new Error('BACKEND_UNAVAILABLE');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.error) throw new Error(payload.error || (response.status >= 500 ? 'BACKEND_UNAVAILABLE' : 'Errore di comunicazione con il server.'));
+  return payload;
+}
+function remoteStatePayload(permission = 'documents') {
+  return { permission, state: JSON.stringify(Object.fromEntries(Object.entries(state).filter(([key]) => key !== 'session'))) };
+}
+function applyRemoteState(remoteState) {
+  if (!remoteState) return;
+  Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
+  state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
+  state.governmentSettings = normalizeInstitutionSettings(state.governmentSettings, [{ id: 'presidente', name: 'Presidente del Consiglio', limit: 1 }, { id: 'ministro', name: 'Ministro', limit: 10 }]);
+  state.compositionSettings = normalizeInstitutionSettings(state.compositionSettings, [{ id: 'presidente', name: 'Presidente della Corte', limit: 1 }, { id: 'giudice', name: 'Giudice costituzionale', limit: 15 }]);
+  state.interpretationSettings = { fields: Array.isArray(state.interpretationSettings?.fields) ? state.interpretationSettings.fields : [] };
+}
+async function saveRemoteState(permission = 'documents') {
+  await apiRequest('save_state', { method: 'POST', body: JSON.stringify(remoteStatePayload(permission)) });
+}
+function queueRemoteSave(permission = 'documents') {
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(() => {
+    saveRemoteState(permission).catch(error => console.error(error));
+  }, 250);
+}
+async function loadRemoteState() {
+  try {
+    const payload = await apiRequest('state');
+    remoteMode = true;
+    currentUser = payload.user || null;
+    csrfToken = currentUser?.csrfToken || '';
+    applyRemoteState(payload.state);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function loginRemote(username, password) {
+  const payload = await apiRequest('login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  remoteMode = true;
+  currentUser = payload.user || null;
+  csrfToken = currentUser?.csrfToken || '';
+  ensureUserManagementCard();
+  applyRemoteState(payload.state);
+  ensureOdgCategory();
+  ensureDemoOdg();
+  return payload;
+}
+function saveLocalAuth() {
+  writeStorage(LOCAL_AUTH_KEYS.users, localAuth.users);
+  writeStorage(LOCAL_AUTH_KEYS.registrations, localAuth.registrations);
+  writeStorage(LOCAL_AUTH_KEYS.resets, localAuth.resets);
+  writeStorage(LOCAL_AUTH_KEYS.roles, localAuth.roles);
+  writeStorage('cz_local_security_logs', localAuth.logs);
+}
+function localSecurityLog(eventType, severity = 'info', details = {}) {
+  localAuth.logs.unshift({ id: crypto.randomUUID(), event_type: eventType, severity, details: JSON.stringify(details), created_at: new Date().toISOString(), username: currentUser?.username || 'locale' });
+  localAuth.logs = localAuth.logs.slice(0, 200);
+  saveLocalAuth();
+}
+function localAdminData() {
+  return { users: localAuth.users.filter(user => !user.deletedAt), roles: localAuth.roles, permissions: PERMISSION_CATALOG.map((permission, index) => ({ id: index + 1, permission_key: permission.key, label: permission.label, permission_group: permission.group })), rolePermissions: [], registrations: localAuth.registrations.filter(request => request.status === 'pending'), resets: localAuth.resets.filter(request => request.status === 'pending'), logs: localAuth.logs };
+}
+function localUserPayload(user) {
+  const role = localAuth.roles.find(item => item.id === user.roleId || item.roleKey === user.role) || localAuth.roles[0];
+  return { id: user.id, username: user.username, displayName: user.displayName, role: role.name, roleId: role.id, isPrimaryAdmin: Boolean(user.isPrimaryAdmin), mustChangeCredentials: Boolean(user.mustChangeCredentials), permissions: role.permissions };
+}
+function can(permission, action = 'view') {
+  if (currentUser?.isPrimaryAdmin) return true;
+  const permissions = currentUser?.permissions || {};
+  return Boolean(permissions['*']?.[action] || permissions[permission]?.[action]);
+}
+function permissionForStorageKey(key) {
+  return { documents: 'documents', templates: 'templates', counters: 'settings', categories: 'settings', parties: 'parties', partyFields: 'parties', companies: 'companies', parliaments: 'parliament', parliamentSettings: 'parliament', governments: 'government', governmentSettings: 'government', courtCompositions: 'composition', compositionSettings: 'composition', interpretations: 'interpretations', interpretationSettings: 'interpretations' }[key] || 'documents';
+}
+function applyPermissions() {
+  const views = { dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' };
+  Object.entries(views).forEach(([view, permission]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !can(permission)); }));
+  const controls = { '#newDocumentButton': ['documents', 'create'], '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'], '#newPartyButton': ['parties', 'create'], '#newCompanyButton': ['companies', 'create'], '#newParliamentButton': ['parliament', 'create'], '#newOdgButton': ['odg', 'create'], '#newInterpretationButton': ['interpretations', 'create'] };
+  Object.entries(controls).forEach(([selector, [permission, action]]) => document.querySelectorAll(selector).forEach(control => { control.classList.toggle('d-none', !can(permission, action)); }));
+  document.querySelectorAll('[data-new-institution]').forEach(button => button.classList.toggle('d-none', !can(button.dataset.newInstitution, 'create')));
+}
+
+function ensureGuideView() {
+  const nav = document.querySelector('#mainNav .navbar-nav');
+  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
+  if (nav && settingsLink && !nav.querySelector('[data-view-link="guide"]')) {
+    const item = document.createElement('li');
+    item.className = 'nav-item';
+    item.innerHTML = '<a class="nav-link" href="#guide" data-view-link="guide">Guida</a>';
+    nav.insertBefore(item, settingsLink);
+    item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('guide'); });
+  }
+  const appContainer = document.querySelector('#appView > .container-fluid');
+  if (!document.getElementById('guideView')) appContainer.insertAdjacentHTML('beforeend', '<section id="guideView" class="app-view d-none"><div class="mb-4"><p class="eyebrow text-secondary mb-2">Uso personale</p><h1 class="display-6 fw-bold mb-2">Guida</h1><p class="text-secondary mb-0">Qui trovi solo le operazioni disponibili per il tuo profilo.</p></div><div id="guideContent" class="row g-4"></div></section>');
+}
+
+function renderGuide() {
+  const areas = [
+    ['documents', 'Documenti', 'Cerca gli atti per titolo, categoria o numero. Apri una riga per modificare un documento. Puoi creare nuovi atti solo se hai il permesso di creazione.', ['create', 'edit']],
+    ['documents_pdf', 'PDF', 'Da ogni documento puoi usare PDF / stampa oppure scaricare direttamente un file PDF, se il permesso Scarica PDF è attivo.', ['download']],
+    ['templates', 'Template', 'Usa un template per iniziare un documento precompilato. Puoi creare, modificare o eliminare template solo con i rispettivi permessi.', ['create', 'edit', 'delete']],
+    ['odg', 'ODG', 'Consulta gli ordini del giorno e il loro stato. Crea un ODG dalla relativa scheda se hai il permesso di creazione.', ['view', 'create']],
+    ['parties', 'Partiti', 'Consulta le schede dei partiti, modifica i dati e gestisci gli Statuti secondo i permessi assegnati.', ['view', 'edit']],
+    ['companies', 'Aziende', 'Consulta le aziende e i loro Regolamenti. Le modifiche dipendono dai permessi del ruolo.', ['view', 'edit']],
+    ['parliament', 'Parlamento', 'Consulta mandati e nomine parlamentari. Crea o modifica i dati solo se il ruolo lo consente.', ['view', 'create', 'edit']],
+    ['government', 'Governo', 'Consulta periodi, ruoli e componenti del Governo. Le azioni disponibili sono filtrate dal tuo ruolo.', ['view', 'create', 'edit']],
+    ['composition', 'Composizione della Corte', 'Consulta e gestisci i periodi e i componenti della Corte nei limiti dei permessi.', ['view', 'create', 'edit']],
+    ['interpretations', 'Interpretazioni', 'Leggi e gestisci le interpretazioni archiviate secondo le autorizzazioni disponibili.', ['view', 'create', 'edit']],
+    ['settings', 'Impostazioni', 'Gestisci configurazioni dell’archivio solo se hai accesso alle impostazioni.', ['view', 'edit']],
+    ['users', 'Utenti e permessi', 'Questa scheda è riservata all’amministratore principale: gestisce utenti, ruoli, permessi, richieste e log di sicurezza.', ['view', 'approve', 'edit']]
+  ];
+  const available = areas.filter(([permission]) => can(permission, 'view') || ['create', 'edit', 'delete', 'download', 'approve'].some(action => can(permission, action)));
+  document.getElementById('guideContent').innerHTML = available.map(([permission, title, description, actions]) => `<article class="col-12 col-md-6"><div class="card border-0 shadow-sm h-100"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">${escapeHtml(title)}</p><h2 class="h5">Come usarlo</h2><p class="text-secondary">${escapeHtml(description)}</p><div class="d-flex flex-wrap gap-2">${actions.filter(action => can(permission, action)).map(action => `<span class="badge text-bg-light">${escapeHtml({ view: 'Vedere', create: 'Creare', edit: 'Modificare', delete: 'Eliminare', download: 'Scaricare PDF', approve: 'Approvare' }[action])}</span>`).join('')}</div></div></div></article>`).join('') || '<div class="col-12"><div class="empty-state"><h2 class="h5">Nessuna funzione disponibile</h2><p class="text-secondary mb-0">Contatta l’amministratore principale per richiedere un’autorizzazione.</p></div></div>';
+}
+function localRequestRegistration(displayName, email, password) {
+  if (localAuth.users.some(user => user.username === email && !user.deletedAt) || localAuth.registrations.some(request => request.email === email && request.status === 'pending')) throw new Error('Esiste già una richiesta o un utente con questa mail.');
+  localAuth.registrations.push({ id: crypto.randomUUID(), email, displayName, password, status: 'pending', createdAt: new Date().toISOString() });
+  saveLocalAuth();
+  return { message: 'Richiesta locale inviata. Approvala dalla Gestione utenti.' };
+}
+function localRequestReset(email) {
+  const user = localAuth.users.find(item => item.username === email && !item.deletedAt);
+  if (user && !localAuth.resets.some(request => request.email === email && request.status === 'pending')) localAuth.resets.push({ id: crypto.randomUUID(), userId: user.id, email, status: 'pending', createdAt: new Date().toISOString() });
+  saveLocalAuth();
+  return { message: 'Se la mail è registrata, la richiesta locale è stata inoltrata all’amministratore.' };
+}
 function formatDate(value) { return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${value}T12:00:00`)); }
 function today() { return new Date().toISOString().slice(0, 10); }
 function escapeHtml(value = '') { return value.replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character])); }
+function sanitizeRichHtml(value = '') { if (window.DOMPurify) return window.DOMPurify.sanitize(value, { USE_PROFILES: { html: true }, ALLOW_DATA_ATTR: false }); const container = document.createElement('div'); container.innerHTML = value; container.querySelectorAll('script,style,iframe,object,embed,form').forEach(element => element.remove()); container.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (/^on/i.test(attribute.name) || (['href', 'src'].includes(attribute.name) && !/^(https?:|mailto:|data:image\/)/i.test(attribute.value))) element.removeAttribute(attribute.name); })); return container.innerHTML; }
 function plainText(value = '') { const container = document.createElement('div'); container.innerHTML = value; return container.textContent || ''; }
 function nextNumber(category) { const value = String(state.counters[category] ?? '1'); return /^\d+$/.test(value) && Number(value) > 0 ? value : '1'; }
 function numericValue(value) { const parsed = Number.parseInt(String(value), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
@@ -81,7 +260,7 @@ function parliamentRole(role) { return parliamentRoles().find(item => item.id ==
 function showToast(message) { document.querySelector('#appToast .toast-body').textContent = message; bootstrap.Toast.getOrCreateInstance(document.getElementById('appToast')).show(); }
 function readFileAsDataUrl(file) { return new Promise((resolve, reject) => { if (!file) return resolve(''); const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
 function categoryNames() { return [...new Set([...state.categories.map(category => category.name), ...Object.keys(state.counters), ...state.documents.map(document => document.category), ...state.templates.map(template => template.category)])].filter(Boolean).sort(); }
-function syncEditorValue(editorId, inputId) { document.getElementById(inputId).value = document.getElementById(editorId).innerHTML.trim(); }
+function syncEditorValue(editorId, inputId) { document.getElementById(inputId).value = sanitizeRichHtml(document.getElementById(editorId).innerHTML.trim()); }
 function editorFromControl(control) { return control.closest('.modal-content')?.querySelector('.rich-editor'); }
 function saveEditorSelection(editor) {
   const selection = window.getSelection();
@@ -124,7 +303,7 @@ function insertTable(editor) {
 }
 function insertImage(editor) {
   const imageUrl = prompt('Incolla l’indirizzo dell’immagine');
-  if (!imageUrl) return;
+  if (!imageUrl || !/^(https?:|data:image\/)/i.test(imageUrl.trim())) { if (imageUrl) showToast('Indirizzo immagine non consentito.'); return; }
   restoreEditorSelection(editor);
   document.execCommand('insertImage', false, imageUrl);
 }
@@ -230,7 +409,139 @@ function populateFontMenus() {
   });
 }
 
+function ensureAuthModals() {
+  if (document.getElementById('registrationRequestModal')) return;
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal fade" id="registrationRequestModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><form id="registrationRequestForm"><div class="modal-header"><h2 class="modal-title h5">Richiedi registrazione</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><p class="text-secondary small">La richiesta sarà esaminata dall'amministratore principale.</p><div id="registrationRequestAlert" class="alert d-none" role="alert"></div><div class="mb-3"><label for="registrationDisplayName" class="form-label">Nome e cognome</label><input id="registrationDisplayName" class="form-control" required maxlength="160"></div><div class="mb-3"><label for="registrationEmail" class="form-label">Indirizzo e-mail</label><input id="registrationEmail" class="form-control" type="email" required maxlength="190"></div><div><label for="registrationPassword" class="form-label">Password</label><input id="registrationPassword" class="form-control" type="password" minlength="8" required><div class="form-text">Almeno 8 caratteri.</div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Invia richiesta</button></div></form></div></div></div><div class="modal fade" id="recoveryRequestModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><form id="recoveryRequestForm"><div class="modal-header"><h2 class="modal-title h5">Recupera password</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><p class="text-secondary small">La richiesta viene inoltrata all'amministratore principale, che autorizzerà una nuova password.</p><div id="recoveryRequestAlert" class="alert d-none" role="alert"></div><label for="recoveryEmail" class="form-label">Indirizzo e-mail</label><input id="recoveryEmail" class="form-control" type="email" required maxlength="190"></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Invia richiesta</button></div></form></div></div></div>`);
+}
+
+function ensureCredentialModal() {
+  if (document.getElementById('credentialChangeModal')) return;
+  document.body.insertAdjacentHTML('beforeend', '<div class="modal fade" id="credentialChangeModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><form id="credentialChangeForm"><div class="modal-header"><h2 class="modal-title h5">Configura le tue credenziali</h2></div><div class="modal-body"><p class="text-secondary small">È il primo accesso. Sostituisci le credenziali provvisorie con una mail e una password personali.</p><div id="credentialChangeAlert" class="alert d-none" role="alert"></div><div class="mb-3"><label for="newCredentialEmail" class="form-label">La tua e-mail</label><input id="newCredentialEmail" class="form-control" type="email" maxlength="190" required></div><div class="mb-3"><label for="newCredentialPassword" class="form-label">Nuova password</label><input id="newCredentialPassword" class="form-control" type="password" minlength="8" autocomplete="new-password" required></div><div><label for="newCredentialPasswordConfirmation" class="form-label">Conferma nuova password</label><input id="newCredentialPasswordConfirmation" class="form-control" type="password" minlength="8" autocomplete="new-password" required></div></div><div class="modal-footer"><button class="btn btn-primary" type="submit">Salva credenziali</button></div></form></div></div></div>');
+}
+
+let firstAccessResolver = null;
+function requireFirstAccessCredentials(localUser = null) {
+  if (!currentUser?.mustChangeCredentials) return Promise.resolve(true);
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('credentialChangeModal'));
+  document.getElementById('newCredentialEmail').value = currentUser.username || '';
+  firstAccessResolver = { localUser, resolve: null };
+  const result = new Promise(resolve => { firstAccessResolver.resolve = resolve; });
+  modal.show();
+  return result;
+}
+
+async function saveFirstAccessCredentials(event) {
+  event.preventDefault();
+  const email = document.getElementById('newCredentialEmail').value.trim().toLowerCase();
+  const password = document.getElementById('newCredentialPassword').value;
+  const confirmation = document.getElementById('newCredentialPasswordConfirmation').value;
+  const alert = document.getElementById('credentialChangeAlert');
+  alert.classList.add('d-none');
+  if (password !== confirmation) { alert.textContent = 'Le password non coincidono.'; alert.className = 'alert alert-danger'; return; }
+  try {
+    if (remoteMode) {
+      const payload = await apiRequest('change_credentials', { method: 'POST', body: JSON.stringify({ email, password }) });
+      currentUser = payload.user;
+      csrfToken = currentUser?.csrfToken || csrfToken;
+      applyRemoteState(payload.state);
+    } else {
+      const localUser = firstAccessResolver?.localUser;
+      if (!localUser || (localAuth.users.some(user => user.username === email && user.id !== localUser.id && !user.deletedAt))) throw new Error('Questa mail è già associata a un altro utente.');
+      localUser.username = email;
+      localUser.password = password;
+      localUser.mustChangeCredentials = false;
+      currentUser = localUserPayload(localUser);
+      saveLocalAuth();
+    }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('credentialChangeModal')).hide();
+    firstAccessResolver?.resolve(true);
+    firstAccessResolver = null;
+    showToast('Credenziali personali salvate.');
+  } catch (error) { alert.textContent = error.message; alert.className = 'alert alert-danger'; }
+}
+
+function showRequestFeedback(id, message, type = 'success') {
+  const alert = document.getElementById(id);
+  alert.textContent = message;
+  alert.className = `alert alert-${type}`;
+}
+
+async function submitRegistrationRequest(event) {
+  event.preventDefault();
+  try {
+    const displayName = document.getElementById('registrationDisplayName').value.trim();
+    const email = document.getElementById('registrationEmail').value.trim().toLowerCase();
+    const password = document.getElementById('registrationPassword').value;
+    const payload = await apiRequest('request_registration', { method: 'POST', body: JSON.stringify({ displayName, email, password }) }).catch(error => { if (error.message !== 'BACKEND_UNAVAILABLE') throw error; return localRequestRegistration(displayName, email, password); });
+    showRequestFeedback('registrationRequestAlert', payload.message || 'Richiesta inviata.');
+    event.target.reset();
+  } catch (error) { localSecurityLog('registration_request_failed', 'warning', { message: error.message }); showRequestFeedback('registrationRequestAlert', error.message, 'danger'); }
+}
+
+async function submitRecoveryRequest(event) {
+  event.preventDefault();
+  try {
+    const email = document.getElementById('recoveryEmail').value.trim().toLowerCase();
+    const payload = await apiRequest('request_password_reset', { method: 'POST', body: JSON.stringify({ email }) }).catch(error => { if (error.message !== 'BACKEND_UNAVAILABLE') throw error; return localRequestReset(email); });
+    showRequestFeedback('recoveryRequestAlert', payload.message || 'Richiesta inviata.');
+  } catch (error) { localSecurityLog('password_reset_request_failed', 'warning', { message: error.message }); showRequestFeedback('recoveryRequestAlert', error.message, 'danger'); }
+}
+
+function ensureUserManagementCard() {
+  if (!currentUser?.isPrimaryAdmin || document.getElementById('userManagementCard')) return;
+  const nav = document.querySelector('#mainNav .navbar-nav');
+  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
+  if (nav && settingsLink && !nav.querySelector('[data-view-link="access"]')) { const item = document.createElement('li'); item.className = 'nav-item'; item.innerHTML = '<a class="nav-link" href="#access" data-view-link="access">Utenti e permessi</a>'; nav.insertBefore(item, settingsLink); item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('access'); }); }
+  const appContainer = document.querySelector('#appView > .container-fluid');
+  if (!document.getElementById('accessView')) appContainer.insertAdjacentHTML('beforeend', '<section id="accessView" class="app-view d-none"><div class="mb-4"><p class="eyebrow text-secondary mb-2">Amministrazione</p><h1 class="display-6 fw-bold mb-2">Utenti e permessi</h1><p class="text-secondary mb-0">Crea ruoli, assegna capacità e gestisci gli accessi.</p></div><div id="accessManagementContainer"></div></section>');
+  const accessContainer = document.getElementById('accessManagementContainer');
+  if (accessContainer) accessContainer.insertAdjacentHTML('beforeend', '<div class="card border-0 shadow-sm" id="userManagementCard"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-center gap-3 mb-3"><div><h2 class="h5 mb-1">Gestione accessi</h2><p class="text-secondary small mb-0">Approva registrazioni, autorizza recuperi e gestisci gli accessi.</p></div><button type="button" class="btn btn-outline-primary btn-sm" id="refreshUsersButton">Aggiorna</button></div><div id="userManagementContent"></div></div></div>');
+}
+
+function renderUserManagement(data) {
+  ensureUserManagementCard();
+  const content = document.getElementById('userManagementContent');
+  if (!content) return;
+  const users = data.users.map(user => `<tr><td>${escapeHtml(user.displayName)}</td><td>${escapeHtml(user.username)}</td><td><select class="form-select form-select-sm user-role-select" data-user-id="${user.id}" ${user.isPrimaryAdmin ? 'disabled' : ''}><option value="reader" ${user.role === 'reader' ? 'selected' : ''}>Lettore</option><option value="editor" ${user.role === 'editor' ? 'selected' : ''}>Redattore</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Amministratore</option></select></td><td>${user.isPrimaryAdmin ? '<span class="badge text-bg-primary">Principale</span>' : `<button type="button" class="btn btn-sm btn-outline-danger delete-user-button" data-user-id="${user.id}">Elimina</button>`}</td></tr>`).join('');
+  const registrations = data.registrations.length ? data.registrations.map(item => `<div class="border-bottom py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"><span><strong>${escapeHtml(item.display_name)}</strong><small class="d-block text-secondary">${escapeHtml(item.email)}</small></span><span class="d-flex gap-2"><select class="form-select form-select-sm registration-role" data-request-id="${item.id}" aria-label="Ruolo richiesto"><option value="reader">Lettore</option><option value="editor">Redattore</option></select><button type="button" class="btn btn-sm btn-primary approve-registration-button" data-request-id="${item.id}">Approva</button><button type="button" class="btn btn-sm btn-outline-danger reject-registration-button" data-request-id="${item.id}">Rifiuta</button></span></div>`).join('') : '<p class="text-secondary small mb-0">Nessuna richiesta di registrazione.</p>';
+  const resets = data.resets.length ? data.resets.map(item => `<div class="border-bottom py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"><span><strong>${escapeHtml(item.email)}</strong><small class="d-block text-secondary">Richiesta di recupero</small></span><span class="d-flex gap-2"><input class="form-control form-control-sm reset-password" data-request-id="${item.id}" type="password" minlength="8" placeholder="Nuova password" aria-label="Nuova password"><button type="button" class="btn btn-sm btn-primary approve-reset-button" data-request-id="${item.id}">Autorizza</button></span></div>`).join('') : '<p class="text-secondary small mb-0">Nessuna richiesta di recupero.</p>';
+  content.innerHTML = `<h3 class="h6">Utenti attivi</h3><div class="table-responsive mb-4"><table class="table align-middle"><thead><tr><th>Nome</th><th>E-mail</th><th>Ruolo</th><th>Azioni</th></tr></thead><tbody>${users}</tbody></table></div><div class="row g-4"><div class="col-12 col-xl-6"><h3 class="h6">Richieste di registrazione</h3>${registrations}</div><div class="col-12 col-xl-6"><h3 class="h6">Recuperi password</h3>${resets}</div></div>`;
+  content.querySelectorAll('.user-role-select').forEach(select => { const user = data.users.find(item => String(item.id) === select.dataset.userId); select.innerHTML = data.roles.map(role => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join(''); select.value = user?.roleId || ''; });
+  content.querySelectorAll('.registration-role').forEach(select => { select.innerHTML = data.roles.filter(role => !role.isPrimaryAdmin && !role.is_primary_admin).map(role => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join(''); });
+  const permissionGroups = [...new Set(data.permissions.map(permission => permission.permission_group))];
+  const roleCards = data.roles.map(role => { const permissions = {}; data.rolePermissions.filter(item => String(item.role_id) === String(role.id)).forEach(item => { const permission = data.permissions.find(candidate => candidate.id === item.permission_id); if (permission) permissions[permission.permission_key] = item; }); const localPermissions = role.permissions || {}; return `<div class="border rounded p-3 mb-3"><div class="d-flex justify-content-between align-items-center mb-3"><div><strong>${escapeHtml(role.name)}</strong>${role.isSystem ? '<small class="d-block text-secondary">Ruolo di sistema</small>' : ''}</div><button type="button" class="btn btn-sm btn-primary save-role-permissions" data-role-id="${role.id}" ${role.role_key === 'admin' || role.roleKey === 'admin' ? 'disabled' : ''}>Salva permessi</button></div>${permissionGroups.map(group => `<div class="mb-3"><h4 class="small fw-bold">${escapeHtml(group)}</h4><div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody>${data.permissions.filter(permission => permission.permission_group === group).map(permission => { const saved = permissions[permission.permission_key]; const local = localPermissions[permission.permission_key] || {}; return `<tr><td>${escapeHtml(permission.label)}</td>${PERMISSION_ACTIONS.map(([action, label]) => `<td><label class="small"><input type="checkbox" class="role-permission" data-role-id="${role.id}" data-permission="${permission.permission_key}" data-action="${action}" ${saved ? saved[`can_${action}`] ? 'checked' : '' : local[action] ? 'checked' : ''}> ${label}</label></td>`).join('')}</tr>`; }).join('')}</tbody></table></div></div>`).join('')}</div>`; }).join('');
+  const logs = (data.logs || []).map(log => `<tr><td class="small">${escapeHtml(new Date(log.created_at).toLocaleString('it-IT'))}</td><td><span class="badge ${log.severity === 'critical' ? 'text-bg-danger' : log.severity === 'warning' ? 'text-bg-warning' : 'text-bg-secondary'}">${escapeHtml(log.severity)}</span></td><td>${escapeHtml(log.event_type)}</td><td>${escapeHtml(log.username || 'Sistema')}</td><td class="small">${escapeHtml(typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {}))}</td></tr>`).join('');
+  content.insertAdjacentHTML('beforeend', `<hr class="my-4"><div class="d-flex justify-content-between align-items-center mb-3"><div><h3 class="h6 mb-1">Ruoli e permessi</h3><p class="text-secondary small mb-0">Ogni permesso può consentire visualizzazione, creazione, modifica, eliminazione o approvazione.</p></div><div class="input-group" style="max-width: 24rem"><input id="newRoleName" class="form-control" placeholder="Nome nuovo ruolo"><button type="button" class="btn btn-outline-primary" id="createRoleButton">Crea ruolo</button></div></div>${roleCards}<hr class="my-4"><h3 class="h6 mb-3">Log di sicurezza</h3><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Data</th><th>Gravità</th><th>Evento</th><th>Utente</th><th>Dettagli</th></tr></thead><tbody>${logs || '<tr><td colspan="5" class="text-secondary">Nessun evento registrato.</td></tr>'}</tbody></table></div>`);
+}
+
+async function refreshUserManagement() {
+  if (!currentUser?.isPrimaryAdmin) return;
+  ensureUserManagementCard();
+  try { renderUserManagement(remoteMode ? await apiRequest('admin_data') : localAdminData()); } catch (error) { document.getElementById('userManagementContent').innerHTML = `<p class="text-danger small">${escapeHtml(error.message)}</p>`; }
+}
+
+async function userManagementAction(action, body, successMessage) {
+  try {
+    if (remoteMode) await apiRequest(action, { method: 'POST', body: JSON.stringify(body) });
+    else {
+      if (action === 'create_role') { const name = body.name.trim(); if (!name || localAuth.roles.some(role => role.name.toLowerCase() === name.toLowerCase())) throw new Error('Il nome ruolo è vuoto o già esistente.'); localAuth.roles.push({ id: crypto.randomUUID(), name, roleKey: `custom_${Date.now()}`, isSystem: false, permissions: {} }); }
+      if (action === 'save_role_permissions') { const role = localAuth.roles.find(item => item.id === body.roleId); if (!role || role.roleKey === 'admin') throw new Error('Ruolo non modificabile.'); role.permissions = body.permissions; }
+      if (action === 'approve_registration') { const request = localAuth.registrations.find(item => item.id === body.requestId); const role = localAuth.roles.find(item => item.id === body.roleId) || localAuth.roles.find(item => item.roleKey === 'guest'); if (!request || !role) throw new Error('Richiesta o ruolo non trovati.'); localAuth.users.push({ id: crypto.randomUUID(), username: request.email, displayName: request.displayName, roleId: role.id, isPrimaryAdmin: false, password: request.password }); request.status = 'approved'; }
+      if (action === 'reject_registration') { const request = localAuth.registrations.find(item => item.id === body.requestId); if (request) request.status = 'rejected'; }
+      if (action === 'approve_password_reset') { const request = localAuth.resets.find(item => item.id === body.requestId); const user = localAuth.users.find(item => item.id === request?.userId); if (!request || !user || body.newPassword.length < 8) throw new Error('Inserisci una nuova password di almeno 8 caratteri.'); user.password = body.newPassword; request.status = 'approved'; }
+      if (action === 'change_user_role') { const user = localAuth.users.find(item => item.id === body.userId); const role = localAuth.roles.find(item => item.id === body.roleId); if (!user || !role || user.isPrimaryAdmin) throw new Error('Utente non modificabile.'); user.roleId = role.id; }
+      if (action === 'delete_user') { const user = localAuth.users.find(item => item.id === body.userId); if (!user || user.isPrimaryAdmin) throw new Error('Utente non eliminabile.'); user.deletedAt = new Date().toISOString(); }
+      saveLocalAuth();
+    }
+    if (!remoteMode) localSecurityLog(action, action.includes('delete') ? 'warning' : 'info', body);
+    await refreshUserManagement(); showToast(successMessage);
+  } catch (error) { showToast(error.message); }
+}
+
 function setView(view) {
+  if (currentUser?.isPrimaryAdmin) ensureUserManagementCard();
+  ensureGuideView();
+  if (view !== 'dashboard' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' }[view] || 'documents')) view = 'dashboard';
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
   document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view));
@@ -244,6 +555,9 @@ function setView(view) {
   if (view === 'interpretations') renderInterpretations();
   if (view === 'templates') renderTemplates();
   if (view === 'settings') { renderSettings(); renderInstitutionSettings('government'); renderInstitutionSettings('composition'); renderInterpretationSettings(); }
+  if (view === 'access') { ensureUserManagementCard(); refreshUserManagement(); }
+  if (view === 'guide') renderGuide();
+  applyPermissions();
 }
 
 function showEditorScreen(screenId) {
@@ -261,7 +575,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><button class="btn btn-sm btn-outline-secondary" data-print-document="${document.id}">PDF / stampa</button></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end gap-2"><button class="btn btn-sm btn-outline-secondary" data-print-document="${document.id}">PDF / stampa</button>${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -300,8 +614,21 @@ function renderOdg() {
 
 function renderTemplates() {
   const grid = document.getElementById('templateGrid');
-  grid.innerHTML = state.templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4">${template.image ? `<img src="${template.image}" alt="" class="img-fluid mb-3" style="max-height: 110px; width: 100%; object-fit: cover;">` : ''}<p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">${escapeHtml(plainText(template.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4"><button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
+  grid.innerHTML = state.templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4">${template.image ? `<img src="${template.image}" alt="" class="img-fluid mb-3" style="max-height: 110px; width: 100%; object-fit: cover;">` : ''}<p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">${escapeHtml(plainText(template.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end gap-2">${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-delete-template="${template.id}">Elimina</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
   document.getElementById('emptyTemplates').classList.toggle('d-none', state.templates.length > 0);
+}
+
+function deleteTemplate(templateId) {
+  if (!can('templates', 'delete')) { showToast('Non hai il permesso di eliminare i template.'); return; }
+  const template = state.templates.find(item => item.id === templateId);
+  if (!template || !confirm(`Eliminare il template "${template.name}"? I documenti già creati non verranno modificati.`)) return;
+  state.templates = state.templates.filter(item => item.id !== templateId);
+  writeStorage(STORAGE_KEYS.templates, state.templates);
+  refreshCategoryOptions();
+  refreshDocumentTemplateOptions();
+  renderTemplates();
+  renderDocuments();
+  showToast('Template eliminato.');
 }
 
 function renderParties() {
@@ -815,7 +1142,7 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
   document.getElementById('documentNumber').value = nextNumber(template?.category || document.getElementById('documentCategory').value);
   document.getElementById('odgStatus').value = 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = template?.body || '';
+  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(template?.body || '');
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Nuovo documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva documento';
@@ -836,7 +1163,7 @@ function openDocumentEditor(documentId) {
   document.getElementById('documentNumber').value = documentRecord.number;
   document.getElementById('odgStatus').value = documentRecord.status || 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = documentRecord.body;
+  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(documentRecord.body);
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Modifica documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva modifiche';
@@ -870,19 +1197,47 @@ async function saveTemplate(event) {
   event.preventDefault();
   syncEditorValue('templateBodyEditor', 'templateBody');
   if (!plainText(document.getElementById('templateBody').value).trim()) { showToast('Inserisci la struttura del template.'); return; }
-  const image = await readFileAsDataUrl(document.getElementById('templateImage').files[0]);
+  const existingTemplate = state.templates.find(item => item.id === editingTemplateId);
+  const uploadedImage = await readFileAsDataUrl(document.getElementById('templateImage').files[0]);
   const category = document.getElementById('templateCategory').value.trim();
-  state.templates.push({ id: crypto.randomUUID(), name: document.getElementById('templateName').value.trim(), category, body: document.getElementById('templateBody').value.trim(), image });
+  const template = { id: editingTemplateId || crypto.randomUUID(), name: document.getElementById('templateName').value.trim(), category, body: document.getElementById('templateBody').value.trim(), image: uploadedImage || existingTemplate?.image || '' };
+  if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
+  else state.templates.push(template);
   writeStorage(STORAGE_KEYS.templates, state.templates);
+  editingTemplateId = null;
   closeEditorScreen();
-  document.getElementById('templateForm').reset(); refreshCategoryOptions(); refreshDocumentTemplateOptions(); renderTemplates(); renderDocuments(); showToast('Template salvato.');
+  document.getElementById('templateForm').reset(); refreshCategoryOptions(); refreshDocumentTemplateOptions(); renderTemplates(); renderDocuments(); showToast(existingTemplate ? 'Template aggiornato.' : 'Template salvato.');
+}
+
+function openTemplateEditor(templateId = '') {
+  const template = state.templates.find(item => item.id === templateId);
+  editingTemplateId = template?.id || null;
+  document.getElementById('templateForm').reset();
+  refreshCategoryOptions();
+  document.getElementById('templateName').value = template?.name || '';
+  document.getElementById('templateCategory').value = template?.category || categoryNames()[0];
+  document.getElementById('templateBodyEditor').innerHTML = template?.body || '';
+  document.querySelector('#templateModal .modal-title').textContent = template ? 'Modifica template' : 'Nuovo template';
+  document.querySelector('#templateModal button[type="submit"]').textContent = template ? 'Salva modifiche' : 'Salva template';
+  showEditorScreen('templateModal');
 }
 
 function printDocument(id) {
   const documentRecord = state.documents.find(item => item.id === id); if (!documentRecord) return;
   const printWindow = window.open('', '_blank');
-  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:60px auto;color:#17202a}h1{font-size:28px} .meta{font-family:Arial,sans-serif;color:#68727d;border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:32px} .body{line-height:1.7} img{max-width:100%;max-height:220px;display:block;margin:20px 0}</style></head><body><div class="meta">Corte Costituzionale di Zero<br>${escapeHtml(documentCode(documentRecord))}</div><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${documentRecord.image}" alt="">` : ''}<div class="body">${documentRecord.body}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:60px auto;color:#17202a}h1{font-size:28px} .meta{font-family:Arial,sans-serif;color:#68727d;border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:32px} .body{line-height:1.7} img{max-width:100%;max-height:220px;display:block;margin:20px 0}</style></head><body><div class="meta">Corte Costituzionale di Zero<br>${escapeHtml(documentCode(documentRecord))}</div><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" alt="">` : ''}<div class="body">${sanitizeRichHtml(documentRecord.body)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
   printWindow.document.close();
+}
+
+async function downloadDocumentPdf(id) {
+  const documentRecord = state.documents.find(item => item.id === id);
+  if (!documentRecord || !can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
+  if (typeof window.html2pdf !== 'function') { showToast('La libreria PDF non è disponibile. Usa PDF / stampa.'); return; }
+  const container = document.createElement('article');
+  container.style.cssText = 'width: 180mm; padding: 16mm; background: #fff; color: #17202a; font-family: Georgia, serif; line-height: 1.6;';
+  container.innerHTML = `<div style="font-family: Arial, sans-serif; color: #68727d; border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 24px;">Corte Costituzionale di Zero<br>${escapeHtml(documentCode(documentRecord))}</div><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" style="max-width: 100%; max-height: 220px; display: block; margin: 20px 0;" alt="">` : ''}<div>${sanitizeRichHtml(documentRecord.body)}</div>`;
+  document.body.appendChild(container);
+  try { await window.html2pdf().set({ margin: 0, filename: `${documentRecord.category}-${documentRecord.number}-${documentRecord.year}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(container).save(); showToast('PDF scaricato.'); } catch (error) { showToast('Impossibile generare il PDF.'); console.error(error); } finally { container.remove(); }
 }
 
 function seedTestMandate() {
@@ -904,15 +1259,28 @@ function seedTestMandate() {
   writeStorage(STORAGE_KEYS.parliaments, state.parliaments);
 }
 
-function initialize() {
+async function initialize() {
+  await loadRemoteState();
+  ensureAuthModals();
+  ensureCredentialModal();
   ensureOdgCategory();
+  ensureDemoOdg();
   ensureInstitutionViews();
   ensureInterpretationView();
   ensureOdgView();
   bindInstitutionEvents();
   seedTestMandate();
-  document.getElementById('loginForm').addEventListener('submit', event => { event.preventDefault(); const valid = document.getElementById('username').value === 'admin' && document.getElementById('password').value === 'zero2026'; if (!valid) { const alert = document.getElementById('loginAlert'); alert.textContent = 'Credenziali non valide. Riprova.'; alert.classList.remove('d-none'); return; } localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); });
-  document.getElementById('logoutButton').addEventListener('click', () => { localStorage.removeItem(STORAGE_KEYS.session); location.reload(); });
+  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { const backendUnavailable = error.message === 'BACKEND_UNAVAILABLE'; const localUser = localAuth.users.find(user => user.username === username && user.password === password && !user.deletedAt); if (!backendUnavailable || !localUser) { alert.textContent = backendUnavailable ? 'Il server non è configurato oppure le credenziali locali non sono valide.' : (error.message || 'Credenziali non valide. Riprova.'); alert.classList.remove('d-none'); return; } currentUser = localUserPayload(localUser); ensureDemoOdg(); await requireFirstAccessCredentials(localUser); localStorage.setItem('cz_local_user', localUser.id); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } });
+  document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); await saveRemoteState(); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
+  document.getElementById('requestRegistrationButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('registrationRequestModal')).show());
+  document.getElementById('requestRecoveryButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('recoveryRequestModal')).show());
+  document.getElementById('registrationRequestForm').addEventListener('submit', submitRegistrationRequest);
+  document.getElementById('recoveryRequestForm').addEventListener('submit', submitRecoveryRequest);
+  document.getElementById('credentialChangeForm').addEventListener('submit', saveFirstAccessCredentials);
+  document.getElementById('refreshUsersButton')?.addEventListener('click', refreshUserManagement);
+  document.addEventListener('change', event => { const roleSelect = event.target.closest('.user-role-select'); if (roleSelect) userManagementAction('change_user_role', { userId: roleSelect.dataset.userId, roleId: roleSelect.value }, 'Ruolo aggiornato.'); });
+  document.addEventListener('click', event => { const createRoleButton = event.target.closest('#createRoleButton'); if (createRoleButton) userManagementAction('create_role', { name: document.getElementById('newRoleName').value }, 'Ruolo creato.'); const savePermissionsButton = event.target.closest('.save-role-permissions'); if (savePermissionsButton) { const permissions = {}; document.querySelectorAll(`.role-permission[data-role-id="${savePermissionsButton.dataset.roleId}"]`).forEach(input => { permissions[input.dataset.permission] ||= {}; permissions[input.dataset.permission][input.dataset.action] = input.checked; }); userManagementAction('save_role_permissions', { roleId: savePermissionsButton.dataset.roleId, permissions }, 'Permessi salvati.'); } });
+  document.addEventListener('click', event => { const deleteButton = event.target.closest('.delete-user-button'); if (deleteButton && confirm('Eliminare definitivamente l’accesso di questo utente?')) userManagementAction('delete_user', { userId: deleteButton.dataset.userId }, 'Utente eliminato.'); const approveRegistration = event.target.closest('.approve-registration-button'); if (approveRegistration) { const roleId = document.querySelector(`.registration-role[data-request-id="${approveRegistration.dataset.requestId}"]`).value; userManagementAction('approve_registration', { requestId: approveRegistration.dataset.requestId, roleId }, 'Registrazione autorizzata.'); } const rejectRegistration = event.target.closest('.reject-registration-button'); if (rejectRegistration) userManagementAction('reject_registration', { requestId: rejectRegistration.dataset.requestId }, 'Richiesta rifiutata.'); const approveReset = event.target.closest('.approve-reset-button'); if (approveReset) { const passwordInput = document.querySelector(`.reset-password[data-request-id="${approveReset.dataset.requestId}"]`); userManagementAction('approve_password_reset', { requestId: approveReset.dataset.requestId, newPassword: passwordInput.value }, 'Password aggiornata.'); } });
   document.querySelectorAll('[data-view-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); setView(link.dataset.viewLink); }));
   document.getElementById('newOdgButton').addEventListener('click', () => openDocumentModal('', 'ODG'));
   document.getElementById('interpretationForm').addEventListener('submit', saveInterpretation);
@@ -950,7 +1318,7 @@ function initialize() {
   const newTemplateButton = document.querySelector('[data-bs-target="#templateModal"], #newTemplateButton');
   document.querySelectorAll('[data-bs-target="#documentModal"], [data-bs-target="#templateModal"]').forEach(button => { button.removeAttribute('data-bs-toggle'); button.removeAttribute('data-bs-target'); });
   document.getElementById('newDocumentButton').addEventListener('click', () => openDocumentModal());
-  newTemplateButton?.addEventListener('click', () => { document.getElementById('templateForm').reset(); refreshCategoryOptions(); document.getElementById('templateBodyEditor').innerHTML = ''; showEditorScreen('templateModal'); });
+  newTemplateButton?.addEventListener('click', () => openTemplateEditor());
   document.getElementById('documentTemplate').addEventListener('change', event => openDocumentModal(event.target.value));
   document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); });
   document.querySelectorAll('#documentModal [data-bs-dismiss="modal"], #templateModal [data-bs-dismiss="modal"]').forEach(button => { button.removeAttribute('data-bs-dismiss'); button.addEventListener('click', closeEditorScreen); });
@@ -968,7 +1336,7 @@ function initialize() {
     };
     control.addEventListener(control.tagName === 'SELECT' || control.type === 'color' || control.dataset.editorCommand === 'fontSizePx' ? 'change' : 'click', applyCommand);
   });
-  document.addEventListener('click', event => { const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
+  document.addEventListener('click', event => { const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
   document.addEventListener('keydown', event => { const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
   document.getElementById('documentDate').value = today();
   document.querySelectorAll('#documentModal, #templateModal, #parliamentModal').forEach(element => { element.classList.remove('modal', 'fade'); element.classList.add('editor-page', 'd-none'); });
@@ -979,7 +1347,7 @@ function initialize() {
   refreshCategoryOptions();
   refreshDocumentTemplateOptions();
   populateFontMenus();
-  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') { document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); }
+  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') { if (!currentUser) { const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin); currentUser = localUser ? localUserPayload(localUser) : null; } document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); }
 }
 
 document.addEventListener('DOMContentLoaded', initialize);

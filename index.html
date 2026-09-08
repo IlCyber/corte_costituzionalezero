@@ -20,7 +20,7 @@
               <h1 class="display-5 fw-bold">Il casellario digitale, in ordine.</h1>
               <p class="lead mt-4 mb-0">Uno spazio riservato per creare, numerare e conservare gli atti della Corte.</p>
               <div class="intro-rule my-5"></div>
-              <p class="small mb-0 opacity-75">Accesso riservato agli utenti autorizzati. La registrazione non è disponibile.</p>
+              <p class="small mb-0 opacity-75">Accesso riservato agli utenti autorizzati. Le nuove utenze devono essere approvate.</p>
             </div>
             <div class="col-lg-6 bg-white p-4 p-md-5 d-flex align-items-center">
               <form id="loginForm" class="w-100" novalidate>
@@ -31,16 +31,19 @@
                 </div>
                 <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
                 <div class="form-floating mb-3">
-                  <input type="text" class="form-control" id="username" placeholder="Nome utente" autocomplete="username" required>
-                  <label for="username">Nome utente</label>
+                  <input type="email" class="form-control" id="username" placeholder="nome@dominio.it" autocomplete="username" required>
+                  <label for="username">Indirizzo e-mail</label>
                 </div>
                 <div class="form-floating mb-2">
                   <input type="password" class="form-control" id="password" placeholder="Password" autocomplete="current-password" required>
                   <label for="password">Password</label>
                 </div>
-                <div class="form-text mb-4">Demo locale: usa <strong>admin</strong> / <strong>zero2026</strong>.</div>
+                <div class="form-text mb-4">In produzione usa l'indirizzo e-mail autorizzato dall'amministratore.</div>
                 <button class="btn btn-primary btn-lg w-100" type="submit">Accedi</button>
-                <p class="small text-secondary mt-4 mb-0 text-center">Problemi di accesso? Contatta l'amministratore del sistema.</p>
+                <div class="d-flex flex-column flex-sm-row justify-content-center gap-2 mt-4">
+                  <button class="btn btn-link btn-sm" id="requestRegistrationButton" type="button">Richiedi registrazione</button>
+                  <button class="btn btn-link btn-sm" id="requestRecoveryButton" type="button">Recupera password</button>
+                </div>
               </form>
             </div>
           </div>
@@ -152,6 +155,8 @@
   <div class="modal fade" id="memberModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><form id="memberForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Nomina parlamentare</p><h2 class="modal-title h4">Nuovo parlamentare</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="memberName" class="form-label">Nome e cognome</label><input id="memberName" class="form-control" required></div><div class="col-md-5"><label for="memberRole" class="form-label">Ruolo</label><select id="memberRole" class="form-select" required><option value="titolare">Titolare</option><option value="sostituto">Sostituto</option></select></div><div class="col-md-6"><label for="oathDate" class="form-label">Data di giuramento</label><input id="oathDate" type="date" class="form-control" required></div><div class="col-md-6"><label for="resignationDate" class="form-label">Data dimissioni</label><input id="resignationDate" type="date" class="form-control"></div><div class="col-md-6"><label for="memberParty" class="form-label">Partito di appartenenza</label><input id="memberParty" class="form-control"></div><div class="col-md-6"><label for="memberCoalition" class="form-label">Coalizione di appartenenza</label><input id="memberCoalition" class="form-control"></div><div class="col-12"><label for="memberAnnotations" class="form-label">Annotazioni</label><textarea id="memberAnnotations" class="form-control" rows="3" placeholder="Es. Presenze, deleghe, note di controllo..."></textarea></div><div id="memberExtraFields" class="row g-3"></div><div class="col-12"><div class="form-text">La dimissione si registra con l’azione dedicata nella scheda del mandato.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva nomina</button></div></form></div></div></div>
   <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast" role="status"><div class="toast-body"></div></div></div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
