@@ -13,7 +13,7 @@ session_start();
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
-header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 header('Content-Type: application/json; charset=utf-8');
 
 function respond(array $payload, int $status = 200): void
@@ -64,11 +64,41 @@ function rateLimit(PDO $pdo, string $eventType, int $limit = 10): void
     if ((int) $query->fetchColumn() >= $limit) respond(['error' => 'Troppe richieste. Riprova più tardi.'], 429);
 }
 
+function sanitizeInlineStyle(string $style): string
+{
+    $safe = [];
+    foreach (explode(';', $style) as $declaration) {
+        [$property, $value] = array_pad(explode(':', $declaration, 2), 2, '');
+        $property = strtolower(trim($property));
+        $value = trim($value);
+        if ($property === 'font-size' && preg_match('/^(?:[89]|[1-8][0-9]|9[0-6])px$/', $value)) $safe[] = 'font-size:' . $value;
+        if ($property === 'position' && in_array($value, ['absolute', 'relative', 'static'], true)) $safe[] = 'position:' . $value;
+        if (($property === 'left' || $property === 'top') && preg_match('/^\d+(?:\.\d+)?px$/', $value)) $safe[] = $property . ':' . $value;
+        if ($property === 'position' && in_array($value, ['absolute', 'relative', 'static'], true)) $safe[] = 'position:' . $value;
+        if (($property === 'left' || $property === 'top') && preg_match('/^\d+(?:\.\d+)?px$/', $value)) $safe[] = $property . ':' . $value;
+        if ($property === 'font-family' && preg_match('/^(Georgia|Raleway|Pinyon Script|Arial|Helvetica|Verdana|Tahoma|Garamond|Impact|"Times New Roman"|\'Times New Roman\'|"Trebuchet MS"|\'Trebuchet MS\'|"Courier New"|\'Courier New\'|"Lucida Console"|\'Lucida Console\'|"Palatino Linotype"|\'Palatino Linotype\'|"Book Antiqua"|\'Book Antiqua\'|"Comic Sans MS"|\'Comic Sans MS\')$/', $value)) $safe[] = 'font-family:' . $value;
+        if ($property === 'font-weight' && preg_match('/^(normal|bold|[1-9]00)$/', $value)) $safe[] = 'font-weight:' . $value;
+        if ($property === 'font-style' && in_array($value, ['normal', 'italic'], true)) $safe[] = 'font-style:' . $value;
+        if ($property === 'text-decoration' && in_array($value, ['none', 'underline', 'line-through'], true)) $safe[] = 'text-decoration:' . $value;
+        if ($property === 'text-align' && in_array($value, ['left', 'right', 'center', 'justify'], true)) $safe[] = 'text-align:' . $value;
+        if (($property === 'width' || $property === 'max-width') && preg_match('/^(?:\d+(?:\.\d+)?px|100%)$/', $value)) $safe[] = $property . ':' . $value;
+        if ($property === 'height' && $value === 'auto') $safe[] = 'height:auto';
+        if ($property === 'display' && $value === 'block') $safe[] = 'display:block';
+        if ($property === 'z-index' && in_array($value, ['0', '1'], true)) $safe[] = 'z-index:' . $value;
+    }
+    return implode(';', array_unique($safe));
+}
+
 function sanitizeRichHtml(string $html): string
 {
     $allowedTags = '<p><br><strong><b><em><i><u><ol><ul><li><h1><h2><h3><h4><blockquote><table><tbody><tr><td><hr><a><img><span><div><font>';
     $html = strip_tags($html, $allowedTags);
-    if (preg_match_all('/\s(on[a-z]+|style|srcdoc)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', $html, $matches)) $html = preg_replace('/\s(on[a-z]+|style|srcdoc)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $html);
+    $html = preg_replace_callback('/\sstyle\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))/i', static function (array $match): string {
+        $style = $match[2] ?: ($match[3] ?: $match[4]);
+        $safe = sanitizeInlineStyle($style);
+        return $safe === '' ? '' : ' style="' . htmlspecialchars($safe, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
+    }, $html);
+    if (preg_match_all('/\s(on[a-z]+|srcdoc)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', $html, $matches)) $html = preg_replace('/\s(on[a-z]+|srcdoc)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $html);
     $html = preg_replace_callback('/\s(href|src)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))/i', static function (array $match): string { $url = $match[3] ?: ($match[4] ?: $match[5]); return preg_match('/^(https?:|mailto:|data:image\/)/i', $url) ? ' ' . strtolower($match[1]) . '="' . htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"' : ''; }, $html);
     return $html;
 }
@@ -80,6 +110,19 @@ function sanitizeState(array $state): array
     foreach ($state['parties'] ?? [] as &$party) if (isset($party['statute'])) $party['statute'] = sanitizeRichHtml((string) $party['statute']);
     foreach ($state['companies'] ?? [] as &$company) if (isset($company['regulation'])) $company['regulation'] = sanitizeRichHtml((string) $company['regulation']);
     return $state;
+}
+
+function ensureTrashPermissionColumns(PDO $pdo): void
+{
+    foreach (['can_restore', 'can_purge'] as $column) {
+        try {
+            $exists = $pdo->query("SHOW COLUMNS FROM role_permissions LIKE '{$column}'")->fetch();
+            if (!$exists) $pdo->exec("ALTER TABLE role_permissions ADD COLUMN {$column} TINYINT(1) NOT NULL DEFAULT 0 AFTER can_delete");
+        } catch (Throwable $error) {
+            error_log('Permission schema migration failure: ' . $error->getMessage());
+            respond(['error' => 'Aggiornamento del database necessario: impossibile preparare i permessi del cestino.'], 503);
+        }
+    }
 }
 
 function database(): PDO
@@ -98,6 +141,7 @@ function database(): PDO
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]
         );
+        ensureTrashPermissionColumns($pdo);
         return $pdo;
     } catch (Throwable $error) {
         error_log($error->getMessage());
@@ -126,6 +170,11 @@ function stateForUser(PDO $pdo, int $userId): ?array
     if (!is_array($state) || !empty($_SESSION['is_primary_admin'])) return $state;
     $permissions = statePermissionMap();
     foreach ($permissions as $key => $permission) if (!hasPermission($pdo, $userId, $permission, 'view')) $state[$key] = is_array($state[$key] ?? null) ? [] : null;
+    $state['trash'] = array_values(array_filter(is_array($state['trash'] ?? null) ? $state['trash'] : [], static function (mixed $entry) use ($pdo, $userId): bool {
+        if (!is_array($entry)) return false;
+        $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
+        return $config && (hasPermission($pdo, $userId, $config['permission'], 'delete') || hasPermission($pdo, $userId, $config['permission'], 'restore') || hasPermission($pdo, $userId, $config['permission'], 'purge'));
+    }));
     return $state;
 }
 
@@ -142,10 +191,10 @@ function validEmail(string $email): bool
 function permissionsForRole(PDO $pdo, ?int $roleId): array
 {
     if (!$roleId) return [];
-    $query = $pdo->prepare('SELECT p.permission_key, rp.can_view, rp.can_create, rp.can_edit, rp.can_delete, rp.can_approve, rp.can_download FROM role_permissions rp INNER JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ?');
+    $query = $pdo->prepare('SELECT p.permission_key, rp.can_view, rp.can_create, rp.can_edit, rp.can_delete, rp.can_restore, rp.can_purge, rp.can_approve, rp.can_download FROM role_permissions rp INNER JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ?');
     $query->execute([$roleId]);
     $permissions = [];
-    foreach ($query->fetchAll() as $permission) $permissions[$permission['permission_key']] = ['view' => (bool) $permission['can_view'], 'create' => (bool) $permission['can_create'], 'edit' => (bool) $permission['can_edit'], 'delete' => (bool) $permission['can_delete'], 'approve' => (bool) $permission['can_approve'], 'download' => (bool) $permission['can_download']];
+    foreach ($query->fetchAll() as $permission) $permissions[$permission['permission_key']] = ['view' => (bool) $permission['can_view'], 'create' => (bool) $permission['can_create'], 'edit' => (bool) $permission['can_edit'], 'delete' => (bool) $permission['can_delete'], 'restore' => (bool) $permission['can_restore'], 'purge' => (bool) $permission['can_purge'], 'approve' => (bool) $permission['can_approve'], 'download' => (bool) $permission['can_download']];
     return $permissions;
 }
 
@@ -159,7 +208,8 @@ function userPayload(array $user, PDO $pdo): array
         'roleId' => $user['role_id'] ? (int) $user['role_id'] : null,
         'isPrimaryAdmin' => (bool) $user['is_primary_admin'],
         'mustChangeCredentials' => (bool) ($user['must_change_credentials'] ?? false),
-        'permissions' => (bool) $user['is_primary_admin'] ? ['*' => ['view' => true, 'create' => true, 'edit' => true, 'delete' => true, 'approve' => true, 'download' => true]] : permissionsForRole($pdo, $user['role_id'] ? (int) $user['role_id'] : null),
+        'deletedAt' => $user['deleted_at'] ?? null,
+        'permissions' => (bool) $user['is_primary_admin'] ? ['*' => ['view' => true, 'create' => true, 'edit' => true, 'delete' => true, 'restore' => true, 'purge' => true, 'approve' => true, 'download' => true]] : permissionsForRole($pdo, $user['role_id'] ? (int) $user['role_id'] : null),
         'csrfToken' => csrfToken(),
     ];
 }
@@ -173,7 +223,8 @@ function requirePrimaryAdmin(): int
 function hasPermission(PDO $pdo, int $userId, string $permission, string $action): bool
 {
     if (!empty($_SESSION['is_primary_admin'])) return true;
-    $query = $pdo->prepare('SELECT rp.can_view, rp.can_create, rp.can_edit, rp.can_delete, rp.can_approve, rp.can_download FROM users u INNER JOIN role_permissions rp ON rp.role_id = u.role_id INNER JOIN permissions p ON p.id = rp.permission_id WHERE u.id = ? AND p.permission_key = ? LIMIT 1');
+    if (!in_array($action, ['view', 'create', 'edit', 'delete', 'restore', 'purge', 'approve', 'download'], true)) return false;
+    $query = $pdo->prepare('SELECT rp.can_view, rp.can_create, rp.can_edit, rp.can_delete, rp.can_restore, rp.can_purge, rp.can_approve, rp.can_download FROM users u INNER JOIN role_permissions rp ON rp.role_id = u.role_id INNER JOIN permissions p ON p.id = rp.permission_id WHERE u.id = ? AND p.permission_key = ? LIMIT 1');
     $query->execute([$userId, $permission]);
     $row = $query->fetch();
     $allowed = $row ? (bool) ($row['can_' . $action] ?? false) : false;
@@ -186,6 +237,55 @@ function pendingRequestExists(PDO $pdo, string $table, string $email): bool
     $query = $pdo->prepare("SELECT id FROM {$table} WHERE email = ? AND status = 'pending' LIMIT 1");
     $query->execute([$email]);
     return (bool) $query->fetchColumn();
+}
+
+function trashEntityConfig(string $entityType): ?array
+{
+    $configs = [
+        'documents' => ['state_key' => 'documents', 'permission' => 'documents', 'label' => 'Documento'],
+        'templates' => ['state_key' => 'templates', 'permission' => 'templates', 'label' => 'Template'],
+        'parties' => ['state_key' => 'parties', 'permission' => 'parties', 'label' => 'Partito'],
+        'companies' => ['state_key' => 'companies', 'permission' => 'companies', 'label' => 'Azienda'],
+        'parliaments' => ['state_key' => 'parliaments', 'permission' => 'parliament', 'label' => 'Mandato parlamentare'],
+        'governments' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Scheda Governo'],
+        'courtCompositions' => ['state_key' => 'courtCompositions', 'permission' => 'composition', 'label' => 'Composizione della Corte'],
+        'interpretations' => ['state_key' => 'interpretations', 'permission' => 'interpretations', 'label' => 'Interpretazione'],
+        'parliamentMembers' => ['state_key' => 'parliaments', 'permission' => 'parliament', 'label' => 'Nomina parlamentare', 'member_key' => 'members'],
+        'governmentMembers' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Componente del Governo', 'member_key' => 'members'],
+        'compositionMembers' => ['state_key' => 'courtCompositions', 'permission' => 'composition', 'label' => 'Componente della Corte', 'member_key' => 'members'],
+    ];
+    return $configs[$entityType] ?? null;
+}
+
+function stateItemIndex(array $items, string $id): int
+{
+    foreach ($items as $index => $item) if (is_array($item) && isset($item['id']) && hash_equals((string) $item['id'], $id)) return $index;
+    return -1;
+}
+
+function stateForTrashMutation(PDO $pdo): array
+{
+    $state = rawSiteState($pdo) ?: [];
+    foreach (['documents', 'templates', 'parties', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations'] as $key) {
+        if (!isset($state[$key]) || !is_array($state[$key])) $state[$key] = [];
+    }
+    if (!isset($state['trash']) || !is_array($state['trash'])) $state['trash'] = [];
+    return $state;
+}
+
+function saveTrashMutationState(PDO $pdo, int $userId, array $state): void
+{
+    $state = sanitizeState($state);
+    $encoded = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded) || strlen($encoded) > MAX_STATE_BYTES) respond(['error' => 'Stato del cestino non valido o troppo grande.'], 422);
+    $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
+    $query->execute([$userId, $encoded]);
+}
+
+function trashEntryTitle(array $entry): string
+{
+    $data = is_array($entry['data'] ?? null) ? $entry['data'] : [];
+    return substr((string) ($data['title'] ?? $data['name'] ?? $data['legislation'] ?? $data['period'] ?? $entry['label'] ?? 'Elemento'), 0, 160);
 }
 
 $action = $_GET['action'] ?? '';
@@ -284,13 +384,14 @@ if ($action === 'state' && $method === 'GET') {
 if ($action === 'admin_data' && $method === 'GET') {
     requirePrimaryAdmin();
     $users = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.is_active, r.name AS role_name, u.created_at FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NULL ORDER BY u.display_name, u.username')->fetchAll();
+    $deletedUsers = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.deleted_at, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NOT NULL ORDER BY u.deleted_at DESC')->fetchAll();
     $roles = $pdo->query('SELECT id, name, role_key, is_system FROM roles ORDER BY is_system DESC, name')->fetchAll();
     $permissions = $pdo->query('SELECT id, permission_key, label, permission_group FROM permissions ORDER BY permission_group, label')->fetchAll();
-    $rolePermissions = $pdo->query('SELECT role_id, permission_id, can_view, can_create, can_edit, can_delete, can_approve, can_download FROM role_permissions')->fetchAll();
+    $rolePermissions = $pdo->query('SELECT role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download FROM role_permissions')->fetchAll();
     $registrations = $pdo->query("SELECT id, email, display_name, created_at FROM registration_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
     $resets = $pdo->query("SELECT id, email, created_at FROM password_reset_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
     $logs = $pdo->query('SELECT l.id, l.event_type, l.severity, l.ip_address, l.details, l.created_at, u.username FROM security_logs l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.created_at DESC LIMIT 200')->fetchAll();
-    respond(['users' => array_map(fn (array $user): array => userPayload($user, $pdo), $users), 'roles' => $roles, 'permissions' => $permissions, 'rolePermissions' => $rolePermissions, 'registrations' => $registrations, 'resets' => $resets, 'logs' => $logs]);
+    respond(['users' => array_map(fn (array $user): array => userPayload($user, $pdo), $users), 'deletedUsers' => array_map(fn (array $user): array => userPayload($user, $pdo), $deletedUsers), 'roles' => $roles, 'permissions' => $permissions, 'rolePermissions' => $rolePermissions, 'registrations' => $registrations, 'resets' => $resets, 'logs' => $logs]);
 }
 
 if ($action === 'create_role' && $method === 'POST') {
@@ -315,8 +416,8 @@ if ($action === 'save_role_permissions' && $method === 'POST') {
     $pdo->beginTransaction();
     $delete = $pdo->prepare('DELETE FROM role_permissions WHERE role_id = ?');
     $delete->execute([$roleId]);
-    $insert = $pdo->prepare('INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_approve, can_download) SELECT ?, id, ?, ?, ?, ?, ?, ? FROM permissions WHERE permission_key = ?');
-    foreach ($permissions as $permissionKey => $values) $insert->execute([$roleId, !empty($values['view']), !empty($values['create']), !empty($values['edit']), !empty($values['delete']), !empty($values['approve']), !empty($values['download']), $permissionKey]);
+    $insert = $pdo->prepare('INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download) SELECT ?, id, ?, ?, ?, ?, ?, ?, ?, ? FROM permissions WHERE permission_key = ?');
+    foreach ($permissions as $permissionKey => $values) $insert->execute([$roleId, !empty($values['view']), !empty($values['create']), !empty($values['edit']), !empty($values['delete']), !empty($values['restore']), !empty($values['purge']), !empty($values['approve']), !empty($values['download']), $permissionKey]);
     $pdo->commit();
     auditLog($pdo, 'role_permissions_updated', 'info', (int) $_SESSION['user_id'], ['role_id' => $roleId]);
     respond(['ok' => true]);
@@ -396,6 +497,123 @@ if ($action === 'delete_user' && $method === 'POST') {
     respond(['ok' => $query->rowCount() > 0]);
 }
 
+if ($action === 'restore_user' && $method === 'POST') {
+    $adminId = requirePrimaryAdmin();
+    $targetId = (int) (requestBody()['userId'] ?? 0);
+    if ($targetId === $adminId) respond(['error' => 'L’amministratore principale non può ripristinare se stesso.'], 422);
+    $query = $pdo->prepare('UPDATE users SET is_active = 1, deleted_at = NULL, updated_at = UTC_TIMESTAMP() WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NOT NULL');
+    $query->execute([$targetId]);
+    auditLog($pdo, 'user_restored', 'info', $adminId, ['target_user_id' => $targetId]);
+    respond(['ok' => $query->rowCount() > 0]);
+}
+
+if ($action === 'purge_user' && $method === 'POST') {
+    $adminId = requirePrimaryAdmin();
+    $targetId = (int) (requestBody()['userId'] ?? 0);
+    if ($targetId === $adminId) respond(['error' => 'L’amministratore principale non può eliminare definitivamente se stesso.'], 422);
+    $target = $pdo->prepare('SELECT id FROM users WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NOT NULL LIMIT 1');
+    $target->execute([$targetId]);
+    if (!$target->fetch()) respond(['error' => 'Utente non trovato nel cestino.'], 404);
+    $pdo->beginTransaction();
+    try {
+        $reassignState = $pdo->prepare('UPDATE site_state SET owner_user_id = ? WHERE owner_user_id = ?');
+        $reassignState->execute([$adminId, $targetId]);
+        $delete = $pdo->prepare('DELETE FROM users WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NOT NULL');
+        $delete->execute([$targetId]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        respond(['error' => 'Impossibile eliminare definitivamente l’utente.'], 500);
+    }
+    auditLog($pdo, 'user_purged', 'critical', $adminId, ['target_user_id' => $targetId]);
+    respond(['ok' => true]);
+}
+
+if ($action === 'trash_item' && $method === 'POST') {
+    $body = requestBody();
+    $entityType = (string) ($body['entityType'] ?? '');
+    $entityId = trim((string) ($body['entityId'] ?? ''));
+    $parentId = trim((string) ($body['parentId'] ?? ''));
+    $config = trashEntityConfig($entityType);
+    if (!$config || $entityId === '' || strlen($entityId) > 190 || strlen($parentId) > 190) respond(['error' => 'Elemento del cestino non valido.'], 422);
+    if (!hasPermission($pdo, $userId, $config['permission'], 'delete')) respond(['error' => 'Non hai il permesso di spostare questo elemento nel cestino.'], 403);
+    $state = stateForTrashMutation($pdo);
+    $items =& $state[$config['state_key']];
+    $originalIndex = -1;
+    $data = null;
+    if (isset($config['member_key'])) {
+        $parentIndex = stateItemIndex($items, $parentId);
+        if ($parentIndex < 0 || !is_array($items[$parentIndex][$config['member_key']] ?? null)) respond(['error' => 'Scheda di origine non trovata.'], 404);
+        $members =& $items[$parentIndex][$config['member_key']];
+        $originalIndex = stateItemIndex($members, $entityId);
+        if ($originalIndex < 0) respond(['error' => 'Elemento non trovato o già eliminato.'], 404);
+        $data = $members[$originalIndex];
+        array_splice($members, $originalIndex, 1);
+        $items[$parentIndex]['updatedAt'] = gmdate('c');
+        unset($members);
+    } else {
+        $originalIndex = stateItemIndex($items, $entityId);
+        if ($originalIndex < 0) respond(['error' => 'Elemento non trovato o già eliminato.'], 404);
+        $data = $items[$originalIndex];
+        array_splice($items, $originalIndex, 1);
+    }
+    unset($items);
+    $state['trash'][] = ['id' => bin2hex(random_bytes(16)), 'entityType' => $entityType, 'permission' => $config['permission'], 'label' => $config['label'], 'deletedAt' => gmdate('c'), 'parentId' => isset($config['member_key']) ? $parentId : '', 'originalIndex' => $originalIndex, 'data' => $data];
+    saveTrashMutationState($pdo, $userId, $state);
+    auditLog($pdo, 'item_trashed', 'warning', $userId, ['entity_type' => $entityType, 'entity_id' => $entityId, 'parent_id' => $parentId]);
+    respond(['ok' => true, 'state' => stateForUser($pdo, $userId)]);
+}
+
+if ($action === 'restore_trash_item' && $method === 'POST') {
+    $trashId = trim((string) (requestBody()['trashId'] ?? ''));
+    if ($trashId === '' || strlen($trashId) > 190) respond(['error' => 'Elemento del cestino non valido.'], 422);
+    $state = stateForTrashMutation($pdo);
+    $trashIndex = stateItemIndex($state['trash'], $trashId);
+    if ($trashIndex < 0) respond(['error' => 'Elemento non trovato nel cestino.'], 404);
+    $entry = $state['trash'][$trashIndex];
+    $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
+    if (!$config || !is_array($entry['data'] ?? null)) respond(['error' => 'Elemento del cestino non ripristinabile.'], 422);
+    if (!hasPermission($pdo, $userId, $config['permission'], 'restore')) respond(['error' => 'Non hai il permesso di ripristinare questo elemento.'], 403);
+    $items =& $state[$config['state_key']];
+    $dataId = (string) ($entry['data']['id'] ?? '');
+    if ($dataId === '') respond(['error' => 'Elemento del cestino non valido.'], 422);
+    if (isset($config['member_key'])) {
+        $parentIndex = stateItemIndex($items, (string) ($entry['parentId'] ?? ''));
+        if ($parentIndex < 0) respond(['error' => 'Impossibile ripristinare il componente: ripristina prima la relativa scheda.'], 409);
+        $items[$parentIndex][$config['member_key']] ??= [];
+        if (stateItemIndex($items[$parentIndex][$config['member_key']], $dataId) >= 0) respond(['error' => 'Elemento già presente nella scheda di origine.'], 409);
+        $position = min(max(0, (int) ($entry['originalIndex'] ?? 0)), count($items[$parentIndex][$config['member_key']]));
+        array_splice($items[$parentIndex][$config['member_key']], $position, 0, [$entry['data']]);
+        $items[$parentIndex]['updatedAt'] = gmdate('c');
+    } else {
+        if (stateItemIndex($items, $dataId) >= 0) respond(['error' => 'Elemento già presente nell’archivio principale.'], 409);
+        $position = min(max(0, (int) ($entry['originalIndex'] ?? 0)), count($items));
+        array_splice($items, $position, 0, [$entry['data']]);
+    }
+    unset($items);
+    array_splice($state['trash'], $trashIndex, 1);
+    saveTrashMutationState($pdo, $userId, $state);
+    auditLog($pdo, 'item_restored', 'info', $userId, ['entity_type' => $entry['entityType'], 'trash_id' => $trashId]);
+    respond(['ok' => true, 'state' => stateForUser($pdo, $userId)]);
+}
+
+if ($action === 'purge_trash_item' && $method === 'POST') {
+    $trashId = trim((string) (requestBody()['trashId'] ?? ''));
+    if ($trashId === '' || strlen($trashId) > 190) respond(['error' => 'Elemento del cestino non valido.'], 422);
+    $state = stateForTrashMutation($pdo);
+    $trashIndex = stateItemIndex($state['trash'], $trashId);
+    if ($trashIndex < 0) respond(['error' => 'Elemento non trovato nel cestino.'], 404);
+    $entry = $state['trash'][$trashIndex];
+    $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
+    if (!$config) respond(['error' => 'Elemento del cestino non eliminabile.'], 422);
+    if (!hasPermission($pdo, $userId, $config['permission'], 'purge')) respond(['error' => 'Non hai il permesso di eliminare definitivamente questo elemento.'], 403);
+    $title = trashEntryTitle($entry);
+    array_splice($state['trash'], $trashIndex, 1);
+    saveTrashMutationState($pdo, $userId, $state);
+    auditLog($pdo, 'item_purged', 'critical', $userId, ['entity_type' => $entry['entityType'], 'trash_id' => $trashId, 'title' => $title]);
+    respond(['ok' => true, 'state' => stateForUser($pdo, $userId)]);
+}
+
 if ($action === 'save_state' && $method === 'POST') {
     $body = requestBody();
     $permission = preg_replace('/[^a-z_]/', '', (string) ($body['permission'] ?? 'documents')) ?: 'documents';
@@ -404,8 +622,11 @@ if ($action === 'save_state' && $method === 'POST') {
     $decodedState = json_decode($encodedState, true);
     if (!is_array($decodedState) || strlen($encodedState) > MAX_STATE_BYTES) respond(['error' => 'Stato applicativo non valido.'], 422);
     $decodedState = sanitizeState($decodedState);
+    $existingState = rawSiteState($pdo) ?: [];
+    // Il cestino può essere modificato esclusivamente dalle azioni dedicate,
+    // così non può essere forgiato da un generico salvataggio dell'interfaccia.
+    $decodedState['trash'] = is_array($existingState['trash'] ?? null) ? $existingState['trash'] : [];
     if (empty($_SESSION['is_primary_admin'])) {
-        $existingState = rawSiteState($pdo) ?: [];
         foreach (statePermissionMap() as $key => $area) if ($area !== $permission) $decodedState[$key] = $existingState[$key] ?? null;
     }
     $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');

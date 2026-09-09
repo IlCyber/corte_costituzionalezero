@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="it">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,10 +8,25 @@
   <title>Casellario digitale | Corte Costituzionale di Zero</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/400.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/500.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/600.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/700.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script@5.1.1/400.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
-  <main id="loginView" class="login-shell">
+  <div id="loadingOverlay" class="d-flex justify-content-center align-items-center position-fixed w-100 h-100"
+    style="z-index: 9999; top: 0; left: 0; background: var(--paper);">
+    <div class="spinner-border" style="color: var(--accent);" role="status">
+      <span class="visually-hidden">Caricamento...</span>
+    </div>
+  </div>
+  <main id="loginView" class="login-shell d-none">
     <section class="container py-5">
       <div class="row justify-content-center align-items-center min-vh-100 py-4">
         <div class="col-12 col-lg-10">
@@ -20,7 +36,8 @@
               <h1 class="display-5 fw-bold">Il casellario digitale, in ordine.</h1>
               <p class="lead mt-4 mb-0">Uno spazio riservato per creare, numerare e conservare gli atti della Corte.</p>
               <div class="intro-rule my-5"></div>
-              <p class="small mb-0 opacity-75">Accesso riservato agli utenti autorizzati. Le nuove utenze devono essere approvate.</p>
+              <p class="small mb-0 opacity-75">Accesso riservato agli utenti autorizzati. Le nuove utenze devono essere
+                approvate.</p>
             </div>
             <div class="col-lg-6 bg-white p-4 p-md-5 d-flex align-items-center">
               <form id="loginForm" class="w-100" novalidate>
@@ -31,18 +48,22 @@
                 </div>
                 <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
                 <div class="form-floating mb-3">
-                  <input type="email" class="form-control" id="username" placeholder="nome@dominio.it" autocomplete="username" required>
+                  <input type="email" class="form-control" id="username" placeholder="nome@dominio.it"
+                    autocomplete="username" required>
                   <label for="username">Indirizzo e-mail</label>
                 </div>
                 <div class="form-floating mb-2">
-                  <input type="password" class="form-control" id="password" placeholder="Password" autocomplete="current-password" required>
+                  <input type="password" class="form-control" id="password" placeholder="Password"
+                    autocomplete="current-password" required>
                   <label for="password">Password</label>
                 </div>
                 <div class="form-text mb-4">In produzione usa l'indirizzo e-mail autorizzato dall'amministratore.</div>
                 <button class="btn btn-primary btn-lg w-100" type="submit">Accedi</button>
                 <div class="d-flex flex-column flex-sm-row justify-content-center gap-2 mt-4">
-                  <button class="btn btn-link btn-sm" id="requestRegistrationButton" type="button">Richiedi registrazione</button>
-                  <button class="btn btn-link btn-sm" id="requestRecoveryButton" type="button">Recupera password</button>
+                  <button class="btn btn-link btn-sm" id="requestRegistrationButton" type="button">Richiedi
+                    registrazione</button>
+                  <button class="btn btn-link btn-sm" id="requestRecoveryButton" type="button">Recupera
+                    password</button>
                 </div>
               </form>
             </div>
@@ -57,20 +78,24 @@
       <div class="container-fluid px-4 px-xl-5">
         <a class="navbar-brand d-flex align-items-center gap-3" href="#dashboard" data-view-link="dashboard">
           <span class="brand-mark">CZ</span>
-          <span><strong>Casellario</strong><small class="d-block text-secondary">Corte Costituzionale di Zero</small></span>
+          <span><strong>Casellario</strong><small class="d-block text-secondary">Corte Costituzionale di
+              Zero</small></span>
         </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Apri menu">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+          aria-controls="mainNav" aria-label="Apri menu">
           <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="mainNav">
           <ul class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
-            <li class="nav-item"><a class="nav-link active" href="#dashboard" data-view-link="dashboard">Documenti</a></li>
+            <li class="nav-item"><a class="nav-link active" href="#dashboard" data-view-link="dashboard">Documenti</a>
+            </li>
             <li class="nav-item"><a class="nav-link" href="#parties" data-view-link="parties">Partiti</a></li>
             <li class="nav-item"><a class="nav-link" href="#companies" data-view-link="companies">Aziende</a></li>
             <li class="nav-item"><a class="nav-link" href="#parliament" data-view-link="parliament">Parlamento</a></li>
             <li class="nav-item"><a class="nav-link" href="#templates" data-view-link="templates">Template</a></li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
-            <li class="nav-item ms-lg-3"><button class="btn btn-outline-secondary btn-sm" id="logoutButton" type="button">Esci</button></li>
+            <li class="nav-item ms-lg-3"><button class="btn btn-outline-secondary btn-sm" id="logoutButton"
+                type="button">Esci</button></li>
           </ul>
         </div>
       </div>
@@ -84,79 +109,767 @@
             <h1 class="display-6 fw-bold mb-2">Documenti</h1>
             <p class="text-secondary mb-0">Crea nuovi atti e ritrova tutto ciò che è già stato archiviato.</p>
           </div>
-          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#documentModal" id="newDocumentButton">+ Nuovo documento</button>
+          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#documentModal"
+            id="newDocumentButton">+ Nuovo documento</button>
         </div>
 
         <div class="row g-3 mb-4">
-          <div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Documenti archiviati</span><strong id="documentCount">0</strong></div></div>
-          <div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Template disponibili</span><strong id="templateCount">0</strong></div></div>
-          <div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Ultimo aggiornamento</span><strong id="lastUpdate">--</strong></div></div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Documenti archiviati</span><strong
+                id="documentCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Template disponibili</span><strong
+                id="templateCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Ultimo aggiornamento</span><strong
+                id="lastUpdate">--</strong></div>
+          </div>
         </div>
 
         <div class="card border-0 shadow-sm">
           <div class="card-body p-0">
             <div class="p-4 border-bottom d-flex flex-column flex-md-row justify-content-between gap-3">
               <h2 class="h5 mb-0">Archivio recente</h2>
-              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="documentSearch" type="search" class="form-control" placeholder="Cerca per titolo, categoria o numero"></div>
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="documentSearch"
+                  type="search" class="form-control" placeholder="Cerca per titolo, categoria o numero"></div>
             </div>
             <div class="table-responsive">
               <table class="table align-middle mb-0">
-                <thead><tr><th class="ps-4">Numero</th><th>Documento</th><th>Categoria</th><th>Data</th><th class="text-end pe-4">Azioni</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th class="ps-4">Numero</th>
+                    <th>Documento</th>
+                    <th>Categoria</th>
+                    <th>Data</th>
+                    <th class="text-end pe-4">Azioni</th>
+                  </tr>
+                </thead>
                 <tbody id="documentTableBody"></tbody>
               </table>
             </div>
-            <div id="emptyDocuments" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessun documento trovato</h3><p class="text-secondary mb-0">Crea il primo documento per iniziare l'archivio.</p></div>
+            <div id="emptyDocuments" class="empty-state d-none">
+              <div class="display-6">□</div>
+              <h3 class="h5 mt-3">Nessun documento trovato</h3>
+              <p class="text-secondary mb-0">Crea il primo documento per iniziare l'archivio.</p>
+            </div>
           </div>
         </div>
       </section>
 
       <section id="templatesView" class="app-view d-none">
-        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Strumenti di redazione</p><h1 class="display-6 fw-bold mb-2">Template base</h1><p class="text-secondary mb-0">Prepara strutture riutilizzabili, complete di immagini predefinite.</p></div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#templateModal">+ Nuovo template</button></div>
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Strumenti di redazione</p>
+            <h1 class="display-6 fw-bold mb-2">Template base</h1>
+            <p class="text-secondary mb-0">Prepara strutture riutilizzabili, complete di immagini predefinite.</p>
+          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#templateModal">+ Nuovo
+            template</button>
+        </div>
         <div id="templateGrid" class="row g-4"></div>
-        <div id="emptyTemplates" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessun template personalizzato</h3><p class="text-secondary mb-0">Puoi creare documenti anche senza template.</p></div>
+        <div id="emptyTemplates" class="empty-state d-none">
+          <div class="display-6">□</div>
+          <h3 class="h5 mt-3">Nessun template personalizzato</h3>
+          <p class="text-secondary mb-0">Puoi creare documenti anche senza template.</p>
+        </div>
       </section>
 
       <section id="partiesView" class="app-view d-none">
-        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio politico</p><h1 class="display-6 fw-bold mb-2">Partiti</h1><p class="text-secondary mb-0">Gestisci le formazioni politiche, il loro Statuto e lo storico delle modifiche.</p></div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#partyModal" id="newPartyButton">+ Nuovo partito</button></div>
-        <div class="row g-3 mb-4"><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Partiti archiviati</span><strong id="partyCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Partiti attivi</span><strong id="activePartyCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Campi configurati</span><strong id="partyFieldCount">0</strong></div></div></div>
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Archivio politico</p>
+            <h1 class="display-6 fw-bold mb-2">Partiti</h1>
+            <p class="text-secondary mb-0">Gestisci le formazioni politiche, il loro Statuto e lo storico delle
+              modifiche.</p>
+          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#partyModal"
+            id="newPartyButton">+ Nuovo partito</button>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Partiti archiviati</span><strong
+                id="partyCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Partiti attivi</span><strong
+                id="activePartyCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Campi configurati</span><strong
+                id="partyFieldCount">0</strong></div>
+          </div>
+        </div>
         <div id="partyGrid" class="row g-4"></div>
-        <div id="emptyParties" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessun partito archiviato</h3><p class="text-secondary mb-0">Crea il primo partito dalle informazioni configurate nelle impostazioni.</p></div>
+        <div id="emptyParties" class="empty-state d-none">
+          <div class="display-6">□</div>
+          <h3 class="h5 mt-3">Nessun partito archiviato</h3>
+          <p class="text-secondary mb-0">Crea il primo partito dalle informazioni configurate nelle impostazioni.</p>
+        </div>
       </section>
 
       <section id="companiesView" class="app-view d-none">
-        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio imprese</p><h1 class="display-6 fw-bold mb-2">Aziende</h1><p class="text-secondary mb-0">Salva le aziende e redigi il loro Regolamento in un documento separato.</p></div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#companyModal" id="newCompanyButton">+ Nuova azienda</button></div>
-        <div class="row g-3 mb-4"><div class="col-12 col-md-6"><div class="stat-card"><span class="text-secondary small">Aziende archiviate</span><strong id="companyCount">0</strong></div></div><div class="col-12 col-md-6"><div class="stat-card"><span class="text-secondary small">Regolamenti inseriti</span><strong id="companyRegulationCount">0</strong></div></div></div>
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Archivio imprese</p>
+            <h1 class="display-6 fw-bold mb-2">Aziende</h1>
+            <p class="text-secondary mb-0">Salva le aziende e redigi il loro Regolamento in un documento separato.</p>
+          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#companyModal"
+            id="newCompanyButton">+ Nuova azienda</button>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-md-6">
+            <div class="stat-card"><span class="text-secondary small">Aziende archiviate</span><strong
+                id="companyCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="stat-card"><span class="text-secondary small">Regolamenti inseriti</span><strong
+                id="companyRegulationCount">0</strong></div>
+          </div>
+        </div>
         <div id="companyGrid" class="row g-4"></div>
-        <div id="emptyCompanies" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessuna azienda archiviata</h3><p class="text-secondary mb-0">Crea la prima azienda per iniziare.</p></div>
+        <div id="emptyCompanies" class="empty-state d-none">
+          <div class="display-6">□</div>
+          <h3 class="h5 mt-3">Nessuna azienda archiviata</h3>
+          <p class="text-secondary mb-0">Crea la prima azienda per iniziare.</p>
+        </div>
       </section>
 
       <section id="parliamentView" class="app-view d-none">
-        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio istituzionale</p><h1 class="display-6 fw-bold mb-2">Parlamento</h1><p class="text-secondary mb-0">Gestisci legislazioni, titolari, sostituti e lo storico delle nomine.</p></div><button class="btn btn-primary" id="newParliamentButton" type="button">+ Nuovo mandato</button></div>
-        <div class="row g-3 mb-4"><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Mandati archiviati</span><strong id="parliamentCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Mandati in corso</span><strong id="currentParliamentCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Parlamentari registrati</span><strong id="memberCount">0</strong></div></div></div>
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Archivio istituzionale</p>
+            <h1 class="display-6 fw-bold mb-2">Parlamento</h1>
+            <p class="text-secondary mb-0">Gestisci legislazioni, titolari, sostituti e lo storico delle nomine.</p>
+          </div><button class="btn btn-primary" id="newParliamentButton" type="button">+ Nuovo mandato</button>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Mandati archiviati</span><strong
+                id="parliamentCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Mandati in corso</span><strong
+                id="currentParliamentCount">0</strong></div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="stat-card"><span class="text-secondary small">Parlamentari registrati</span><strong
+                id="memberCount">0</strong></div>
+          </div>
+        </div>
         <div id="parliamentGrid" class="row g-4"></div>
-        <div id="emptyParliaments" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessun mandato archiviato</h3><p class="text-secondary mb-0">Crea il primo mandato parlamentare per iniziare.</p></div>
+        <div id="emptyParliaments" class="empty-state d-none">
+          <div class="display-6">□</div>
+          <h3 class="h5 mt-3">Nessun mandato archiviato</h3>
+          <p class="text-secondary mb-0">Crea il primo mandato parlamentare per iniziare.</p>
+        </div>
       </section>
 
       <section id="settingsView" class="app-view d-none">
-        <div class="mb-4"><p class="eyebrow text-secondary mb-2">Configurazione archivio</p><h1 class="display-6 fw-bold mb-2">Impostazioni</h1><p class="text-secondary mb-0">Gestisci categorie, numerazione e le informazioni minime richieste per ogni partito.</p></div>
-        <div class="row g-4"><div class="col-12 col-xl-7"><div class="card border-0 shadow-sm mb-4"><div class="card-body p-4"><h2 class="h5 mb-1">Progressivi per categoria</h2><p class="text-secondary small mb-4">Il prossimo documento userà il numero indicato.</p><form id="numberingForm"></form></div></div><div class="card border-0 shadow-sm mb-4"><div class="card-body p-4"><h2 class="h5 mb-1">Informazioni minime dei partiti</h2><p class="text-secondary small">Decidi quali campi devono essere compilati quando si crea un partito.</p><form id="partyFieldForm" class="row g-2 mb-4"><div class="col"><label for="partyFieldName" class="visually-hidden">Nome informazione</label><input id="partyFieldName" class="form-control" required placeholder="Es. Segretario nazionale"></div><div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div></form><div id="partyFieldList" class="vstack gap-2"></div></div></div><div class="card border-0 shadow-sm"><div class="card-body p-4"><h2 class="h5 mb-1">Configurazione Parlamento</h2><p class="text-secondary small">Imposta il numero massimo di titolari e sostituti e le informazioni base di ogni parlamentare.</p><form id="parliamentSettingsForm" class="row g-3 mb-4"><div class="col-md-6"><label for="titularCount" class="form-label">Titolari per mandato</label><input id="titularCount" class="form-control" type="number" min="1" required></div><div class="col-md-6"><label for="substituteCount" class="form-label">Sostituti per mandato</label><input id="substituteCount" class="form-control" type="number" min="0" required></div><div class="col-12"><button class="btn btn-primary" type="submit">Salva configurazione</button></div></form><h3 class="h6 mb-1">Informazioni dei parlamentari</h3><p class="text-secondary small">Questi campi saranno disponibili per titolari e sostituti.</p><form id="parliamentFieldForm" class="row g-2 mb-3"><div class="col"><label for="parliamentFieldName" class="visually-hidden">Nome informazione</label><input id="parliamentFieldName" class="form-control" required placeholder="Es. Coalizione di appartenenza"></div><div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div></form><div id="parliamentFieldList" class="vstack gap-2"></div></div></div></div><div class="col-12 col-xl-5"><div class="card border-0 shadow-sm h-100"><div class="card-body p-4"><h2 class="h5 mb-1">Nuova categoria</h2><p class="text-secondary small">Le categorie diventano disponibili nei documenti e nei template.</p><form id="categoryForm" class="row g-2 mb-4"><div class="col"><label for="categoryName" class="visually-hidden">Nome categoria</label><input id="categoryName" class="form-control" required placeholder="Es. Comunicazioni"></div><div class="col-auto"><button class="btn btn-primary" type="submit">Crea</button></div></form><h2 class="h5 mb-1">Categorie attive</h2><div id="categoryList" class="vstack gap-2 mt-3"></div></div></div></div></div>
+        <div class="mb-4">
+          <p class="eyebrow text-secondary mb-2">Configurazione archivio</p>
+          <h1 class="display-6 fw-bold mb-2">Impostazioni</h1>
+          <p class="text-secondary mb-0">Gestisci categorie, numerazione e le informazioni minime richieste per ogni
+            partito.</p>
+        </div>
+        <div class="row g-4">
+          <div class="col-12 col-xl-7">
+            <div class="card border-0 shadow-sm mb-4">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Progressivi per categoria</h2>
+                <p class="text-secondary small mb-4">Il prossimo documento userà il numero indicato.</p>
+                <form id="numberingForm"></form>
+              </div>
+            </div>
+            <div class="card border-0 shadow-sm mb-4">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Margini pagina documento</h2>
+                <p class="text-secondary small mb-4">Imposta i margini in millimetri. Il modello viene applicato a
+                  documenti, template e PDF scaricati.</p>
+                <form id="pageMarginsForm" class="row g-3">
+                  <div class="col-6"><label class="form-label" for="pageMarginTop">Superiore (mm)</label><input
+                      id="pageMarginTop" class="form-control page-margin-input" type="number" min="5" max="60" required>
+                  </div>
+                  <div class="col-6"><label class="form-label" for="pageMarginRight">Destro (mm)</label><input
+                      id="pageMarginRight" class="form-control page-margin-input" type="number" min="5" max="60"
+                      required></div>
+                  <div class="col-6"><label class="form-label" for="pageMarginBottom">Inferiore (mm)</label><input
+                      id="pageMarginBottom" class="form-control page-margin-input" type="number" min="5" max="60"
+                      required></div>
+                  <div class="col-6"><label class="form-label" for="pageMarginLeft">Sinistro (mm)</label><input
+                      id="pageMarginLeft" class="form-control page-margin-input" type="number" min="5" max="60"
+                      required></div>
+                  <div class="col-12"><button class="btn btn-primary" type="submit">Salva margini</button></div>
+                </form>
+              </div>
+            </div>
+            <div class="card border-0 shadow-sm mb-4">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Informazioni minime dei partiti</h2>
+                <p class="text-secondary small">Decidi quali campi devono essere compilati quando si crea un partito.
+                </p>
+                <form id="partyFieldForm" class="row g-2 mb-4">
+                  <div class="col"><label for="partyFieldName" class="visually-hidden">Nome informazione</label><input
+                      id="partyFieldName" class="form-control" required placeholder="Es. Segretario nazionale"></div>
+                  <div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div>
+                </form>
+                <div id="partyFieldList" class="vstack gap-2"></div>
+              </div>
+            </div>
+            <div class="card border-0 shadow-sm">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Configurazione Parlamento</h2>
+                <p class="text-secondary small">Imposta il numero massimo di titolari e sostituti e le informazioni base
+                  di ogni parlamentare.</p>
+                <form id="parliamentSettingsForm" class="row g-3 mb-4">
+                  <div class="col-md-6"><label for="titularCount" class="form-label">Titolari per mandato</label><input
+                      id="titularCount" class="form-control" type="number" min="1" required></div>
+                  <div class="col-md-6"><label for="substituteCount" class="form-label">Sostituti per
+                      mandato</label><input id="substituteCount" class="form-control" type="number" min="0" required>
+                  </div>
+                  <div class="col-12"><button class="btn btn-primary" type="submit">Salva configurazione</button></div>
+                </form>
+                <h3 class="h6 mb-1">Informazioni dei parlamentari</h3>
+                <p class="text-secondary small">Questi campi saranno disponibili per titolari e sostituti.</p>
+                <form id="parliamentFieldForm" class="row g-2 mb-3">
+                  <div class="col"><label for="parliamentFieldName" class="visually-hidden">Nome
+                      informazione</label><input id="parliamentFieldName" class="form-control" required
+                      placeholder="Es. Coalizione di appartenenza"></div>
+                  <div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div>
+                </form>
+                <div id="parliamentFieldList" class="vstack gap-2"></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-xl-5">
+            <div class="card border-0 shadow-sm h-100">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Nuova categoria</h2>
+                <p class="text-secondary small">Le categorie diventano disponibili nei documenti e nei template.</p>
+                <form id="categoryForm" class="row g-2 mb-4">
+                  <div class="col"><label for="categoryName" class="visually-hidden">Nome categoria</label><input
+                      id="categoryName" class="form-control" required placeholder="Es. Comunicazioni"></div>
+                  <div class="col-auto"><button class="btn btn-primary" type="submit">Crea</button></div>
+                </form>
+                <h2 class="h5 mb-1">Categorie attive</h2>
+                <div id="categoryList" class="vstack gap-2 mt-3"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   </main>
 
-  <div class="modal fade" id="documentModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><form id="documentForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio</p><h2 class="modal-title h4">Nuovo documento</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-12"><label for="documentTitle" class="form-label">Titolo documento</label><input id="documentTitle" class="form-control" required placeholder="Es. Ordinanza n. 12/2026"></div><div class="col-md-6"><label for="documentCategory" class="form-label">Categoria</label><select id="documentCategory" class="form-select" required></select></div><div class="col-md-6"><label for="documentTemplate" class="form-label">Template della categoria</label><select id="documentTemplate" class="form-select"><option value="">Documento libero</option></select></div><div class="col-md-6"><label for="documentDate" class="form-label">Data del documento</label><input id="documentDate" type="date" class="form-control" required></div><div class="col-md-6"><label for="documentNumber" class="form-label">Numero progressivo</label><input id="documentNumber" type="text" inputmode="numeric" pattern="[0-9]+" class="form-control" required><div class="form-text">Puoi usare 01, 00001 o qualsiasi altra numerazione a cifre.</div></div><div class="col-12"><label class="form-label">Contenuto</label><div class="editor-toolbar" role="toolbar" aria-label="Formattazione contenuto"><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="bold"><strong>B</strong></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="underline"><u>U</u></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyCenter">Centro</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="insertUnorderedList">Elenco</button><select class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font"><option value="Georgia">Georgia</option><option value="Arial">Arial</option><option value="Verdana">Verdana</option></select><select class="form-select form-select-sm editor-select" data-editor-command="fontSize" aria-label="Grandezza"><option value="3">Normale</option><option value="2">Piccola</option><option value="4">Grande</option><option value="5">Titolo</option></select></div><div id="documentBodyEditor" class="rich-editor" contenteditable="true" data-placeholder="Scrivi il contenuto del documento..."></div><textarea id="documentBody" class="d-none"></textarea></div><div class="col-12"><label for="documentImage" class="form-label">Immagine del documento <span class="text-secondary fw-normal">(opzionale)</span></label><input id="documentImage" type="file" accept="image/*" class="form-control"><div class="form-text">Se il template ha un'immagine predefinita, verrà usata quando non ne carichi una nuova.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva documento</button></div></form></div></div></div>
-  <div class="modal fade" id="templateModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content"><form id="templateForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Redazione</p><h2 class="modal-title h4">Nuovo template</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-6"><label for="templateName" class="form-label">Nome template</label><input id="templateName" class="form-control" required placeholder="Es. Sentenza ordinaria"></div><div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select id="templateCategory" class="form-select" required></select></div><div class="col-12"><label class="form-label">Struttura del contenuto</label><div class="editor-toolbar" role="toolbar" aria-label="Formattazione template"><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="bold"><strong>B</strong></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="underline"><u>U</u></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyCenter">Centro</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="insertUnorderedList">Elenco</button><select class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font"><option value="Georgia">Georgia</option><option value="Arial">Arial</option><option value="Verdana">Verdana</option></select><select class="form-select form-select-sm editor-select" data-editor-command="fontSize" aria-label="Grandezza"><option value="3">Normale</option><option value="2">Piccola</option><option value="4">Grande</option><option value="5">Titolo</option></select></div><div id="templateBodyEditor" class="rich-editor" contenteditable="true" data-placeholder="Inserisci una traccia riutilizzabile..."></div><textarea id="templateBody" class="d-none"></textarea></div><div class="col-12"><label for="templateImage" class="form-label">Immagine predefinita</label><input id="templateImage" type="file" accept="image/*" class="form-control"><div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul template.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva template</button></div></form></div></div></div>
-  <div class="modal fade" id="partyModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><form id="partyForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio politico</p><h2 class="modal-title h4">Nuovo partito</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div><div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select id="partyStatus" class="form-select" required><option value="attivo">Attivo</option><option value="eliminato">Eliminato</option><option value="confluito">Confluito</option><option value="cancellato">Cancellato</option></select></div><div class="col-12"><h3 class="h6 mb-1">Informazioni minime</h3><p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p></div><div id="partyFields" class="row g-3"></div><div class="col-12 d-none" id="partyHistoryPanel"><h3 class="h6 mb-2">Storico modifiche</h3><div id="partyHistory" class="history-list"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva partito</button></div></form></div></div></div>
-  <div class="editor-page d-none" id="partyStatuteEditor"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Documento del partito</p><h2 class="modal-title h4">Statuto</h2><p class="text-secondary small mb-0" id="partyStatuteSubtitle"></p></div><button type="button" class="btn-close" id="closePartyStatuteEditor" aria-label="Chiudi"></button></div><form id="partyStatuteForm"><div class="modal-body"><div class="row g-3"><aside class="party-statute-sidebar"><div><span class="form-label d-block">Partito</span><strong id="partyStatutePartyName"></strong></div><div><span class="form-label d-block">Status</span><span id="partyStatuteStatus" class="badge"></span></div><div><span class="form-label d-block">Documento</span><span>Statuto</span></div></aside><section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label><div class="editor-toolbar" role="toolbar" aria-label="Formattazione Statuto"><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="bold"><strong>B</strong></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="underline"><u>U</u></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyCenter">Centro</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="insertUnorderedList">Elenco</button><select class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font"><option value="Georgia">Georgia</option></select><select class="form-select form-select-sm editor-select" data-editor-command="fontSize" aria-label="Grandezza"><option value="3">Normale</option></select></div><div class="rich-editor" id="partyStatuteEditorContent" contenteditable="true" data-placeholder="Scrivi lo Statuto del partito..."></div><input type="hidden" id="partyStatuteValue"></section></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" id="cancelPartyStatuteEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva Statuto</button></div></form></div></div></div>
-  <div class="modal fade" id="companyModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content"><form id="companyForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio imprese</p><h2 class="modal-title h4">Nuova azienda</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><label for="companyName" class="form-label">Nome dell’azienda</label><input id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A."><p class="form-text mb-0">Dopo il salvataggio potrai inserire il Regolamento come documento separato.</p><div class="d-none" id="companyHistoryPanel"><h3 class="h6 mt-4 mb-2">Storico modifiche</h3><div id="companyHistory" class="history-list"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva azienda</button></div></form></div></div></div>
-  <div class="editor-page d-none" id="companyRegulationEditor"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Documento dell’azienda</p><h2 class="modal-title h4">Regolamento</h2><p class="text-secondary small mb-0" id="companyRegulationSubtitle"></p></div><button type="button" class="btn-close" id="closeCompanyRegulationEditor" aria-label="Chiudi"></button></div><form id="companyRegulationForm"><div class="modal-body"><div class="row g-3"><aside class="party-statute-sidebar"><div><span class="form-label d-block">Azienda</span><strong id="companyRegulationCompanyName"></strong></div><div><span class="form-label d-block">Documento</span><span>Regolamento</span></div></aside><section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label><div class="editor-toolbar" role="toolbar" aria-label="Formattazione Regolamento"><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="bold"><strong>B</strong></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="underline"><u>U</u></button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="justifyCenter">Centro</button><button type="button" class="btn btn-sm btn-outline-secondary" data-editor-command="insertUnorderedList">Elenco</button><select class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font"><option value="Georgia">Georgia</option></select><select class="form-select form-select-sm editor-select" data-editor-command="fontSize" aria-label="Grandezza"><option value="3">Normale</option></select></div><div class="rich-editor" id="companyRegulationEditorContent" contenteditable="true" data-placeholder="Scrivi il Regolamento dell’azienda..."></div><input type="hidden" id="companyRegulationValue"></section></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" id="cancelCompanyRegulationEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva Regolamento</button></div></form></div></div></div>
-  <div class="modal fade" id="statuteHistoryModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Confronto storico</p><h2 class="modal-title h4" id="statuteHistoryTitle">Statuto</h2><p class="text-secondary small mb-0" id="statuteHistoryDate"></p></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="diff-legend mb-3"><span><mark class="diff-removed">Testo rimosso</mark></span><span><mark class="diff-added">Testo aggiunto</mark></span></div><div class="row g-3"><div class="col-12 col-lg-6"><h3 class="h6">Versione precedente</h3><div id="statutePreviousVersion" class="statute-version"></div></div><div class="col-12 col-lg-6"><h3 class="h6">Versione successiva</h3><div id="statuteNextVersion" class="statute-version"></div></div></div></div></div></div></div>
-  <div class="modal fade" id="parliamentModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><form id="parliamentForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio istituzionale</p><h2 class="modal-title h4">Nuovo mandato</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-4"><label for="legislationNumber" class="form-label">Numero legislazione</label><input id="legislationNumber" class="form-control" required placeholder="Es. XVIII"></div><div class="col-md-4"><label for="mandateStart" class="form-label">Data inizio</label><input id="mandateStart" type="date" class="form-control" required></div><div class="col-md-4"><label for="mandateEnd" class="form-label">Data fine</label><input id="mandateEnd" type="date" class="form-control" required></div><div class="col-12"><label for="mandateStatus" class="form-label">Tag mandato</label><select id="mandateStatus" class="form-select" required><option value="in corso">In corso</option><option value="concluso">Concluso</option></select></div><div class="col-12"><hr><div class="d-flex justify-content-between align-items-center"><div><h3 class="h6 mb-1">Parlamentari</h3><p class="text-secondary small mb-0">Titolari e sostituti restano nello storico anche dopo le dimissioni.</p></div><button type="button" class="btn btn-sm btn-primary" id="addMemberButton">+ Nuova nomina</button></div></div><div class="col-12"><h4 class="h6">Titolari</h4><div id="titularList" class="parliament-member-list"></div></div><div class="col-12"><h4 class="h6">Sostituti</h4><div id="substituteList" class="parliament-member-list"></div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva mandato</button></div></form></div></div></div>
-  <div class="modal fade" id="memberModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content"><form id="memberForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Nomina parlamentare</p><h2 class="modal-title h4">Nuovo parlamentare</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="memberName" class="form-label">Nome e cognome</label><input id="memberName" class="form-control" required></div><div class="col-md-5"><label for="memberRole" class="form-label">Ruolo</label><select id="memberRole" class="form-select" required><option value="titolare">Titolare</option><option value="sostituto">Sostituto</option></select></div><div class="col-md-6"><label for="oathDate" class="form-label">Data di giuramento</label><input id="oathDate" type="date" class="form-control" required></div><div class="col-md-6"><label for="resignationDate" class="form-label">Data dimissioni</label><input id="resignationDate" type="date" class="form-control"></div><div class="col-md-6"><label for="memberParty" class="form-label">Partito di appartenenza</label><input id="memberParty" class="form-control"></div><div class="col-md-6"><label for="memberCoalition" class="form-label">Coalizione di appartenenza</label><input id="memberCoalition" class="form-control"></div><div class="col-12"><label for="memberAnnotations" class="form-label">Annotazioni</label><textarea id="memberAnnotations" class="form-control" rows="3" placeholder="Es. Presenze, deleghe, note di controllo..."></textarea></div><div id="memberExtraFields" class="row g-3"></div><div class="col-12"><div class="form-text">La dimissione si registra con l’azione dedicata nella scheda del mandato.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva nomina</button></div></form></div></div></div>
-  <div class="toast-container position-fixed bottom-0 end-0 p-3"><div id="appToast" class="toast" role="status"><div class="toast-body"></div></div></div>
+  <div class="modal fade" id="documentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form id="documentForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Archivio</p>
+              <h2 class="modal-title h4">Nuovo documento</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-12"><label for="documentTitle" class="form-label">Titolo documento</label><input
+                  id="documentTitle" class="form-control" required placeholder="Es. Ordinanza n. 12/2026"></div>
+              <div class="col-md-6"><label for="documentCategory" class="form-label">Categoria</label><select
+                  id="documentCategory" class="form-select" required></select></div>
+              <div class="col-md-6"><label for="documentTemplate" class="form-label">Template della
+                  categoria</label><select id="documentTemplate" class="form-select">
+                  <option value="">Documento libero</option>
+                </select></div>
+              <div class="col-md-6"><label for="documentDate" class="form-label">Data del documento</label><input
+                  id="documentDate" type="date" class="form-control" required></div>
+              <div class="col-md-6"><label for="documentNumber" class="form-label">Numero progressivo</label><input
+                  id="documentNumber" type="text" inputmode="numeric" pattern="[0-9]+" class="form-control" required>
+                <div class="form-text">Puoi usare 01, 00001 o qualsiasi altra numerazione a cifre.</div>
+              </div>
+              <div class="col-12"><label class="form-label">Contenuto</label>
+                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione contenuto"><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="bold"><strong>B</strong></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="underline"><u>U</u></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="justifyCenter">Centro</button><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="insertUnorderedList">Elenco</button><select
+                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
+                    <option value="Georgia">Georgia</option>
+                    <option value="Raleway">Raleway</option>
+                    <option value="Pinyon Script">Pinyon Script</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Verdana">Verdana</option>
+                  </select>
+                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
+                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
+                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
+                      data-editor-command="fontSizePx">
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                      <option value="11">11</option>
+                      <option value="12">12</option>
+                      <option value="14">14</option>
+                      <option value="16">16</option>
+                      <option value="18">18</option>
+                      <option value="20">20</option>
+                      <option value="24">24</option>
+                      <option value="28">28</option>
+                      <option value="32">32</option>
+                      <option value="36">36</option>
+                      <option value="42">42</option>
+                      <option value="48">48</option>
+                      <option value="56">56</option>
+                      <option value="64">64</option>
+                      <option value="72">72</option>
+                      <option value="84">84</option>
+                      <option value="96">96</option>
+                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
+                </div>
+                <div id="documentBodyEditor" class="rich-editor" contenteditable="true"
+                  data-placeholder="Scrivi il contenuto del documento..."></div><textarea id="documentBody"
+                  class="d-none"></textarea>
+              </div>
+                <div class="col-12" style="display: none"><label for="documentImage" class="form-label">Immagine predefinita</label><input
+                  id="documentImage" type="file" accept="image/*" class="form-control">
+                <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
+                  template.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva
+              documento</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="templateModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <form id="templateForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Redazione</p>
+              <h2 class="modal-title h4">Nuovo template</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-6"><label for="templateName" class="form-label">Nome template</label><input
+                  id="templateName" class="form-control" required placeholder="Es. Sentenza ordinaria"></div>
+              <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
+                  id="templateCategory" class="form-select" required></select></div>
+              <div class="col-12"><label class="form-label">Struttura del contenuto</label>
+                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione template"><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="bold"><strong>B</strong></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="underline"><u>U</u></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="justifyCenter">Centro</button><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="insertUnorderedList">Elenco</button><select
+                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
+                    <option value="Georgia">Georgia</option>
+                    <option value="Raleway">Raleway</option>
+                    <option value="Pinyon Script">Pinyon Script</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Verdana">Verdana</option>
+                  </select>
+                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
+                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
+                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
+                      data-editor-command="fontSizePx">
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                      <option value="11">11</option>
+                      <option value="12">12</option>
+                      <option value="14">14</option>
+                      <option value="16">16</option>
+                      <option value="18">18</option>
+                      <option value="20">20</option>
+                      <option value="24">24</option>
+                      <option value="28">28</option>
+                      <option value="32">32</option>
+                      <option value="36">36</option>
+                      <option value="42">42</option>
+                      <option value="48">48</option>
+                      <option value="56">56</option>
+                      <option value="64">64</option>
+                      <option value="72">72</option>
+                      <option value="84">84</option>
+                      <option value="96">96</option>
+                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
+                </div>
+                <div id="templateBodyEditor" class="rich-editor" contenteditable="true"
+                  data-placeholder="Inserisci una traccia riutilizzabile..."></div><textarea id="templateBody"
+                  class="d-none"></textarea>
+              </div>
+              <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine predefinita</label><input
+                  id="templateImage" type="file" accept="image/*" class="form-control">
+                <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
+                  template.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva
+              template</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="partyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form id="partyForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Archivio politico</p>
+              <h2 class="modal-title h4">Nuovo partito</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
+                  id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div>
+              <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select id="partyStatus"
+                  class="form-select" required>
+                  <option value="attivo">Attivo</option>
+                  <option value="eliminato">Eliminato</option>
+                  <option value="confluito">Confluito</option>
+                  <option value="cancellato">Cancellato</option>
+                </select></div>
+              <div class="col-12">
+                <h3 class="h6 mb-1">Informazioni minime</h3>
+                <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+              </div>
+              <div id="partyFields" class="row g-3"></div>
+              <div class="col-12 d-none" id="partyHistoryPanel">
+                <h3 class="h6 mb-2">Storico modifiche</h3>
+                <div id="partyHistory" class="history-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              partito</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="editor-page d-none" id="partyStatuteEditor">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow text-secondary mb-1">Documento del partito</p>
+            <h2 class="modal-title h4">Statuto</h2>
+            <p class="text-secondary small mb-0" id="partyStatuteSubtitle"></p>
+          </div><button type="button" class="btn-close" id="closePartyStatuteEditor" aria-label="Chiudi"></button>
+        </div>
+        <form id="partyStatuteForm">
+          <div class="modal-body">
+            <div class="row g-3">
+              <aside class="party-statute-sidebar">
+                <div><span class="form-label d-block">Partito</span><strong id="partyStatutePartyName"></strong></div>
+                <div><span class="form-label d-block">Status</span><span id="partyStatuteStatus" class="badge"></span>
+                </div>
+                <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
+              </aside>
+              <section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label>
+                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione Statuto"><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="bold"><strong>B</strong></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="underline"><u>U</u></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="justifyCenter">Centro</button><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="insertUnorderedList">Elenco</button><select
+                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
+                    <option value="Georgia">Georgia</option>
+                    <option value="Raleway">Raleway</option>
+                    <option value="Pinyon Script">Pinyon Script</option>
+                  </select>
+                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
+                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
+                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
+                      data-editor-command="fontSizePx">
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                      <option value="11">11</option>
+                      <option value="12">12</option>
+                      <option value="14">14</option>
+                      <option value="16">16</option>
+                      <option value="18">18</option>
+                      <option value="20">20</option>
+                      <option value="24">24</option>
+                      <option value="28">28</option>
+                      <option value="32">32</option>
+                      <option value="36">36</option>
+                      <option value="42">42</option>
+                      <option value="48">48</option>
+                      <option value="56">56</option>
+                      <option value="64">64</option>
+                      <option value="72">72</option>
+                      <option value="84">84</option>
+                      <option value="96">96</option>
+                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
+                </div>
+                <div class="rich-editor" id="partyStatuteEditorContent" contenteditable="true"
+                  data-placeholder="Scrivi lo Statuto del partito..."></div><input type="hidden" id="partyStatuteValue">
+              </section>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              id="cancelPartyStatuteEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              Statuto</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="companyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <form id="companyForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Archivio imprese</p>
+              <h2 class="modal-title h4">Nuova azienda</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body"><label for="companyName" class="form-label">Nome dell’azienda</label><input
+              id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A.">
+            <p class="form-text mb-0">Dopo il salvataggio potrai inserire il Regolamento come documento separato.</p>
+            <div class="d-none" id="companyHistoryPanel">
+              <h3 class="h6 mt-4 mb-2">Storico modifiche</h3>
+              <div id="companyHistory" class="history-list"></div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              azienda</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="editor-page d-none" id="companyRegulationEditor">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow text-secondary mb-1">Documento dell’azienda</p>
+            <h2 class="modal-title h4">Regolamento</h2>
+            <p class="text-secondary small mb-0" id="companyRegulationSubtitle"></p>
+          </div><button type="button" class="btn-close" id="closeCompanyRegulationEditor" aria-label="Chiudi"></button>
+        </div>
+        <form id="companyRegulationForm">
+          <div class="modal-body">
+            <div class="row g-3">
+              <aside class="party-statute-sidebar">
+                <div><span class="form-label d-block">Azienda</span><strong id="companyRegulationCompanyName"></strong>
+                </div>
+                <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
+              </aside>
+              <section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label>
+                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione Regolamento"><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="bold"><strong>B</strong></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="underline"><u>U</u></button><button type="button"
+                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
+                    type="button" class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="justifyCenter">Centro</button><button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-editor-command="insertUnorderedList">Elenco</button><select
+                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
+                    <option value="Georgia">Georgia</option>
+                    <option value="Raleway">Raleway</option>
+                    <option value="Pinyon Script">Pinyon Script</option>
+                  </select>
+                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
+                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
+                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
+                      data-editor-command="fontSizePx">
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                      <option value="11">11</option>
+                      <option value="12">12</option>
+                      <option value="14">14</option>
+                      <option value="16">16</option>
+                      <option value="18">18</option>
+                      <option value="20">20</option>
+                      <option value="24">24</option>
+                      <option value="28">28</option>
+                      <option value="32">32</option>
+                      <option value="36">36</option>
+                      <option value="42">42</option>
+                      <option value="48">48</option>
+                      <option value="56">56</option>
+                      <option value="64">64</option>
+                      <option value="72">72</option>
+                      <option value="84">84</option>
+                      <option value="96">96</option>
+                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
+                </div>
+                <div class="rich-editor" id="companyRegulationEditorContent" contenteditable="true"
+                  data-placeholder="Scrivi il Regolamento dell’azienda..."></div><input type="hidden"
+                  id="companyRegulationValue">
+              </section>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              id="cancelCompanyRegulationEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              Regolamento</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="statuteHistoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow text-secondary mb-1">Confronto storico</p>
+            <h2 class="modal-title h4" id="statuteHistoryTitle">Statuto</h2>
+            <p class="text-secondary small mb-0" id="statuteHistoryDate"></p>
+          </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+        </div>
+        <div class="modal-body">
+          <div class="diff-legend mb-3"><span><mark class="diff-removed">Testo rimosso</mark></span><span><mark
+                class="diff-added">Testo aggiunto</mark></span></div>
+          <div class="row g-3">
+            <div class="col-12 col-lg-6">
+              <h3 class="h6">Versione precedente</h3>
+              <div id="statutePreviousVersion" class="statute-version"></div>
+            </div>
+            <div class="col-12 col-lg-6">
+              <h3 class="h6">Versione successiva</h3>
+              <div id="statuteNextVersion" class="statute-version"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="parliamentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form id="parliamentForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Archivio istituzionale</p>
+              <h2 class="modal-title h4">Nuovo mandato</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-4"><label for="legislationNumber" class="form-label">Numero legislazione</label><input
+                  id="legislationNumber" class="form-control" required placeholder="Es. XVIII"></div>
+              <div class="col-md-4"><label for="mandateStart" class="form-label">Data inizio</label><input
+                  id="mandateStart" type="date" class="form-control" required></div>
+              <div class="col-md-4"><label for="mandateEnd" class="form-label">Data fine</label><input id="mandateEnd"
+                  type="date" class="form-control" required></div>
+              <div class="col-12"><label for="mandateStatus" class="form-label">Tag mandato</label><select
+                  id="mandateStatus" class="form-select" required>
+                  <option value="in corso">In corso</option>
+                  <option value="concluso">Concluso</option>
+                </select></div>
+              <div class="col-12">
+                <hr>
+                <div class="d-flex justify-content-between align-items-center">
+                  <div>
+                    <h3 class="h6 mb-1">Parlamentari</h3>
+                    <p class="text-secondary small mb-0">Titolari e sostituti restano nello storico anche dopo le
+                      dimissioni.</p>
+                  </div><button type="button" class="btn btn-sm btn-primary" id="addMemberButton">+ Nuova
+                    nomina</button>
+                </div>
+              </div>
+              <div class="col-12">
+                <h4 class="h6">Titolari</h4>
+                <div id="titularList" class="parliament-member-list"></div>
+              </div>
+              <div class="col-12">
+                <h4 class="h6">Sostituti</h4>
+                <div id="substituteList" class="parliament-member-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              mandato</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="modal fade" id="memberModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form id="memberForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Nomina parlamentare</p>
+              <h2 class="modal-title h4">Nuovo parlamentare</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-7"><label for="memberName" class="form-label">Nome e cognome</label><input
+                  id="memberName" class="form-control" required></div>
+              <div class="col-md-5"><label for="memberRole" class="form-label">Ruolo</label><select id="memberRole"
+                  class="form-select" required>
+                  <option value="titolare">Titolare</option>
+                  <option value="sostituto">Sostituto</option>
+                </select></div>
+              <div class="col-md-6"><label for="oathDate" class="form-label">Data di giuramento</label><input
+                  id="oathDate" type="date" class="form-control" required></div>
+              <div class="col-md-6"><label for="resignationDate" class="form-label">Data dimissioni</label><input
+                  id="resignationDate" type="date" class="form-control"></div>
+              <div class="col-md-6"><label for="memberParty" class="form-label">Partito di appartenenza</label><input
+                  id="memberParty" class="form-control"></div>
+              <div class="col-md-6"><label for="memberCoalition" class="form-label">Coalizione di
+                  appartenenza</label><input id="memberCoalition" class="form-control"></div>
+              <div class="col-12"><label for="memberAnnotations" class="form-label">Annotazioni</label><textarea
+                  id="memberAnnotations" class="form-control" rows="3"
+                  placeholder="Es. Presenze, deleghe, note di controllo..."></textarea></div>
+              <div id="memberExtraFields" class="row g-3"></div>
+              <div class="col-12">
+                <div class="form-text">La dimissione si registra con l’azione dedicata nella scheda del mandato.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              nomina</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="appToast" class="toast" role="status">
+      <div class="toast-body"></div>
+    </div>
+  </div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app.js"></script>
 </body>
+
 </html>

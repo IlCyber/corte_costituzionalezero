@@ -1,3 +1,10 @@
+@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-400.css');
+@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-500.css');
+@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-600.css');
+@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-700.css');
+@import url('https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script/400.css');
+@font-face { font-family: 'Pinyon Script'; font-style: normal; font-weight: 400; src: url('fonts/PinyonScript-Regular.ttf') format('truetype'); font-display: swap; }
+
 :root {
   --ink: #17202a;
   --muted: #68727d;
@@ -28,6 +35,9 @@ img { max-width: 100%; height: auto; }
 .form-control:focus, .form-select:focus { border-color: #c66e59; box-shadow: 0 0 0 .2rem rgba(166, 64, 45, .14); }
 .stat-card { background: #fff; border-left: 4px solid var(--accent); padding: 1rem 1.25rem; min-height: 6.25rem; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 .125rem .25rem rgba(23,32,42,.06); }
 .stat-card strong { font-size: 1.65rem; font-weight: 700; }
+.trash-stat-card { min-width: 11rem; border-left-color: var(--navy); }
+#trashView .table { min-width: 820px; }
+#trashView .empty-state .display-6 { font-size: 3rem; }
 .search-box { width: min(100%, 25rem); }
 .table { --bs-table-bg: #fff; --bs-table-border-color: #eeeae4; min-width: 720px; }
 .table thead th { color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
@@ -69,17 +79,17 @@ img { max-width: 100%; height: auto; }
 #partyModal #partyHistoryPanel { margin-top: 1rem; }
 #partyModal .history-list { max-height: 22rem; }
 #companyModal .modal-dialog { max-width: 980px; }
-#companyModal .modal-body { min-height: 20rem; }
+#companyModal .modal-body { min-height: 22rem; }
 #companyModal .history-list { max-height: 22rem; }
 .diff-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .82rem; }
 .diff-removed { background: #f7c7c4; color: #7d211c; text-decoration: line-through; }
 .diff-added { background: #c9edcf; color: #1f6330; }
 .statute-version { min-height: 14rem; max-height: 32rem; overflow: auto; padding: 1rem; border: 1px solid var(--line); background: #fff; white-space: pre-wrap; line-height: 1.65; }
-.party-statute-editor .modal-dialog { width: min(100%, 1200px); max-width: none; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.party-statute-editor .modal-dialog { width: min(100%, 1600px); max-width: none; margin: 0 auto; padding: 2rem 1rem 4rem; }
 #partyStatuteEditor .modal-content { background: transparent; }
 #partyStatuteEditor .modal-header { border: 0; background: transparent; padding-left: 0; padding-right: 0; }
 #partyStatuteEditor .modal-body { padding: 0; background: #e9edf1; border: 1px solid var(--line); box-shadow: 0 .25rem .75rem rgba(23,32,42,.08); overflow: hidden; }
-#partyStatuteEditor .modal-body > .row { display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 18rem, #e9edf1 18rem 100%); }
+#partyStatuteEditor .modal-body > .row { display: grid; grid-template-columns: 22rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 22rem, #e9edf1 22rem 100%); }
 .party-statute-sidebar { grid-column: 1; min-width: 0; padding: 1rem 1.1rem; background: transparent; }
 .party-statute-sidebar > div { padding: .7rem 0; border-bottom: 1px solid #dfe3e6; }
 .party-statute-sidebar .form-label, .party-statute-canvas > .form-label { color: #68727d; margin-bottom: .3rem; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
@@ -89,14 +99,25 @@ img { max-width: 100%; height: auto; }
 #companyRegulationEditor .modal-content { background: transparent; }
 #companyRegulationEditor .modal-header { border: 0; background: transparent; padding-left: 0; padding-right: 0; }
 #companyRegulationEditor .modal-body { padding: 0; background: #e9edf1; border: 1px solid var(--line); box-shadow: 0 .25rem .75rem rgba(23,32,42,.08); overflow: hidden; }
-#companyRegulationEditor .modal-body > .row { display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 18rem, #e9edf1 18rem 100%); }
+#companyRegulationEditor .modal-body > .row { display: grid; grid-template-columns: 22rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 22rem, #e9edf1 22rem 100%); }
 #companyRegulationEditor .modal-footer { background: #f7f8f9; border: 1px solid var(--line); border-top: 0; padding: 1rem 1.25rem; }
 #companyRegulationEditor .rich-editor { display: block; }
-.editor-toolbar { display: flex; flex-wrap: wrap; gap: .35rem; padding: .55rem; border: 1px solid var(--line); border-bottom: 0; background: #faf8f4; }
+.editor-page,
+.editor-page .modal-dialog,
+.editor-page .modal-content,
+.editor-page .modal-body { overflow: visible; }
+.editor-toolbar { position: sticky !important; top: 3.55rem !important; z-index: 1000; display: flex; flex-wrap: wrap; gap: .35rem; padding: .55rem; border: 1px solid var(--line); border-bottom: 0; background: rgba(250, 248, 244, .97); box-shadow: 0 .2rem .65rem rgba(23,32,42,.12); backdrop-filter: blur(6px); }
 .editor-toolbar button, .editor-toolbar .editor-select, .editor-toolbar .editor-size { transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .15s ease; }
-.editor-toolbar button:hover, .editor-toolbar button:focus-visible, .editor-toolbar .editor-select:hover, .editor-toolbar .editor-select:focus, .editor-toolbar .editor-size:hover, .editor-toolbar .editor-size:focus { border-color: var(--accent); background-color: var(--accent); color: #fff; transform: translateY(-1px); }
+.editor-toolbar button:hover, .editor-toolbar button:focus-visible, .editor-toolbar .editor-select:hover, .editor-toolbar .editor-select:focus { border-color: var(--accent); background-color: var(--accent); color: #fff; transform: translateY(-1px); }
+.editor-toolbar .editor-size:hover, .editor-toolbar .editor-size:focus { border-color: var(--accent); background-color: #fff; color: var(--ink); transform: translateY(-1px); }
 .editor-toolbar .editor-select { width: auto; min-width: 7rem; }
-.editor-toolbar .editor-size { width: 4.25rem; text-align: center; }
+.editor-toolbar .editor-size-control { display: inline-flex; align-items: center; min-height: 2rem; border: 1px solid var(--line); border-radius: .25rem; background: #fff; overflow: hidden; }
+.editor-toolbar .editor-size-label, .editor-toolbar .editor-size-unit { padding: 0 .4rem; color: var(--muted); font: 700 .68rem/1 system-ui, -apple-system, 'Segoe UI', sans-serif; letter-spacing: .04em; }
+.editor-toolbar .editor-size-label { border-right: 1px solid var(--line); }
+.editor-toolbar .editor-size-unit { border-left: 1px solid var(--line); }
+.editor-toolbar .editor-size { display: block; width: 4.8rem; min-width: 4.8rem; height: 1.9rem; padding: .15rem .3rem; border: 0; border-radius: 0; text-align: center; font-variant-numeric: tabular-nums; box-shadow: none; }
+.editor-toolbar .editor-size:focus { box-shadow: inset 0 0 0 .12rem rgba(166, 64, 45, .28); }
+.editor-toolbar .editor-size::-webkit-inner-spin-button, .editor-toolbar .editor-size::-webkit-outer-spin-button { opacity: 1; }
 .editor-toolbar .editor-color-control { position: relative; display: grid; place-items: center; width: 2.15rem; height: 2rem; border: 1px solid var(--line); border-radius: .25rem; background: #fff; color: var(--ink); cursor: pointer; }
 .editor-toolbar .editor-color-control:hover { background: #f0ece6; }
 .editor-toolbar .editor-color-control i { pointer-events: none; }
@@ -104,81 +125,98 @@ img { max-width: 100%; height: auto; }
 .rich-editor table.document-table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
 .rich-editor table.document-table td { min-width: 4rem; border: 1px solid #aeb7bf; padding: .5rem; }
 .rich-editor blockquote { margin: 1rem 0; padding: .75rem 1rem; border-left: .25rem solid var(--accent); background: #faf8f4; color: var(--muted); }
-.rich-editor { width: min(100%, 21cm); min-height: 29.7cm; box-sizing: border-box; margin: 1.25rem auto 0; padding: 1.4cm 1.25cm; border: 1px solid #e2e6ea; background: #fff; box-shadow: 0 .35rem 1.25rem rgba(23,32,42,.12); line-height: 1.65; outline: 0; }
+.rich-editor { position: relative; overflow: hidden; width: min(100%, 21cm); min-height: max(29.7cm, calc(100vh - 18rem)); box-sizing: border-box; margin: 1.25rem auto 0; padding: 1.4cm 1.25cm; border: 1px solid #e2e6ea; background: #fff; box-shadow: 0 .35rem 1.25rem rgba(23,32,42,.12); font-size: 12pt; line-height: 1.65; outline: 0; }
 .rich-editor:focus { border-color: #c66e59; box-shadow: 0 0 0 .2rem rgba(166, 64, 45, .14); }
 .rich-editor:empty::before { content: attr(data-placeholder); color: #9aa1a8; pointer-events: none; }
 .rich-editor ul, .rich-editor ol { padding-left: 1.5rem; }
+.rich-editor .editor-image { position: absolute; max-width: 100%; height: auto; display: block; margin: 0; cursor: grab; user-select: none; z-index: 0; }
+.rich-editor .editor-image:hover, .rich-editor .editor-image.is-selected { cursor: grab; }
+.rich-editor .editor-image.is-resizing { cursor: nwse-resize; opacity: .82; }
+.rich-editor > :not(.editor-image) { position: relative; z-index: 1; }
+.rich-editor .editor-image.is-selected { outline: 2px solid var(--accent); outline-offset: 3px; }
+.rich-editor .editor-image.is-dragging { cursor: grabbing; opacity: .78; }
+.pdf-export-source .editor-image { max-width: 100%; height: auto; display: block; margin: 1rem 0; }
 .editor-page { min-height: calc(100vh - 4.5rem); background: var(--paper); }
-.editor-page .modal-dialog { width: min(100%, 1200px); max-width: none; margin: 0 auto; padding: 2rem 1rem 4rem; }
+.editor-page .modal-dialog { width: min(100%, 1840px); max-width: none; margin: 0 auto; padding: .65rem .75rem 4rem; }
 .editor-page .modal-content { background: transparent; }
 .editor-page .modal-header { border: 0; background: transparent; padding-left: 0; padding-right: 0; }
 .editor-page .modal-body { background: #fff; border: 1px solid var(--line); box-shadow: 0 .25rem .75rem rgba(23,32,42,.08); padding: clamp(1rem, 3vw, 3rem); }
-.editor-page#documentModal .modal-body { padding: 0; background: #e9edf1; overflow: hidden; }
-.editor-page#documentModal .modal-body > .row { display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 18rem, #e9edf1 18rem 100%); }
-.editor-page#documentModal .modal-body > .row > .col-12,
-.editor-page#documentModal .modal-body > .row > .col-md-6 { margin: 0; width: auto; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1),
-.editor-page#documentModal .modal-body > .row > :nth-child(2),
-.editor-page#documentModal .modal-body > .row > :nth-child(3),
-.editor-page#documentModal .modal-body > .row > :nth-child(4),
-.editor-page#documentModal .modal-body > .row > :nth-child(5),
-.editor-page#documentModal .modal-body > .row > :nth-child(7) { grid-column: 1; padding: 1rem 1.25rem 0; background: transparent; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1),
-.editor-page#documentModal .modal-body > .row > :nth-child(2),
-.editor-page#documentModal .modal-body > .row > :nth-child(3),
-.editor-page#documentModal .modal-body > .row > :nth-child(4),
-.editor-page#documentModal .modal-body > .row > :nth-child(5) { padding: .65rem 1.1rem 0; background: transparent; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) { padding-top: 1rem; }
-.editor-page#documentModal .modal-body > .row > :nth-child(6) { grid-column: 2; grid-row: 1 / span 6; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; min-width: 0; }
-.editor-page#documentModal .modal-body > .row > :nth-child(7) { padding: .65rem 1.1rem 1rem; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(2) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(3) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(4) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(5) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(7) .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) .form-control,
-.editor-page#documentModal .modal-body > .row > :nth-child(2) .form-control,
-.editor-page#documentModal .modal-body > .row > :nth-child(3) .form-control,
-.editor-page#documentModal .modal-body > .row > :nth-child(4) .form-control,
-.editor-page#documentModal .modal-body > .row > :nth-child(5) .form-control,
-.editor-page#documentModal .modal-body > .row > :nth-child(7) .form-control { border-color: #d8dde1; background: rgba(255,255,255,.86); }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) .form-control { font-weight: 600; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(2) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(3) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(4) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(5) .form-label,
-.editor-page#documentModal .modal-body > .row > :nth-child(7) .form-label { margin-bottom: .3rem; }
-.editor-page#documentModal .modal-body > .row > :nth-child(1) .form-text,
-.editor-page#documentModal .modal-body > .row > :nth-child(2) .form-text,
-.editor-page#documentModal .modal-body > .row > :nth-child(3) .form-text,
-.editor-page#documentModal .modal-body > .row > :nth-child(4) .form-text,
-.editor-page#documentModal .modal-body > .row > :nth-child(5) .form-text,
-.editor-page#documentModal .modal-body > .row > :nth-child(7) .form-text { margin-top: .25rem; }
-.editor-page#documentModal .modal-body > .row > :nth-child(5) { padding-bottom: .65rem; border-bottom: 1px solid #dfe3e6; }
-.editor-page#documentModal .modal-body > .row > :nth-child(6) { border-left: 1px solid #dfe3e6; background: #eef1f3; }
-.editor-page#documentModal .modal-body > .row > :nth-child(6) > .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.editor-page#documentModal .rich-editor { margin-top: 1rem; }
-.editor-page#documentModal .editor-toolbar { position: sticky; top: 0; z-index: 2; }
-.editor-page#documentModal .modal-footer { background: #f7f8f9; border: 1px solid var(--line); border-top: 0; padding: 1rem 1.25rem; }
-.editor-page#documentModal .document-sidebar { grid-column: 1; min-width: 0; padding: .35rem 1.1rem 1rem; background: transparent; }
-.editor-page#documentModal .modal-body > .row > .document-sidebar { grid-column: 1; grid-row: 1; }
-.editor-page#documentModal .document-sidebar > * { width: auto; padding: .55rem 0; margin: 0; }
-.editor-page#documentModal .document-sidebar > :first-child { padding-top: .7rem; }
-.editor-page#documentModal .document-sidebar > :last-child { padding-bottom: .7rem; border-top: 1px solid #dfe3e6; }
-.editor-page#documentModal .document-sidebar .form-label { color: #68727d; margin-bottom: .3rem; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.editor-page#documentModal .document-sidebar .form-control,
-.editor-page#documentModal .document-sidebar .form-select { border-color: #d8dde1; background: rgba(255,255,255,.86); }
-.editor-page#documentModal .document-sidebar .form-text { margin-top: .25rem; }
-.editor-page#documentModal .document-sidebar > :first-child .form-control { font-weight: 600; }
-.editor-page#documentModal .document-canvas { grid-column: 2; min-width: 0; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; border-left: 1px solid #dfe3e6; background: #eef1f3; }
-.editor-page#documentModal .modal-body > .row > .document-canvas { grid-column: 2; grid-row: 1; width: auto; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; border-left: 1px solid #dfe3e6; background: #eef1f3; }
-.editor-page#documentModal .document-canvas > .col-12 { width: auto; padding: 0; margin: 0; }
-.editor-page#documentModal .document-canvas > .col-12 > .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.editor-page#documentModal .document-canvas .rich-editor { display: block; }
+#documentModal .modal-body { padding: 0; background: #e9edf1; overflow: visible; }
+#documentModal .modal-body > .row { display: grid; grid-template-columns: 20rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 20rem, #e9edf1 20rem 100%); }
+#documentModal .modal-body > .row > .col-12,
+#documentModal .modal-body > .row > .col-md-6 { margin: 0; width: auto; }
+#documentModal .modal-body > .row > :nth-child(1),
+#documentModal .modal-body > .row > :nth-child(2),
+#documentModal .modal-body > .row > :nth-child(3),
+#documentModal .modal-body > .row > :nth-child(4),
+#documentModal .modal-body > .row > :nth-child(5),
+#documentModal .modal-body > .row > :nth-child(7) { grid-column: 1; padding: 1rem 1.25rem 0; background: transparent; }
+#documentModal .modal-body > .row > :nth-child(1),
+#documentModal .modal-body > .row > :nth-child(2),
+#documentModal .modal-body > .row > :nth-child(3),
+#documentModal .modal-body > .row > :nth-child(4),
+#documentModal .modal-body > .row > :nth-child(5) { padding: .65rem 1.1rem 0; background: transparent; }
+#documentModal .modal-body > .row > :nth-child(1) { padding-top: 1rem; }
+#documentModal .modal-body > .row > :nth-child(6) { grid-column: 2; grid-row: 1 / span 6; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; min-width: 0; }
+#documentModal .modal-body > .row > :nth-child(7) { padding: .65rem 1.1rem 1rem; }
+#documentModal .modal-body > .row > :nth-child(1) .form-label,
+#documentModal .modal-body > .row > :nth-child(2) .form-label,
+#documentModal .modal-body > .row > :nth-child(3) .form-label,
+#documentModal .modal-body > .row > :nth-child(4) .form-label,
+#documentModal .modal-body > .row > :nth-child(5) .form-label,
+#documentModal .modal-body > .row > :nth-child(7) .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+#documentModal .modal-body > .row > :nth-child(1) .form-control,
+#documentModal .modal-body > .row > :nth-child(2) .form-control,
+#documentModal .modal-body > .row > :nth-child(3) .form-control,
+#documentModal .modal-body > .row > :nth-child(4) .form-control,
+#documentModal .modal-body > .row > :nth-child(5) .form-control,
+#documentModal .modal-body > .row > :nth-child(7) .form-control { border-color: #d8dde1; background: rgba(255,255,255,.86); }
+#documentModal .modal-body > .row > :nth-child(1) .form-control { font-weight: 600; }
+#documentModal .modal-body > .row > :nth-child(1) .form-label,
+#documentModal .modal-body > .row > :nth-child(2) .form-label,
+#documentModal .modal-body > .row > :nth-child(3) .form-label,
+#documentModal .modal-body > .row > :nth-child(4) .form-label,
+#documentModal .modal-body > .row > :nth-child(5) .form-label,
+#documentModal .modal-body > .row > :nth-child(7) .form-label { margin-bottom: .3rem; }
+#documentModal .modal-body > .row > :nth-child(1) .form-text,
+#documentModal .modal-body > .row > :nth-child(2) .form-text,
+#documentModal .modal-body > .row > :nth-child(3) .form-text,
+#documentModal .modal-body > .row > :nth-child(4) .form-text,
+#documentModal .modal-body > .row > :nth-child(5) .form-text,
+#documentModal .modal-body > .row > :nth-child(7) .form-text { margin-top: .25rem; }
+#documentModal .modal-body > .row > :nth-child(5) { padding-bottom: .65rem; border-bottom: 1px solid #dfe3e6; }
+#documentModal .modal-body > .row > :nth-child(6) { border-left: 1px solid #dfe3e6; background: #eef1f3; }
+#documentModal .modal-body > .row > :nth-child(6) > .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+#documentModal .rich-editor { margin-top: 1rem; }
+#documentModal .editor-toolbar { position: sticky; top: 3.55rem; z-index: 20; display: flex; align-items: center; padding: .65rem; border: 1px solid #cfd6dc; border-radius: .35rem; background: rgba(250, 248, 244, .97); box-shadow: 0 .2rem .65rem rgba(23,32,42,.12); backdrop-filter: blur(6px); }
+#documentModal .editor-toolbar::before { content: 'Strumenti di formattazione'; margin-right: .35rem; color: var(--muted); font: 700 .68rem/1 system-ui, -apple-system, 'Segoe UI', sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+.editor-page#templateModal .editor-toolbar,
+.editor-page#partyStatuteEditor .editor-toolbar,
+.editor-page#companyRegulationEditor .editor-toolbar { position: sticky; top: 3.55rem; z-index: 20; display: flex; align-items: center; padding: .65rem; border: 1px solid #cfd6dc; border-radius: .35rem; background: rgba(250, 248, 244, .97); box-shadow: 0 .2rem .65rem rgba(23,32,42,.12); backdrop-filter: blur(6px); }
+.editor-page#templateModal .editor-toolbar::before,
+.editor-page#partyStatuteEditor .editor-toolbar::before,
+.editor-page#companyRegulationEditor .editor-toolbar::before { content: 'Strumenti di formattazione'; margin-right: .35rem; color: var(--muted); font: 700 .68rem/1 system-ui, -apple-system, 'Segoe UI', sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+#documentModal .modal-footer { background: #f7f8f9; border: 1px solid var(--line); border-top: 0; padding: 1rem 1.25rem; }
+#documentModal .document-sidebar { grid-column: 1; min-width: 0; padding: .35rem 1.1rem 1rem; background: transparent; }
+#documentModal .modal-body > .row > .document-sidebar { grid-column: 1; grid-row: 1; }
+#documentModal .document-sidebar > * { width: auto; padding: .55rem 0; margin: 0; }
+#documentModal .document-sidebar > :first-child { padding-top: .7rem; }
+#documentModal .document-sidebar > :last-child { padding-bottom: .7rem; border-top: 1px solid #dfe3e6; }
+#documentModal .document-sidebar .form-label { color: #68727d; margin-bottom: .3rem; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+#documentModal .document-sidebar .form-control,
+#documentModal .document-sidebar .form-select { border-color: #d8dde1; background: rgba(255,255,255,.86); }
+#documentModal .document-sidebar .form-text { margin-top: .25rem; }
+#documentModal .document-sidebar > :first-child .form-control { font-weight: 600; }
+#documentModal .document-canvas { grid-column: 2; min-width: 0; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; border-left: 1px solid #dfe3e6; background: #eef1f3; }
+#documentModal .modal-body > .row > .document-canvas { grid-column: 2; grid-row: 1; width: auto; padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2.5rem; border-left: 1px solid #dfe3e6; background: #eef1f3; }
+#documentModal .document-canvas > .col-12 { width: auto; padding: 0; margin: 0; }
+#documentModal .document-canvas > .col-12 > .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+#documentModal .document-canvas .rich-editor { display: block; }
 .editor-page#templateModal .modal-body { padding: 0; background: #e9edf1; overflow: hidden; }
-.editor-page#templateModal .modal-body > .row { display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 18rem, #e9edf1 18rem 100%); }
+.editor-page#templateModal .modal-body,
+#partyStatuteEditor .modal-body,
+#companyRegulationEditor .modal-body { overflow: visible; }
+.editor-page#templateModal .modal-body > .row { display: grid; grid-template-columns: 22rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 22rem, #e9edf1 22rem 100%); }
 .editor-page#templateModal .template-sidebar { grid-column: 1; grid-row: 1; min-width: 0; padding: .35rem 1.1rem 1rem; background: transparent; }
 .editor-page#templateModal .template-sidebar > * { width: auto; padding: .65rem 0; margin: 0; }
 .editor-page#templateModal .template-sidebar > :first-child { padding-top: 1rem; }
@@ -192,11 +230,19 @@ img { max-width: 100%; height: auto; }
 .editor-page#templateModal .template-canvas .rich-editor { display: block; }
 .editor-page .modal-footer { border: 0; padding-left: 0; padding-right: 0; }
 .editor-page .btn-close { margin-left: auto; }
+.pdf-export-source { box-sizing: border-box; min-height: 1px; margin: 0 !important; padding: 0 !important; background: #fff; color: #17202a; font-family: Georgia, 'Times New Roman', serif; font-size: 12pt; line-height: 1.65; white-space: normal; overflow-wrap: break-word; word-break: normal; }
+.pdf-export-source * { box-sizing: border-box; max-width: 100%; white-space: normal; overflow-wrap: break-word; }
+.pdf-export-source img { width: auto; max-width: 100%; height: auto; }
+.pdf-export-source table { width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
+.pdf-export-source td { border: 1px solid #aeb7bf; padding: .5rem; }
+.pdf-export-source img, .pdf-export-source table, .pdf-export-source blockquote { break-inside: avoid; page-break-inside: avoid; }
+.pdf-export-source p, .pdf-export-source li { break-inside: avoid; page-break-inside: avoid; }
+.pdf-export-source h1, .pdf-export-source h2, .pdf-export-source h3, .pdf-export-source h4 { break-after: avoid; page-break-after: avoid; }
 .modal-content { border: 0; border-radius: .4rem; }
 .modal-header { background: #faf8f4; }
 @media (max-width: 1199.98px) {
   .editor-page .modal-dialog { width: 100%; }
-  .editor-page#documentModal .modal-body > .row { grid-template-columns: 16rem minmax(0, 1fr); background: linear-gradient(90deg, #f4f6f7 0 16rem, #e9edf1 16rem 100%); }
+  #documentModal .modal-body > .row { grid-template-columns: 17rem minmax(0, 1fr); background: linear-gradient(90deg, #f4f6f7 0 17rem, #e9edf1 17rem 100%); }
 }
 
 @media (max-width: 900px) {
@@ -205,14 +251,14 @@ img { max-width: 100%; height: auto; }
   .party-statute-canvas { padding: 1.25rem 1rem 2rem; border-left: 0; }
   #companyRegulationEditor .modal-body > .row { display: block; background: #eef1f3; }
   #companyRegulationEditor .party-statute-canvas { padding: 1.25rem 1rem 2rem; border-left: 0; }
-  .editor-page#documentModal .modal-body > .row { display: block; background: #eef1f3; }
-  .editor-page#documentModal .document-sidebar { padding: .35rem 1rem .75rem; }
-  .editor-page#documentModal .document-canvas { padding: 1.25rem 1rem 2rem; border-left: 0; }
+  #documentModal .modal-body > .row { display: block; background: #eef1f3; }
+  #documentModal .document-sidebar { padding: .35rem 1rem .75rem; }
+  #documentModal .document-canvas { padding: 1.25rem 1rem 2rem; border-left: 0; }
   .editor-page#templateModal .modal-body > .row { display: block; background: #eef1f3; }
   .editor-page#templateModal .template-sidebar { padding: .35rem 1rem .75rem; }
   .editor-page#templateModal .template-canvas { padding: 1.25rem 1rem 2rem; border-left: 0; }
-  .editor-page#documentModal .modal-body > .row > :nth-child(6) { padding: 1.5rem 1rem 2rem; border-left: 0; }
-  .editor-page#documentModal .modal-body > .row > :nth-child(1), .editor-page#documentModal .modal-body > .row > :nth-child(2), .editor-page#documentModal .modal-body > .row > :nth-child(3), .editor-page#documentModal .modal-body > .row > :nth-child(4), .editor-page#documentModal .modal-body > .row > :nth-child(5), .editor-page#documentModal .modal-body > .row > :nth-child(7) { padding-left: 1rem; padding-right: 1rem; }
+  #documentModal .modal-body > .row > :nth-child(6) { padding: 1.5rem 1rem 2rem; border-left: 0; }
+  #documentModal .modal-body > .row > :nth-child(1), #documentModal .modal-body > .row > :nth-child(2), #documentModal .modal-body > .row > :nth-child(3), #documentModal .modal-body > .row > :nth-child(4), #documentModal .modal-body > .row > :nth-child(5), #documentModal .modal-body > .row > :nth-child(7) { padding-left: 1rem; padding-right: 1rem; }
 }
 
 @media (max-width: 767.98px) {
@@ -228,8 +274,12 @@ img { max-width: 100%; height: auto; }
   .editor-page .modal-body { border-left: 0; border-right: 0; }
   .editor-page .modal-footer { flex-wrap: wrap; gap: .5rem; }
   .editor-page .modal-footer .btn { flex: 1 1 10rem; }
-  .rich-editor { width: 100%; min-height: 29.7cm; padding: 1.4cm 1.25cm; }
+  .rich-editor { width: 100%; min-height: max(29.7cm, calc(100vh - 18rem)); padding: 1.4cm 1.25cm; }
   .editor-toolbar { gap: .25rem; }
+  #documentModal .editor-toolbar { top: 3.1rem; }
+  .editor-page#templateModal .editor-toolbar,
+  .editor-page#partyStatuteEditor .editor-toolbar,
+  .editor-page#companyRegulationEditor .editor-toolbar { top: 3.1rem; }
   .editor-toolbar .btn { padding: .25rem .45rem; }
   .editor-toolbar .editor-select { min-width: 6.25rem; flex: 1 1 6.25rem; }
 }

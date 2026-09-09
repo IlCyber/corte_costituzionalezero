@@ -1,5 +1,6 @@
-const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', parties: 'cz_parties', partyFields: 'cz_party_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', session: 'cz_session' };
+const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', parties: 'cz_parties', partyFields: 'cz_party_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
 const defaultCounters = { Sentenze: 1, Ordinanze: 1, Decreti: 1, 'Documenti generali': 1 };
+const defaultPageMargins = { top: 25, right: 25, bottom: 25, left: 25 };
 const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentare', limit: 10 }, { id: 'sostituto', name: 'Sostituto', limit: 5 }], fields: [] };
 const API_URL = 'api.php';
 const LOCAL_AUTH_KEYS = { users: 'cz_local_users', registrations: 'cz_local_registration_requests', resets: 'cz_local_password_reset_requests', roles: 'cz_local_roles' };
@@ -10,7 +11,7 @@ const PERMISSION_CATALOG = [
   { key: 'government', label: 'Governo', group: 'Archivi istituzionali' }, { key: 'composition', label: 'Composizione della Corte', group: 'Archivi istituzionali' }, { key: 'interpretations', label: 'Interpretazioni', group: 'Archivi istituzionali' },
   { key: 'settings', label: 'Impostazioni', group: 'Configurazione' }, { key: 'users', label: 'Utenti e permessi', group: 'Amministrazione' }
 ];
-const PERMISSION_ACTIONS = [['view', 'Vedere'], ['create', 'Creare'], ['edit', 'Modificare'], ['delete', 'Eliminare'], ['approve', 'Approvare'], ['download', 'Scaricare']];
+const PERMISSION_ACTIONS = [['view', 'Vedere'], ['create', 'Creare'], ['edit', 'Modificare'], ['delete', 'Spostare nel cestino'], ['restore', 'Ripristinare'], ['purge', 'Eliminare definitivamente'], ['approve', 'Approvare'], ['download', 'Scaricare']];
 let editingDocumentId = null;
 let editingTemplateId = null;
 let editingPartyId = null;
@@ -18,6 +19,8 @@ let editingCompanyId = null;
 let editingParliamentId = null;
 let editingMemberId = null;
 let savedEditorRange = null;
+const editorHistories = new WeakMap();
+let selectedEditorImage = null;
 let remoteMode = false;
 let remoteSaveTimer = null;
 let currentUser = null;
@@ -36,11 +39,16 @@ function normalizeParliamentSettings(settings = {}) {
   };
 }
 
+function normalizePageMargins(margins = {}) {
+  return Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, Math.min(60, Math.max(5, Number.parseInt(margins?.[side], 10) || defaultPageMargins[side]))]));
+}
+
 const state = {
   documents: readStorage(STORAGE_KEYS.documents, []),
   templates: readStorage(STORAGE_KEYS.templates, []),
   counters: readStorage(STORAGE_KEYS.counters, defaultCounters),
   categories: readStorage(STORAGE_KEYS.categories, Object.keys(defaultCounters).map(name => ({ name }))),
+  pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
   companies: readStorage(STORAGE_KEYS.companies, []),
@@ -51,18 +59,27 @@ const state = {
   courtCompositions: readStorage(STORAGE_KEYS.courtCompositions, []),
   compositionSettings: normalizeInstitutionSettings(readStorage(STORAGE_KEYS.compositionSettings, null), [{ id: 'presidente', name: 'Presidente della Corte', limit: 1 }, { id: 'giudice', name: 'Giudice costituzionale', limit: 15 }]),
   interpretations: readStorage(STORAGE_KEYS.interpretations, []),
-  interpretationSettings: { fields: Array.isArray(readStorage(STORAGE_KEYS.interpretationSettings, {}).fields) ? readStorage(STORAGE_KEYS.interpretationSettings, {}).fields : [] }
+  interpretationSettings: { fields: Array.isArray(readStorage(STORAGE_KEYS.interpretationSettings, {}).fields) ? readStorage(STORAGE_KEYS.interpretationSettings, {}).fields : [] },
+  trash: readStorage(STORAGE_KEYS.trash, []),
+  demoSeeded: readStorage(STORAGE_KEYS.demoSeeded, false),
+  testMandateSeeded: readStorage(STORAGE_KEYS.testMandateSeeded, false)
 };
 const localAuth = {
   users: readStorage(LOCAL_AUTH_KEYS.users, [{ id: 'local-admin', username: 'admin@localhost', displayName: 'Amministratore locale', role: 'admin', isPrimaryAdmin: true, mustChangeCredentials: true, password: 'zero2026' }]),
   registrations: readStorage(LOCAL_AUTH_KEYS.registrations, []),
   resets: readStorage(LOCAL_AUTH_KEYS.resets, []),
-  roles: readStorage(LOCAL_AUTH_KEYS.roles, [{ id: 'local-admin-role', name: 'Amministratore', roleKey: 'admin', isSystem: true, permissions: { '*': { view: true, create: true, edit: true, delete: true, approve: true, download: true } } }, { id: 'local-guest-role', name: 'Ospite', roleKey: 'guest', isSystem: true, permissions: { documents: { view: true } } }]),
+  roles: readStorage(LOCAL_AUTH_KEYS.roles, [{ id: 'local-admin-role', name: 'Amministratore', roleKey: 'admin', isSystem: true, permissions: { '*': { view: true, create: true, edit: true, delete: true, restore: true, purge: true, approve: true, download: true } } }, { id: 'local-guest-role', name: 'Ospite', roleKey: 'guest', isSystem: true, permissions: { documents: { view: true } } }]),
   logs: readStorage('cz_local_security_logs', [])
 };
 if (localAuth.users.length === 1 && localAuth.users[0].username === 'admin@localhost' && localAuth.users[0].mustChangeCredentials === undefined) {
   localAuth.users[0].mustChangeCredentials = true;
   localStorage.setItem(LOCAL_AUTH_KEYS.users, JSON.stringify(localAuth.users));
+}
+const localAdminRole = localAuth.roles.find(role => role.roleKey === 'admin');
+if (localAdminRole?.permissions?.['*'] && (!localAdminRole.permissions['*'].restore || !localAdminRole.permissions['*'].purge)) {
+  localAdminRole.permissions['*'].restore = true;
+  localAdminRole.permissions['*'].purge = true;
+  localStorage.setItem(LOCAL_AUTH_KEYS.roles, JSON.stringify(localAuth.roles));
 }
 
 function ensureOdgCategory() {
@@ -73,11 +90,18 @@ function ensureOdgCategory() {
 }
 
 function ensureDemoOdg() {
-  if (state.documents.some(document => document.category === 'ODG')) return;
+  if (state.demoSeeded) return;
+  if (state.documents.some(document => document.category === 'ODG')) {
+    state.demoSeeded = true;
+    writeStorage(STORAGE_KEYS.demoSeeded, state.demoSeeded);
+    return;
+  }
   state.documents.unshift({ id: crypto.randomUUID(), title: 'ODG di esempio - Seduta della Corte', category: 'ODG', number: nextNumber('ODG'), year: String(new Date().getFullYear()), date: today(), body: '<h2>Ordine del giorno</h2><p>Esame delle questioni iscritte alla seduta della Corte Costituzionale.</p><ol><li>Approvazione del verbale precedente.</li><li>Esame dei fascicoli iscritti.</li><li>Comunicazioni della Presidenza.</li></ol>', image: '', templateName: '', status: 'da valutare', createdAt: new Date().toISOString() });
   advanceCounter('ODG', state.documents[0].number);
+  state.demoSeeded = true;
   writeStorage(STORAGE_KEYS.documents, state.documents);
   writeStorage(STORAGE_KEYS.counters, state.counters);
+  writeStorage(STORAGE_KEYS.demoSeeded, state.demoSeeded);
 }
 
 const institutionConfigs = {
@@ -122,6 +146,8 @@ function remoteStatePayload(permission = 'documents') {
 function applyRemoteState(remoteState) {
   if (!remoteState) return;
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
+  state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
+  state.pageMargins = normalizePageMargins(state.pageMargins);
   state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
   state.governmentSettings = normalizeInstitutionSettings(state.governmentSettings, [{ id: 'presidente', name: 'Presidente del Consiglio', limit: 1 }, { id: 'ministro', name: 'Ministro', limit: 10 }]);
   state.compositionSettings = normalizeInstitutionSettings(state.compositionSettings, [{ id: 'presidente', name: 'Presidente della Corte', limit: 1 }, { id: 'giudice', name: 'Giudice costituzionale', limit: 15 }]);
@@ -156,7 +182,6 @@ async function loginRemote(username, password) {
   ensureUserManagementCard();
   applyRemoteState(payload.state);
   ensureOdgCategory();
-  ensureDemoOdg();
   return payload;
 }
 function saveLocalAuth() {
@@ -172,11 +197,11 @@ function localSecurityLog(eventType, severity = 'info', details = {}) {
   saveLocalAuth();
 }
 function localAdminData() {
-  return { users: localAuth.users.filter(user => !user.deletedAt), roles: localAuth.roles, permissions: PERMISSION_CATALOG.map((permission, index) => ({ id: index + 1, permission_key: permission.key, label: permission.label, permission_group: permission.group })), rolePermissions: [], registrations: localAuth.registrations.filter(request => request.status === 'pending'), resets: localAuth.resets.filter(request => request.status === 'pending'), logs: localAuth.logs };
+  return { users: localAuth.users.filter(user => !user.deletedAt).map(localUserPayload), deletedUsers: localAuth.users.filter(user => user.deletedAt).map(localUserPayload), roles: localAuth.roles, permissions: PERMISSION_CATALOG.map((permission, index) => ({ id: index + 1, permission_key: permission.key, label: permission.label, permission_group: permission.group })), rolePermissions: [], registrations: localAuth.registrations.filter(request => request.status === 'pending'), resets: localAuth.resets.filter(request => request.status === 'pending'), logs: localAuth.logs };
 }
 function localUserPayload(user) {
   const role = localAuth.roles.find(item => item.id === user.roleId || item.roleKey === user.role) || localAuth.roles[0];
-  return { id: user.id, username: user.username, displayName: user.displayName, role: role.name, roleId: role.id, isPrimaryAdmin: Boolean(user.isPrimaryAdmin), mustChangeCredentials: Boolean(user.mustChangeCredentials), permissions: role.permissions };
+  return { id: user.id, username: user.username, displayName: user.displayName, role: role.name, roleId: role.id, isPrimaryAdmin: Boolean(user.isPrimaryAdmin), mustChangeCredentials: Boolean(user.mustChangeCredentials), deletedAt: user.deletedAt || null, permissions: role.permissions };
 }
 function can(permission, action = 'view') {
   if (currentUser?.isPrimaryAdmin) return true;
@@ -184,11 +209,137 @@ function can(permission, action = 'view') {
   return Boolean(permissions['*']?.[action] || permissions[permission]?.[action]);
 }
 function permissionForStorageKey(key) {
-  return { documents: 'documents', templates: 'templates', counters: 'settings', categories: 'settings', parties: 'parties', partyFields: 'parties', companies: 'companies', parliaments: 'parliament', parliamentSettings: 'parliament', governments: 'government', governmentSettings: 'government', courtCompositions: 'composition', compositionSettings: 'composition', interpretations: 'interpretations', interpretationSettings: 'interpretations' }[key] || 'documents';
+  return { documents: 'documents', templates: 'templates', counters: 'settings', categories: 'settings', pageMargins: 'settings', parties: 'parties', partyFields: 'parties', companies: 'companies', parliaments: 'parliament', parliamentSettings: 'parliament', governments: 'government', governmentSettings: 'government', courtCompositions: 'composition', compositionSettings: 'composition', interpretations: 'interpretations', interpretationSettings: 'interpretations', trash: 'documents' }[key] || 'documents';
+}
+const TRASH_ENTITY_CONFIG = {
+  documents: { storageKey: 'documents', permission: 'documents', label: 'Documento' },
+  templates: { storageKey: 'templates', permission: 'templates', label: 'Template' },
+  parties: { storageKey: 'parties', permission: 'parties', label: 'Partito' },
+  companies: { storageKey: 'companies', permission: 'companies', label: 'Azienda' },
+  parliaments: { storageKey: 'parliaments', permission: 'parliament', label: 'Mandato parlamentare' },
+  governments: { storageKey: 'governments', permission: 'government', label: 'Scheda Governo' },
+  courtCompositions: { storageKey: 'courtCompositions', permission: 'composition', label: 'Composizione della Corte' },
+  interpretations: { storageKey: 'interpretations', permission: 'interpretations', label: 'Interpretazione' },
+  parliamentMembers: { storageKey: 'parliaments', permission: 'parliament', label: 'Nomina parlamentare', memberKey: 'members' },
+  governmentMembers: { storageKey: 'governments', permission: 'government', label: 'Componente del Governo', memberKey: 'members' },
+  compositionMembers: { storageKey: 'courtCompositions', permission: 'composition', label: 'Componente della Corte', memberKey: 'members' }
+};
+function trashConfig(entityType) { return TRASH_ENTITY_CONFIG[entityType] || null; }
+function hasTrashAccess() { return Object.values(TRASH_ENTITY_CONFIG).some(config => can(config.permission, 'delete') || can(config.permission, 'restore') || can(config.permission, 'purge')); }
+function trashEntryTitle(entry) {
+  const data = entry.data || {};
+  return data.title || data.name || data.legislation || data.period || entry.label || 'Elemento senza titolo';
+}
+function localTrashEntry(entityType, entityId, parentId = '') {
+  const config = trashConfig(entityType);
+  if (!config) return null;
+  const collection = state[config.storageKey];
+  if (!Array.isArray(collection)) return null;
+  if (config.memberKey) {
+    const parent = collection.find(item => item.id === parentId);
+    const items = parent?.[config.memberKey];
+    const index = Array.isArray(items) ? items.findIndex(item => item.id === entityId) : -1;
+    if (!parent || index < 0) return null;
+    const [data] = items.splice(index, 1);
+    parent.updatedAt = new Date().toISOString();
+    return { id: crypto.randomUUID(), entityType, permission: config.permission, label: config.label, deletedAt: new Date().toISOString(), parentId, originalIndex: index, data };
+  }
+  const index = collection.findIndex(item => item.id === entityId);
+  if (index < 0) return null;
+  const [data] = collection.splice(index, 1);
+  return { id: crypto.randomUUID(), entityType, permission: config.permission, label: config.label, deletedAt: new Date().toISOString(), originalIndex: index, data };
+}
+function localRestoreTrashEntry(trashId) {
+  const index = state.trash.findIndex(entry => entry.id === trashId);
+  const entry = state.trash[index];
+  const config = entry && trashConfig(entry.entityType);
+  if (!entry || !config) return false;
+  const collection = state[config.storageKey];
+  if (!Array.isArray(collection)) return false;
+  if (config.memberKey) {
+    const parent = collection.find(item => item.id === entry.parentId);
+    if (!parent) throw new Error('Impossibile ripristinare il componente: la relativa scheda è stata eliminata. Ripristina prima la scheda.');
+    parent[config.memberKey] ||= [];
+    if (parent[config.memberKey].some(item => item.id === entry.data?.id)) throw new Error('Questo elemento è già presente nella scheda originale.');
+    parent[config.memberKey].splice(Math.min(Number(entry.originalIndex) || 0, parent[config.memberKey].length), 0, entry.data);
+    parent.updatedAt = new Date().toISOString();
+  } else {
+    if (collection.some(item => item.id === entry.data?.id)) throw new Error('Questo elemento è già presente nell’archivio principale.');
+    collection.splice(Math.min(Number(entry.originalIndex) || 0, collection.length), 0, entry.data);
+  }
+  state.trash.splice(index, 1);
+  return true;
+}
+function persistLocalTrashMutation(config) {
+  writeStorage(STORAGE_KEYS[config.storageKey], state[config.storageKey]);
+  writeStorage(STORAGE_KEYS.trash, state.trash);
+}
+function rerenderAfterTrashMutation() {
+  const view = window.location.hash.replace('#', '') || 'dashboard';
+  if (view === 'trash') renderTrash();
+  else setView(view, false);
+}
+async function moveToTrash(entityType, entityId, parentId = '') {
+  const config = trashConfig(entityType);
+  if (!config || !can(config.permission, 'delete')) { showToast('Non hai il permesso di spostare questo elemento nel cestino.'); return; }
+  if (!confirm('Spostare questo elemento nel cestino? Potrà essere ripristinato o eliminato definitivamente dal cestino.')) return;
+  try {
+    if (remoteMode) {
+      clearTimeout(remoteSaveTimer);
+      const payload = await apiRequest('trash_item', { method: 'POST', body: JSON.stringify({ entityType, entityId, parentId }) });
+      applyRemoteState(payload.state);
+    } else {
+      const entry = localTrashEntry(entityType, entityId, parentId);
+      if (!entry) throw new Error('Elemento non trovato o già eliminato.');
+      state.trash.unshift(entry);
+      persistLocalTrashMutation(config);
+      localSecurityLog('item_trashed', 'warning', { entityType, entityId, parentId });
+    }
+    rerenderAfterTrashMutation();
+    showToast('Elemento spostato nel cestino.');
+  } catch (error) { showToast(error.message); }
+}
+async function restoreTrashItem(trashId) {
+  const entry = state.trash.find(item => item.id === trashId);
+  const config = entry && trashConfig(entry.entityType);
+  if (!entry || !config || !can(config.permission, 'restore')) { showToast('Non hai il permesso di ripristinare questo elemento.'); return; }
+  try {
+    if (remoteMode) {
+      clearTimeout(remoteSaveTimer);
+      const payload = await apiRequest('restore_trash_item', { method: 'POST', body: JSON.stringify({ trashId }) });
+      applyRemoteState(payload.state);
+    } else {
+      localRestoreTrashEntry(trashId);
+      persistLocalTrashMutation(config);
+      localSecurityLog('item_restored', 'info', { trashId, entityType: entry.entityType });
+    }
+    rerenderAfterTrashMutation();
+    showToast('Elemento ripristinato nell’archivio principale.');
+  } catch (error) { showToast(error.message); }
+}
+async function permanentlyDeleteTrashItem(trashId) {
+  const entry = state.trash.find(item => item.id === trashId);
+  const config = entry && trashConfig(entry.entityType);
+  if (!entry || !config || !can(config.permission, 'purge')) { showToast('Non hai il permesso di eliminare definitivamente questo elemento.'); return; }
+  if (!confirm(`Eliminare definitivamente “${trashEntryTitle(entry)}”? Questa azione non può essere annullata.`)) return;
+  try {
+    if (remoteMode) {
+      clearTimeout(remoteSaveTimer);
+      const payload = await apiRequest('purge_trash_item', { method: 'POST', body: JSON.stringify({ trashId }) });
+      applyRemoteState(payload.state);
+    } else {
+      state.trash = state.trash.filter(item => item.id !== trashId);
+      writeStorage(STORAGE_KEYS.trash, state.trash);
+      localSecurityLog('item_purged', 'critical', { trashId, entityType: entry.entityType });
+    }
+    renderTrash();
+    showToast('Elemento eliminato definitivamente.');
+  } catch (error) { showToast(error.message); }
 }
 function applyPermissions() {
   const views = { dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' };
   Object.entries(views).forEach(([view, permission]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !can(permission)); }));
+  document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
   const controls = { '#newDocumentButton': ['documents', 'create'], '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'], '#newPartyButton': ['parties', 'create'], '#newCompanyButton': ['companies', 'create'], '#newParliamentButton': ['parliament', 'create'], '#newOdgButton': ['odg', 'create'], '#newInterpretationButton': ['interpretations', 'create'] };
   Object.entries(controls).forEach(([selector, [permission, action]]) => document.querySelectorAll(selector).forEach(control => { control.classList.toggle('d-none', !can(permission, action)); }));
   document.querySelectorAll('[data-new-institution]').forEach(button => button.classList.toggle('d-none', !can(button.dataset.newInstitution, 'create')));
@@ -206,6 +357,39 @@ function ensureGuideView() {
   }
   const appContainer = document.querySelector('#appView > .container-fluid');
   if (!document.getElementById('guideView')) appContainer.insertAdjacentHTML('beforeend', '<section id="guideView" class="app-view d-none"><div class="mb-4"><p class="eyebrow text-secondary mb-2">Uso personale</p><h1 class="display-6 fw-bold mb-2">Guida</h1><p class="text-secondary mb-0">Qui trovi solo le operazioni disponibili per il tuo profilo.</p></div><div id="guideContent" class="row g-4"></div></section>');
+}
+
+function ensureTrashView() {
+  const nav = document.querySelector('#mainNav .navbar-nav');
+  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
+  if (nav && settingsLink && !nav.querySelector('[data-view-link="trash"]')) {
+    const item = document.createElement('li');
+    item.className = 'nav-item';
+    item.innerHTML = '<a class="nav-link" href="#trash" data-view-link="trash"><i class="bi bi-trash3 me-1" aria-hidden="true"></i>Cestino</a>';
+    nav.insertBefore(item, settingsLink);
+    item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('trash'); });
+  }
+  const appContainer = document.querySelector('#appView > .container-fluid');
+  if (!document.getElementById('trashView')) appContainer.insertAdjacentHTML('beforeend', '<section id="trashView" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Recupero e rimozione</p><h1 class="display-6 fw-bold mb-2">Cestino</h1><p class="text-secondary mb-0">Gli elementi nel cestino non sono visibili negli archivi principali. Ripristinali oppure rimuovili in modo definitivo secondo i permessi assegnati.</p></div><div class="stat-card trash-stat-card"><span class="text-secondary small">Elementi nel cestino</span><strong id="trashCount">0</strong></div></div><div class="card border-0 shadow-sm"><div class="card-body p-0"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Tipo</th><th>Elemento</th><th>Eliminato il</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="trashTableBody"></tbody></table></div><div id="emptyTrash" class="empty-state d-none"><div class="display-6"><i class="bi bi-trash3" aria-hidden="true"></i></div><h2 class="h5 mt-3">Il cestino è vuoto</h2><p class="text-secondary mb-0">Gli elementi spostati qui non compariranno più nelle rispettive sezioni principali.</p></div></div></div></section>');
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? 'Data non disponibile' : date.toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function renderTrash() {
+  ensureTrashView();
+  const entries = [...(Array.isArray(state.trash) ? state.trash : [])].sort((a, b) => String(b.deletedAt || '').localeCompare(String(a.deletedAt || '')));
+  const body = document.getElementById('trashTableBody');
+  body.innerHTML = entries.map(entry => {
+    const config = trashConfig(entry.entityType);
+    const canRestore = config && can(config.permission, 'restore');
+    const canPurge = config && can(config.permission, 'purge');
+    return `<tr><td class="ps-4"><span class="badge text-bg-light">${escapeHtml(entry.label || config?.label || 'Elemento')}</span></td><td><strong>${escapeHtml(trashEntryTitle(entry))}</strong>${entry.parentId ? '<small class="d-block text-secondary">Elemento contenuto in una scheda archiviata</small>' : ''}</td><td class="small text-secondary">${escapeHtml(formatDateTime(entry.deletedAt))}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${canRestore ? `<button type="button" class="btn btn-sm btn-outline-primary" data-restore-trash="${entry.id}">Ripristina</button>` : ''}${canPurge ? `<button type="button" class="btn btn-sm btn-outline-danger" data-purge-trash="${entry.id}">Elimina definitivamente</button>` : ''}${!canRestore && !canPurge ? '<span class="small text-secondary">Nessuna azione autorizzata</span>' : ''}</div></td></tr>`;
+  }).join('');
+  document.getElementById('emptyTrash').classList.toggle('d-none', entries.length > 0);
+  document.getElementById('trashCount').textContent = entries.length;
 }
 
 function renderGuide() {
@@ -260,7 +444,151 @@ function parliamentRole(role) { return parliamentRoles().find(item => item.id ==
 function showToast(message) { document.querySelector('#appToast .toast-body').textContent = message; bootstrap.Toast.getOrCreateInstance(document.getElementById('appToast')).show(); }
 function readFileAsDataUrl(file) { return new Promise((resolve, reject) => { if (!file) return resolve(''); const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
 function categoryNames() { return [...new Set([...state.categories.map(category => category.name), ...Object.keys(state.counters), ...state.documents.map(document => document.category), ...state.templates.map(template => template.category)])].filter(Boolean).sort(); }
+function deleteCategory(name) {
+  const usedByDocuments = state.documents.some(document => document.category === name);
+  const usedByTemplates = state.templates.some(template => template.category === name);
+  if (usedByDocuments || usedByTemplates) { showToast('La categoria è ancora utilizzata da documenti o template.'); return; }
+  if (!confirm(`Eliminare la categoria “${name}”?`)) return;
+  state.categories = state.categories.filter(category => category.name !== name);
+  delete state.counters[name];
+  writeStorage(STORAGE_KEYS.categories, state.categories);
+  writeStorage(STORAGE_KEYS.counters, state.counters);
+  refreshCategoryOptions();
+  renderSettings();
+  showToast('Categoria eliminata.');
+}
 function syncEditorValue(editorId, inputId) { document.getElementById(inputId).value = sanitizeRichHtml(document.getElementById(editorId).innerHTML.trim()); }
+function applyPageMargins() {
+  const margins = normalizePageMargins(state.pageMargins);
+  state.pageMargins = margins;
+  document.querySelectorAll('.rich-editor').forEach(editor => { editor.style.padding = `${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`; });
+}
+function editorHistory(editor) {
+  let history = editorHistories.get(editor);
+  if (!history) { history = { past: [], present: editor.innerHTML, future: [] }; editorHistories.set(editor, history); }
+  return history;
+}
+function resetEditorHistory(editor) {
+  if (!editor) return;
+  editorHistories.set(editor, { past: [], present: editor.innerHTML, future: [] });
+  makeEditorImagesDraggable(editor);
+}
+function recordEditorChange(editor) {
+  if (!editor || editor.dataset.historyApplying === 'true') return;
+  const history = editorHistory(editor);
+  const current = editor.innerHTML;
+  if (current === history.present) return;
+  history.past.push(history.present);
+  if (history.past.length > 100) history.past.shift();
+  history.present = current; history.future = [];
+}
+function restoreEditorHtml(editor, html) {
+  const history = editorHistory(editor);
+  editor.dataset.historyApplying = 'true'; editor.innerHTML = html; delete editor.dataset.historyApplying;
+  history.present = html; saveEditorSelection(editor);
+  editor.querySelectorAll('.editor-image').forEach(image => makeImageDraggable(editor, image));
+}
+function undoEditorChange(editor) {
+  const history = editorHistory(editor); if (!history.past.length) return;
+  history.future.push(history.present); restoreEditorHtml(editor, history.past.pop());
+}
+function redoEditorChange(editor) {
+  const history = editorHistory(editor); if (!history.future.length) return;
+  history.past.push(history.present); restoreEditorHtml(editor, history.future.pop());
+}
+function deleteSelectedImage(control) {
+  const editor = editorFromControl(control);
+  const image = selectedEditorImage && editor?.contains(selectedEditorImage) ? selectedEditorImage : editor?.querySelector('.editor-image.is-selected');
+  if (!image) { showToast('Seleziona prima un’immagine.'); return; }
+  image.remove(); selectedEditorImage = null; recordEditorChange(editor);
+}
+function makeImageDraggable(editor, image) {
+  if (!editor || !image || image.dataset.dragReady === 'true') return;
+  image.dataset.dragReady = 'true'; image.draggable = false; image.contentEditable = 'false';
+  image.style.position = 'absolute'; image.style.zIndex = '0';
+  if (!image.style.left) image.style.left = '1rem';
+  if (!image.style.top) image.style.top = '1rem';
+  const getResizeEdge = event => {
+    const box = image.getBoundingClientRect();
+    const edge = 10;
+    const onLeft = event.clientX - box.left <= edge;
+    const onRight = box.right - event.clientX <= edge;
+    const onTop = event.clientY - box.top <= edge;
+    const onBottom = box.bottom - event.clientY <= edge;
+    if (onTop && onLeft) return 'nw';
+    if (onTop && onRight) return 'ne';
+    if (onBottom && onLeft) return 'sw';
+    if (onBottom && onRight) return 'se';
+    if (onLeft) return 'w';
+    if (onRight) return 'e';
+    if (onTop) return 'n';
+    if (onBottom) return 's';
+    return '';
+  };
+  image.addEventListener('pointermove', event => {
+    if (image.classList.contains('is-resizing')) return;
+    const edge = getResizeEdge(event);
+    image.style.cursor = edge ? ({ n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' }[edge]) : 'grab';
+  });
+  image.addEventListener('pointerdown', event => {
+    event.preventDefault(); event.stopPropagation();
+    editor.querySelectorAll('.editor-image.is-selected').forEach(item => item.classList.remove('is-selected'));
+    image.classList.add('is-selected'); selectedEditorImage = image;
+    const editorBox = editor.getBoundingClientRect(); const imageBox = image.getBoundingClientRect();
+    const edge = getResizeEdge(event);
+    if (edge) {
+      const ratio = imageBox.width / Math.max(imageBox.height, 1);
+      const startWidth = imageBox.width;
+      const startHeight = imageBox.height;
+      const startLeft = imageBox.left - editorBox.left + editor.scrollLeft;
+      const startTop = imageBox.top - editorBox.top + editor.scrollTop;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const resize = resizeEvent => {
+        let nextWidth = startWidth;
+        let nextHeight = startHeight;
+        if (edge.includes('e')) nextWidth = startWidth + resizeEvent.clientX - startX;
+        if (edge.includes('w')) nextWidth = startWidth - (resizeEvent.clientX - startX);
+        if (edge.includes('s')) nextHeight = startHeight + resizeEvent.clientY - startY;
+        if (edge.includes('n')) nextHeight = startHeight - (resizeEvent.clientY - startY);
+        const horizontalChange = Math.abs(nextWidth - startWidth);
+        const verticalChange = Math.abs(nextHeight - startHeight);
+        if (edge.length === 1 && (edge === 'e' || edge === 'w')) nextHeight = nextWidth / ratio;
+        else if (edge.length === 1 && (edge === 'n' || edge === 's')) nextWidth = nextHeight * ratio;
+        else if (horizontalChange >= verticalChange) nextHeight = nextWidth / ratio;
+        else nextWidth = nextHeight * ratio;
+        const minWidth = 40;
+        const maxWidth = Math.max(minWidth, editorBox.width - 2);
+        nextWidth = Math.max(minWidth, Math.min(nextWidth, maxWidth));
+        nextHeight = nextWidth / ratio;
+        image.style.width = `${nextWidth}px`;
+        image.style.height = 'auto';
+        image.style.maxWidth = 'none';
+        if (edge.includes('w')) image.style.left = `${Math.max(0, startLeft + (startWidth - nextWidth))}px`;
+        if (edge.includes('n')) image.style.top = `${Math.max(0, startTop + (startHeight - nextHeight))}px`;
+      };
+      image.style.cursor = ({ n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' }[edge]);
+      image.classList.add('is-resizing');
+      document.addEventListener('pointermove', resize);
+      const stopResize = () => { image.classList.remove('is-resizing'); recordEditorChange(editor); document.removeEventListener('pointermove', resize); document.removeEventListener('pointerup', stopResize); };
+      document.addEventListener('pointerup', stopResize, { once: true });
+      return;
+    }
+    {
+    const startX = event.clientX; const startY = event.clientY;
+    const startLeft = imageBox.left - editorBox.left + editor.scrollLeft; const startTop = imageBox.top - editorBox.top + editor.scrollTop;
+    image.classList.add('is-dragging');
+    const move = moveEvent => {
+      image.style.left = `${Math.max(0, startLeft + moveEvent.clientX - startX)}px`;
+      image.style.top = `${Math.max(0, startTop + moveEvent.clientY - startY)}px`;
+    };
+    const stop = () => { image.classList.remove('is-dragging'); recordEditorChange(editor); document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', stop); };
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', stop, { once: true });
+    }
+  });
+}
+function makeEditorImagesDraggable(editor) { editor?.querySelectorAll('.editor-image').forEach(image => makeImageDraggable(editor, image)); }
+
 function editorFromControl(control) { return control.closest('.modal-content')?.querySelector('.rich-editor'); }
 function saveEditorSelection(editor) {
   const selection = window.getSelection();
@@ -268,29 +596,50 @@ function saveEditorSelection(editor) {
   savedEditorRange = selection.getRangeAt(0).cloneRange();
 }
 function restoreEditorSelection(editor) {
-  if (!editor) return;
+  if (!editor || !savedEditorRange || !editor.contains(savedEditorRange.commonAncestorContainer)) return false;
+  const rangeToRestore = savedEditorRange.cloneRange();
   editor.focus();
   const selection = window.getSelection();
   selection.removeAllRanges();
-  if (savedEditorRange && !savedEditorRange.collapsed && editor.contains(savedEditorRange.commonAncestorContainer)) selection.addRange(savedEditorRange);
-  else {
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    selection.addRange(range);
-  }
+  selection.addRange(rangeToRestore);
+  savedEditorRange = rangeToRestore.cloneRange();
+  return true;
 }
 function executeEditorCommand(control, value = null) {
   const editor = editorFromControl(control);
   restoreEditorSelection(editor);
   document.execCommand(control.dataset.editorCommand, false, value ?? control.value ?? null);
-  saveEditorSelection(editor);
+  saveEditorSelection(editor); recordEditorChange(editor);
 }
 function applyPixelFontSize(control) {
   const editor = editorFromControl(control);
-  restoreEditorSelection(editor);
-  document.execCommand('fontSize', false, '7');
-  editor.querySelectorAll('font[size="7"]').forEach(font => { font.removeAttribute('size'); font.style.fontSize = `${control.value}px`; });
-  saveEditorSelection(editor);
+  if (!editor) return;
+  const size = Math.min(96, Math.max(8, Number.parseInt(control.value, 10) || 16));
+  control.value = String(size);
+  if (!restoreEditorSelection(editor)) { showToast('Seleziona il testo da ridimensionare.'); return; }
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !editor.contains(selection.anchorNode)) return;
+  const range = selection.getRangeAt(0);
+  if (range.collapsed) { showToast('Seleziona il testo da ridimensionare.'); return; }
+  const span = document.createElement('span');
+  span.style.fontSize = `${size}px`;
+  span.appendChild(range.extractContents());
+  range.insertNode(span);
+  const selectedRange = document.createRange();
+  selectedRange.selectNodeContents(span);
+  selection.removeAllRanges();
+  selection.addRange(selectedRange);
+  saveEditorSelection(editor); recordEditorChange(editor);
+}
+function syncFontSizeControl(editor) {
+  const selection = window.getSelection();
+  if (!editor || !selection.rangeCount || !editor.contains(selection.anchorNode)) return;
+  const control = editor.parentElement?.querySelector('[data-editor-command="fontSizePx"]');
+  if (!control) return;
+  const node = selection.getRangeAt(0).startContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const size = Number.parseFloat(window.getComputedStyle(element).fontSize);
+  if (Number.isFinite(size)) control.value = String(Math.round(size));
 }
 function insertTable(editor) {
   const rows = Math.max(1, Number.parseInt(prompt('Numero di righe', '2'), 10) || 2);
@@ -299,13 +648,30 @@ function insertTable(editor) {
   table.className = 'document-table';
   table.innerHTML = `<tbody>${Array.from({ length: rows }, () => `<tr>${Array.from({ length: columns }, () => '<td>Scrivi qui</td>').join('')}</tr>`).join('')}</tbody>`;
   restoreEditorSelection(editor);
-  document.execCommand('insertHTML', false, table.outerHTML);
+  document.execCommand('insertHTML', false, table.outerHTML); recordEditorChange(editor);
 }
-function insertImage(editor) {
-  const imageUrl = prompt('Incolla l’indirizzo dell’immagine');
-  if (!imageUrl || !/^(https?:|data:image\/)/i.test(imageUrl.trim())) { if (imageUrl) showToast('Indirizzo immagine non consentito.'); return; }
-  restoreEditorSelection(editor);
-  document.execCommand('insertImage', false, imageUrl);
+function insertImage(editor, position = 'cursor') {
+  if (!editor) return;
+  const picker = document.createElement('input');
+  picker.type = 'file'; picker.accept = 'image/*'; picker.hidden = true;
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0]; if (!file) return;
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = document.createElement('img');
+    image.src = dataUrl; image.alt = file.name; image.className = 'editor-image';
+    image.dataset.imagePosition = position;
+    image.style.maxWidth = '100%'; image.style.height = 'auto'; image.style.display = 'block'; image.style.position = 'absolute'; image.style.left = '1rem'; image.style.top = `${editor.scrollTop + 16}px`; image.style.position = 'absolute'; image.style.left = '1rem'; image.style.top = `${editor.scrollTop + 1}rem`;
+    const range = savedEditorRange && editor.contains(savedEditorRange.commonAncestorContainer) ? savedEditorRange.cloneRange() : null;
+    if (position === 'above') { editor.insertBefore(image, editor.firstChild); }
+    else if (position === 'below') { editor.appendChild(image); }
+    else if (range) {
+      restoreEditorSelection(editor); range.deleteContents(); range.insertNode(image);
+      const after = document.createRange(); after.setStartAfter(image); after.collapse(true);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(after);
+    } else { editor.appendChild(image); }
+    makeImageDraggable(editor, image); saveEditorSelection(editor); recordEditorChange(editor); picker.remove();
+  });
+  document.body.appendChild(picker); picker.click();
 }
 function addToolbarControl(toolbar, type, label, command, value = '') {
   const control = document.createElement(type === 'select' ? 'select' : 'button');
@@ -343,26 +709,13 @@ function enhanceEditorToolbars() {
     addToolbarControl(toolbar, 'button', 'Riduci rientro', 'outdent');
     addToolbarControl(toolbar, 'button', 'Aumenta rientro', 'indent');
     addToolbarControl(toolbar, 'button', 'Tabella', 'insertTable');
-    addToolbarControl(toolbar, 'button', 'Immagine', 'insertImage');
+    addToolbarControl(toolbar, 'button', 'Inserisci immagine', 'insertImageAbove');
+    addToolbarControl(toolbar, 'button', 'Elimina immagine selezionata', 'deleteImage');
     addToolbarControl(toolbar, 'button', 'Linea', 'insertHorizontalRule');
     addToolbarControl(toolbar, 'button', 'Collegamento', 'createLink');
     addToolbarControl(toolbar, 'button', 'Pulisci formato', 'removeFormat');
-    const fontSize = toolbar.querySelector('select[data-editor-command="fontSize"]');
-    if (fontSize) {
-      const sizeInput = document.createElement('input');
-      sizeInput.className = 'form-control form-control-sm editor-size';
-      sizeInput.type = 'number';
-      sizeInput.min = '8';
-      sizeInput.max = '96';
-      sizeInput.step = '1';
-      sizeInput.value = '12';
-      sizeInput.title = 'Grandezza testo in pixel';
-      sizeInput.setAttribute('aria-label', 'Grandezza testo in pixel');
-      sizeInput.dataset.editorCommand = 'fontSizePx';
-      fontSize.replaceWith(sizeInput);
-    }
   });
-  const icons = { bold: 'bi-type-bold', italic: 'bi-type-italic', underline: 'bi-type-underline', justifyLeft: 'bi-text-left', justifyCenter: 'bi-text-center', justifyRight: 'bi-text-right', justifyFull: 'bi-justify', insertUnorderedList: 'bi-list-ul', insertOrderedList: 'bi-list-ol', outdent: 'bi-text-indent-left', indent: 'bi-text-indent-right', insertTable: 'bi-table', insertImage: 'bi-image', insertHorizontalRule: 'bi-dash-lg', createLink: 'bi-link-45deg', removeFormat: 'bi-eraser' };
+  const icons = { bold: 'bi-type-bold', italic: 'bi-type-italic', underline: 'bi-type-underline', justifyLeft: 'bi-text-left', justifyCenter: 'bi-text-center', justifyRight: 'bi-text-right', justifyFull: 'bi-justify', insertUnorderedList: 'bi-list-ul', insertOrderedList: 'bi-list-ol', outdent: 'bi-text-indent-left', indent: 'bi-text-indent-right', insertTable: 'bi-table', insertImage: 'bi-image', insertImageAbove: 'bi-image-alt', insertImageBelow: 'bi-image-alt-fill', deleteImage: 'bi-trash3', insertHorizontalRule: 'bi-dash-lg', createLink: 'bi-link-45deg', removeFormat: 'bi-eraser' };
   const labels = { bold: 'Grassetto', italic: 'Corsivo', underline: 'Sottolineato', justifyLeft: 'Allinea a sinistra', justifyCenter: 'Allinea al centro', insertUnorderedList: 'Elenco puntato', insertOrderedList: 'Elenco numerato', fontName: 'Tipo di carattere', fontSizePx: 'Grandezza testo in pixel' };
   document.querySelectorAll('.editor-toolbar [data-editor-command]').forEach(control => {
     const icon = icons[control.dataset.editorCommand];
@@ -396,7 +749,7 @@ function organizeTemplateEditor() {
 
 function populateFontMenus() {
   const fonts = [
-    ['Georgia', 'Georgia'], ['Times New Roman', 'Times New Roman'], ['Arial', 'Arial'],
+    ['Georgia', 'Georgia'], ['Raleway', 'Raleway'], ['Pinyon Script', 'Pinyon Script'], ['Times New Roman', 'Times New Roman'], ['Arial', 'Arial'],
     ['Helvetica', 'Helvetica'], ['Verdana', 'Verdana'], ['Tahoma', 'Tahoma'],
     ['Trebuchet MS', 'Trebuchet MS'], ['Courier New', 'Courier New'],
     ['Lucida Console', 'Lucida Console'], ['Garamond', 'Garamond'],
@@ -503,13 +856,15 @@ function renderUserManagement(data) {
   const content = document.getElementById('userManagementContent');
   if (!content) return;
   const users = data.users.map(user => `<tr><td>${escapeHtml(user.displayName)}</td><td>${escapeHtml(user.username)}</td><td><select class="form-select form-select-sm user-role-select" data-user-id="${user.id}" ${user.isPrimaryAdmin ? 'disabled' : ''}><option value="reader" ${user.role === 'reader' ? 'selected' : ''}>Lettore</option><option value="editor" ${user.role === 'editor' ? 'selected' : ''}>Redattore</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Amministratore</option></select></td><td>${user.isPrimaryAdmin ? '<span class="badge text-bg-primary">Principale</span>' : `<button type="button" class="btn btn-sm btn-outline-danger delete-user-button" data-user-id="${user.id}">Elimina</button>`}</td></tr>`).join('');
+  const deletedUsers = (data.deletedUsers || []).map(user => `<tr><td>${escapeHtml(user.displayName)}</td><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.role || '—')}</td><td class="small text-secondary">${escapeHtml(formatDateTime(user.deletedAt))}</td><td class="text-end"><div class="d-flex justify-content-end flex-wrap gap-2"><button type="button" class="btn btn-sm btn-outline-primary restore-user-button" data-user-id="${user.id}">Ripristina</button><button type="button" class="btn btn-sm btn-outline-danger purge-user-button" data-user-id="${user.id}">Elimina definitivamente</button></div></td></tr>`).join('');
   const registrations = data.registrations.length ? data.registrations.map(item => `<div class="border-bottom py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"><span><strong>${escapeHtml(item.display_name)}</strong><small class="d-block text-secondary">${escapeHtml(item.email)}</small></span><span class="d-flex gap-2"><select class="form-select form-select-sm registration-role" data-request-id="${item.id}" aria-label="Ruolo richiesto"><option value="reader">Lettore</option><option value="editor">Redattore</option></select><button type="button" class="btn btn-sm btn-primary approve-registration-button" data-request-id="${item.id}">Approva</button><button type="button" class="btn btn-sm btn-outline-danger reject-registration-button" data-request-id="${item.id}">Rifiuta</button></span></div>`).join('') : '<p class="text-secondary small mb-0">Nessuna richiesta di registrazione.</p>';
   const resets = data.resets.length ? data.resets.map(item => `<div class="border-bottom py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"><span><strong>${escapeHtml(item.email)}</strong><small class="d-block text-secondary">Richiesta di recupero</small></span><span class="d-flex gap-2"><input class="form-control form-control-sm reset-password" data-request-id="${item.id}" type="password" minlength="8" placeholder="Nuova password" aria-label="Nuova password"><button type="button" class="btn btn-sm btn-primary approve-reset-button" data-request-id="${item.id}">Autorizza</button></span></div>`).join('') : '<p class="text-secondary small mb-0">Nessuna richiesta di recupero.</p>';
-  content.innerHTML = `<h3 class="h6">Utenti attivi</h3><div class="table-responsive mb-4"><table class="table align-middle"><thead><tr><th>Nome</th><th>E-mail</th><th>Ruolo</th><th>Azioni</th></tr></thead><tbody>${users}</tbody></table></div><div class="row g-4"><div class="col-12 col-xl-6"><h3 class="h6">Richieste di registrazione</h3>${registrations}</div><div class="col-12 col-xl-6"><h3 class="h6">Recuperi password</h3>${resets}</div></div>`;
+  content.innerHTML = `<h3 class="h6">Utenti attivi</h3><div class="table-responsive mb-4"><table class="table align-middle"><thead><tr><th>Nome</th><th>E-mail</th><th>Ruolo</th><th>Azioni</th></tr></thead><tbody>${users}</tbody></table></div><h3 class="h6">Utenti nel cestino</h3><p class="small text-secondary">Gli account eliminati non possono accedere. Puoi ripristinarli oppure rimuoverli in modo definitivo.</p><div class="table-responsive mb-4"><table class="table align-middle"><thead><tr><th>Nome</th><th>E-mail</th><th>Ruolo</th><th>Eliminato il</th><th class="text-end">Azioni</th></tr></thead><tbody>${deletedUsers || '<tr><td colspan="5" class="text-secondary">Nessun utente nel cestino.</td></tr>'}</tbody></table></div><div class="row g-4"><div class="col-12 col-xl-6"><h3 class="h6">Richieste di registrazione</h3>${registrations}</div><div class="col-12 col-xl-6"><h3 class="h6">Recuperi password</h3>${resets}</div></div>`;
   content.querySelectorAll('.user-role-select').forEach(select => { const user = data.users.find(item => String(item.id) === select.dataset.userId); select.innerHTML = data.roles.map(role => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join(''); select.value = user?.roleId || ''; });
   content.querySelectorAll('.registration-role').forEach(select => { select.innerHTML = data.roles.filter(role => !role.isPrimaryAdmin && !role.is_primary_admin).map(role => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join(''); });
-  const permissionGroups = [...new Set(data.permissions.map(permission => permission.permission_group))];
-  const roleCards = data.roles.map(role => { const permissions = {}; data.rolePermissions.filter(item => String(item.role_id) === String(role.id)).forEach(item => { const permission = data.permissions.find(candidate => candidate.id === item.permission_id); if (permission) permissions[permission.permission_key] = item; }); const localPermissions = role.permissions || {}; return `<div class="border rounded p-3 mb-3"><div class="d-flex justify-content-between align-items-center mb-3"><div><strong>${escapeHtml(role.name)}</strong>${role.isSystem ? '<small class="d-block text-secondary">Ruolo di sistema</small>' : ''}</div><button type="button" class="btn btn-sm btn-primary save-role-permissions" data-role-id="${role.id}" ${role.role_key === 'admin' || role.roleKey === 'admin' ? 'disabled' : ''}>Salva permessi</button></div>${permissionGroups.map(group => `<div class="mb-3"><h4 class="small fw-bold">${escapeHtml(group)}</h4><div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody>${data.permissions.filter(permission => permission.permission_group === group).map(permission => { const saved = permissions[permission.permission_key]; const local = localPermissions[permission.permission_key] || {}; return `<tr><td>${escapeHtml(permission.label)}</td>${PERMISSION_ACTIONS.map(([action, label]) => `<td><label class="small"><input type="checkbox" class="role-permission" data-role-id="${role.id}" data-permission="${permission.permission_key}" data-action="${action}" ${saved ? saved[`can_${action}`] ? 'checked' : '' : local[action] ? 'checked' : ''}> ${label}</label></td>`).join('')}</tr>`; }).join('')}</tbody></table></div></div>`).join('')}</div>`; }).join('');
+  const visiblePermissions = data.permissions.filter(permission => permission.permission_group !== 'Amministrazione' && permission.permission_key !== 'users');
+  const permissionGroups = [...new Set(visiblePermissions.map(permission => permission.permission_group))];
+  const roleCards = data.roles.filter(role => role.role_key !== 'admin' && role.roleKey !== 'admin').map(role => { const permissions = {}; data.rolePermissions.filter(item => String(item.role_id) === String(role.id)).forEach(item => { const permission = data.permissions.find(candidate => candidate.id === item.permission_id); if (permission) permissions[permission.permission_key] = item; }); const localPermissions = role.permissions || {}; return `<div class="border rounded p-3 mb-3"><div class="d-flex justify-content-between align-items-center mb-3"><div><strong>${escapeHtml(role.name)}</strong>${role.isSystem ? '<small class="d-block text-secondary">Ruolo di sistema</small>' : ''}</div><button type="button" class="btn btn-sm btn-primary save-role-permissions" data-role-id="${role.id}">Salva permessi</button></div>${permissionGroups.map(group => `<div class="mb-3"><h4 class="small fw-bold">${escapeHtml(group)}</h4><div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody>${visiblePermissions.filter(permission => permission.permission_group === group).map(permission => { const saved = permissions[permission.permission_key]; const local = localPermissions[permission.permission_key] || {}; return `<tr><td>${escapeHtml(permission.label)}</td>${PERMISSION_ACTIONS.map(([action, label]) => `<td><label class="small"><input type="checkbox" class="role-permission" data-role-id="${role.id}" data-permission="${permission.permission_key}" data-action="${action}" ${saved ? saved[`can_${action}`] ? 'checked' : '' : local[action] ? 'checked' : ''}> ${label}</label></td>`).join('')}</tr>`; }).join('')}</tbody></table></div></div>`).join('')}</div>`; }).join('');
   const logs = (data.logs || []).map(log => `<tr><td class="small">${escapeHtml(new Date(log.created_at).toLocaleString('it-IT'))}</td><td><span class="badge ${log.severity === 'critical' ? 'text-bg-danger' : log.severity === 'warning' ? 'text-bg-warning' : 'text-bg-secondary'}">${escapeHtml(log.severity)}</span></td><td>${escapeHtml(log.event_type)}</td><td>${escapeHtml(log.username || 'Sistema')}</td><td class="small">${escapeHtml(typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {}))}</td></tr>`).join('');
   content.insertAdjacentHTML('beforeend', `<hr class="my-4"><div class="d-flex justify-content-between align-items-center mb-3"><div><h3 class="h6 mb-1">Ruoli e permessi</h3><p class="text-secondary small mb-0">Ogni permesso può consentire visualizzazione, creazione, modifica, eliminazione o approvazione.</p></div><div class="input-group" style="max-width: 24rem"><input id="newRoleName" class="form-control" placeholder="Nome nuovo ruolo"><button type="button" class="btn btn-outline-primary" id="createRoleButton">Crea ruolo</button></div></div>${roleCards}<hr class="my-4"><h3 class="h6 mb-3">Log di sicurezza</h3><div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Data</th><th>Gravità</th><th>Evento</th><th>Utente</th><th>Dettagli</th></tr></thead><tbody>${logs || '<tr><td colspan="5" class="text-secondary">Nessun evento registrato.</td></tr>'}</tbody></table></div>`);
 }
@@ -531,17 +886,21 @@ async function userManagementAction(action, body, successMessage) {
       if (action === 'approve_password_reset') { const request = localAuth.resets.find(item => item.id === body.requestId); const user = localAuth.users.find(item => item.id === request?.userId); if (!request || !user || body.newPassword.length < 8) throw new Error('Inserisci una nuova password di almeno 8 caratteri.'); user.password = body.newPassword; request.status = 'approved'; }
       if (action === 'change_user_role') { const user = localAuth.users.find(item => item.id === body.userId); const role = localAuth.roles.find(item => item.id === body.roleId); if (!user || !role || user.isPrimaryAdmin) throw new Error('Utente non modificabile.'); user.roleId = role.id; }
       if (action === 'delete_user') { const user = localAuth.users.find(item => item.id === body.userId); if (!user || user.isPrimaryAdmin) throw new Error('Utente non eliminabile.'); user.deletedAt = new Date().toISOString(); }
+      if (action === 'restore_user') { const user = localAuth.users.find(item => item.id === body.userId); if (!user || user.isPrimaryAdmin || !user.deletedAt) throw new Error('Utente non ripristinabile.'); delete user.deletedAt; }
+      if (action === 'purge_user') { const index = localAuth.users.findIndex(item => item.id === body.userId); const user = localAuth.users[index]; if (!user || user.isPrimaryAdmin || !user.deletedAt) throw new Error('Utente non eliminabile definitivamente.'); localAuth.users.splice(index, 1); }
       saveLocalAuth();
     }
-    if (!remoteMode) localSecurityLog(action, action.includes('delete') ? 'warning' : 'info', body);
+    if (!remoteMode) localSecurityLog(action, action.includes('delete') || action.includes('purge') ? 'warning' : 'info', body);
     await refreshUserManagement(); showToast(successMessage);
   } catch (error) { showToast(error.message); }
 }
 
-function setView(view) {
+function setView(view, pushState = true) {
   if (currentUser?.isPrimaryAdmin) ensureUserManagementCard();
   ensureGuideView();
-  if (view !== 'dashboard' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' }[view] || 'documents')) view = 'dashboard';
+  ensureTrashView();
+  if (view === 'trash' && !hasTrashAccess()) view = 'dashboard';
+  if (view !== 'dashboard' && view !== 'trash' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' }[view] || 'documents')) view = 'dashboard';
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
   document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view));
@@ -554,10 +913,14 @@ function setView(view) {
   if (view === 'odg') renderOdg();
   if (view === 'interpretations') renderInterpretations();
   if (view === 'templates') renderTemplates();
+  if (view === 'trash') renderTrash();
   if (view === 'settings') { renderSettings(); renderInstitutionSettings('government'); renderInstitutionSettings('composition'); renderInterpretationSettings(); }
   if (view === 'access') { ensureUserManagementCard(); refreshUserManagement(); }
   if (view === 'guide') renderGuide();
   applyPermissions();
+  if (pushState && window.location.hash !== '#' + view) {
+    window.history.pushState({ view }, '', '#' + view);
+  }
 }
 
 function showEditorScreen(screenId) {
@@ -575,7 +938,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end gap-2"><button class="btn btn-sm btn-outline-secondary" data-print-document="${document.id}">PDF / stampa</button>${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2"><button class="btn btn-sm btn-outline-secondary" data-print-document="${document.id}">PDF / stampa</button>${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -605,7 +968,7 @@ function syncOdgStatusField() {
 
 function renderOdg() {
   const odgs = state.documents.filter(document => document.category === 'ODG').sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-document="${odg.id}">Apri ODG</button></div></article></div>`).join('');
+  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
   document.getElementById('emptyOdg').classList.toggle('d-none', odgs.length > 0);
   document.getElementById('odgCount').textContent = odgs.length;
   document.getElementById('odgToEvaluateCount').textContent = odgs.filter(odg => odg.status !== 'valutato').length;
@@ -614,27 +977,18 @@ function renderOdg() {
 
 function renderTemplates() {
   const grid = document.getElementById('templateGrid');
-  grid.innerHTML = state.templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4">${template.image ? `<img src="${template.image}" alt="" class="img-fluid mb-3" style="max-height: 110px; width: 100%; object-fit: cover;">` : ''}<p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">${escapeHtml(plainText(template.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end gap-2">${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-delete-template="${template.id}">Elimina</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
+  grid.innerHTML = state.templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4">${template.image ? `<img src="${template.image}" alt="" class="img-fluid mb-3" style="max-height: 110px; width: 100%; object-fit: cover;">` : ''}<p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">${escapeHtml(plainText(template.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end flex-wrap gap-2">${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="templates" data-entity-id="${template.id}">Cestino</button>` : ''}${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-template-pdf="${template.id}">Scarica PDF</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
   document.getElementById('emptyTemplates').classList.toggle('d-none', state.templates.length > 0);
 }
 
 function deleteTemplate(templateId) {
-  if (!can('templates', 'delete')) { showToast('Non hai il permesso di eliminare i template.'); return; }
-  const template = state.templates.find(item => item.id === templateId);
-  if (!template || !confirm(`Eliminare il template "${template.name}"? I documenti già creati non verranno modificati.`)) return;
-  state.templates = state.templates.filter(item => item.id !== templateId);
-  writeStorage(STORAGE_KEYS.templates, state.templates);
-  refreshCategoryOptions();
-  refreshDocumentTemplateOptions();
-  renderTemplates();
-  renderDocuments();
-  showToast('Template eliminato.');
+  moveToTrash('templates', templateId);
 }
 
 function renderParties() {
   const grid = document.getElementById('partyGrid');
   const parties = [...state.parties].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  grid.innerHTML = parties.map(party => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${party.statute ? `Statuto aggiornato il ${formatDate(party.updatedAt.slice(0, 10))}` : 'Statuto da redigere'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">${party.history?.length || 0} modifiche registrate</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-party-statute="${party.id}">${party.statute ? 'Modifica Statuto' : 'Scrivi Statuto'}</button></div></article></div>`).join('');
+  grid.innerHTML = parties.map(party => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${party.statute ? `Statuto aggiornato il ${formatDate(party.updatedAt.slice(0, 10))}` : 'Statuto da redigere'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${party.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${party.statute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-party-statute="${party.id}">${party.statute ? 'Modifica Statuto' : 'Scrivi Statuto'}</button></span></div></article></div>`).join('');
   document.getElementById('emptyParties').classList.toggle('d-none', parties.length > 0);
   document.getElementById('partyCount').textContent = parties.length;
   document.getElementById('activePartyCount').textContent = parties.filter(party => party.status === 'attivo').length;
@@ -644,7 +998,7 @@ function renderParties() {
 function renderCompanies() {
   const grid = document.getElementById('companyGrid');
   const companies = [...state.companies].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  grid.innerHTML = companies.map(company => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${company.regulation ? `Regolamento aggiornato il ${formatDate(company.updatedAt.slice(0, 10))}` : 'Regolamento da redigere'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">${company.history?.length || 0} modifiche registrate</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-company-regulation="${company.id}">${company.regulation ? 'Modifica Regolamento' : 'Scrivi Regolamento'}</button></div></article></div>`).join('');
+  grid.innerHTML = companies.map(company => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${company.regulation ? `Regolamento aggiornato il ${formatDate(company.updatedAt.slice(0, 10))}` : 'Regolamento da redigere'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${company.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${company.regulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-company-regulation="${company.id}">${company.regulation ? 'Modifica Regolamento' : 'Scrivi Regolamento'}</button></span></div></article></div>`).join('');
   document.getElementById('emptyCompanies').classList.toggle('d-none', companies.length > 0);
   document.getElementById('companyCount').textContent = companies.length;
   document.getElementById('companyRegulationCount').textContent = companies.filter(company => company.regulation).length;
@@ -691,7 +1045,7 @@ function renderInterpretationFields(interpretation = null) {
 
 function renderInterpretations() {
   const interpretations = [...state.interpretations].sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
-  document.getElementById('interpretationGrid').innerHTML = interpretations.map(item => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card interpretation-card card border-0 shadow-sm" data-open-interpretation="${item.id}" tabindex="0" role="button"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">Creata il ${formatDate(item.date)}</p><h2 class="h5 mb-3">${escapeHtml(item.name)}</h2><p class="card-text text-secondary interpretation-preview">${escapeHtml(item.text)}</p><dl class="party-facts mb-0">${state.interpretationSettings.fields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(item.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">Testo interpretativo</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-interpretation="${item.id}">Apri scheda</button></div></article></div>`).join('');
+  document.getElementById('interpretationGrid').innerHTML = interpretations.map(item => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card interpretation-card card border-0 shadow-sm" data-open-interpretation="${item.id}" tabindex="0" role="button"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">Creata il ${formatDate(item.date)}</p><h2 class="h5 mb-3">${escapeHtml(item.name)}</h2><p class="card-text text-secondary interpretation-preview">${escapeHtml(item.text)}</p><dl class="party-facts mb-0">${state.interpretationSettings.fields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(item.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">Testo interpretativo</span><span class="d-flex gap-2">${can('interpretations', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="interpretations" data-entity-id="${item.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-interpretation="${item.id}">Apri scheda</button></span></div></article></div>`).join('');
   document.getElementById('emptyInterpretations').classList.toggle('d-none', interpretations.length > 0);
   document.getElementById('interpretationCount').textContent = interpretations.length;
   document.getElementById('interpretationLastDate').textContent = interpretations.length ? formatDate(interpretations[0].date) : '--';
@@ -736,7 +1090,7 @@ function renderInstitutionSettings(type) {
 function renderInstitution(type) {
   const config = institutionConfigs[type];
   const records = [...institutionRecords(type)].sort((a, b) => b.startDate.localeCompare(a.startDate));
-  document.getElementById(`${config.view}Grid`).innerHTML = records.map(record => { const active = record.members.filter(institutionActive).length; return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-institution="${type}" data-record-id="${record.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">${escapeHtml(record.period)}</p><h2 class="h4 mb-2">${config.itemLabel}</h2></div><span class="badge ${record.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(record.status)}</span></div><p class="text-secondary mb-3">${formatDate(record.startDate)} → ${formatDate(record.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${institutionSettings(type).roles.map(role => `<span>${record.members.filter(member => member.role === role.id && institutionActive(member)).length} ${escapeHtml(role.name.toLowerCase())}</span>`).join('')}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">${record.members.length} nomine nello storico</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-institution="${type}" data-record-id="${record.id}">Gestisci</button></div></article></div>`; }).join('');
+  document.getElementById(`${config.view}Grid`).innerHTML = records.map(record => { const active = record.members.filter(institutionActive).length; return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-institution="${type}" data-record-id="${record.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">${escapeHtml(record.period)}</p><h2 class="h4 mb-2">${config.itemLabel}</h2></div><span class="badge ${record.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(record.status)}</span></div><p class="text-secondary mb-3">${formatDate(record.startDate)} → ${formatDate(record.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${institutionSettings(type).roles.map(role => `<span>${record.members.filter(member => member.role === role.id && institutionActive(member)).length} ${escapeHtml(role.name.toLowerCase())}</span>`).join('')}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${record.members.length} nomine nello storico</span><span class="d-flex gap-2">${can(config.view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governments' : 'courtCompositions'}" data-entity-id="${record.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-institution="${type}" data-record-id="${record.id}">Gestisci</button></span></div></article></div>`; }).join('');
   document.getElementById(`${config.view}Empty`).classList.toggle('d-none', records.length > 0);
   document.getElementById(`${config.view}Count`).textContent = records.length;
   document.getElementById(`${config.view}CurrentCount`).textContent = records.filter(record => record.status === 'in corso').length;
@@ -745,7 +1099,7 @@ function renderInstitution(type) {
 
 function renderInstitutionMembers(type, record) {
   const container = document.getElementById(`${type}RoleLists`);
-  container.innerHTML = institutionSettings(type).roles.map(role => { const members = record.members.filter(member => member.role === role.id); const active = members.filter(institutionActive).length; return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`; }).join('');
+  container.innerHTML = institutionSettings(type).roles.map(role => { const members = record.members.filter(member => member.role === role.id); const active = members.filter(institutionActive).length; return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}${can(institutionConfigs[type].view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governmentMembers' : 'compositionMembers'}" data-entity-id="${member.id}" data-parent-id="${record.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`; }).join('');
 }
 
 function openInstitutionEditor(type, recordId = '') { const config = institutionConfigs[type]; const record = institutionRecords(type).find(item => item.id === recordId); window[`editing${type}Id`] = record?.id || null; document.getElementById(`${type}Period`).value = record?.period || ''; document.getElementById(`${type}Start`).value = record?.startDate || today(); document.getElementById(`${type}End`).value = record?.endDate || ''; document.getElementById(`${type}Status`).value = record?.status || 'in corso'; document.querySelector(`#${type}Editor .modal-title`).textContent = record ? `${config.itemLabel} ${record.period}` : `Nuovo ${config.itemLabel.toLowerCase()}`; if (record) renderInstitutionMembers(type, record); else document.getElementById(`${type}RoleLists`).innerHTML = '<p class="small text-secondary">Salva la scheda per inserire le nomine.</p>'; showEditorScreen(`${type}Editor`); }
@@ -763,7 +1117,7 @@ function bindInstitutionEvents() { Object.keys(institutionConfigs).forEach(type 
 function renderParliaments() {
   const grid = document.getElementById('parliamentGrid');
   const mandates = [...state.parliaments].sort((a, b) => b.startDate.localeCompare(a.startDate));
-  grid.innerHTML = mandates.map(mandate => { const active = mandate.members.filter(member => !member.resignationDate).length; const roleSummary = parliamentRoles().map(role => `<span>${mandate.members.filter(member => member.role === role.id && !member.resignationDate).length} ${escapeHtml(parliamentRoleLabel(role.id, true).toLowerCase())} attivi</span>`).join(''); return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-parliament="${mandate.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">Legislazione ${escapeHtml(mandate.legislation)}</p><h2 class="h4 mb-2">Mandato parlamentare</h2></div><span class="badge ${mandate.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(mandate.status)}</span></div><p class="text-secondary mb-3">${formatDate(mandate.startDate)} → ${formatDate(mandate.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${roleSummary}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4"><span class="small text-secondary">${mandate.members.length} nomine nello storico</span><button type="button" class="btn btn-sm btn-outline-secondary float-end" data-open-parliament-action="${mandate.id}">Gestisci mandato</button></div></article></div>`; }).join('');
+  grid.innerHTML = mandates.map(mandate => { const active = mandate.members.filter(member => !member.resignationDate).length; const roleSummary = parliamentRoles().map(role => `<span>${mandate.members.filter(member => member.role === role.id && !member.resignationDate).length} ${escapeHtml(parliamentRoleLabel(role.id, true).toLowerCase())} attivi</span>`).join(''); return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-parliament="${mandate.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">Legislazione ${escapeHtml(mandate.legislation)}</p><h2 class="h4 mb-2">Mandato parlamentare</h2></div><span class="badge ${mandate.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(mandate.status)}</span></div><p class="text-secondary mb-3">${formatDate(mandate.startDate)} → ${formatDate(mandate.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${roleSummary}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${mandate.members.length} nomine nello storico</span><span class="d-flex gap-2">${can('parliament', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parliaments" data-entity-id="${mandate.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-parliament-action="${mandate.id}">Gestisci mandato</button></span></div></article></div>`; }).join('');
   document.getElementById('emptyParliaments').classList.toggle('d-none', mandates.length > 0);
   document.getElementById('parliamentCount').textContent = mandates.length;
   document.getElementById('currentParliamentCount').textContent = mandates.filter(mandate => mandate.status === 'in corso').length;
@@ -776,7 +1130,7 @@ function renderMemberList(mandate, role) {
   const limit = parliamentRole(role)?.limit ?? 0;
   const roleLabel = parliamentRoleLabel(role);
   if (!list) return;
-  list.innerHTML = members.length ? members.map(member => `<div class="parliament-member ${member.resignationDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.resignationDate ? `Dimesso il ${formatDate(member.resignationDate)}` : `Giurato il ${formatDate(member.oathDate)}`}${member.memberParty ? ` · ${escapeHtml(member.memberParty)}` : ''}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-member="${member.id}">Modifica</button>${!member.resignationDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-resign-member="${member.id}">Dimetti</button>` : `<button type="button" class="btn btn-sm btn-outline-primary" data-new-nomination="${role}">Nuova nomina</button>`}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun ${roleLabel.toLowerCase()} inserito.</p>`;
+  list.innerHTML = members.length ? members.map(member => `<div class="parliament-member ${member.resignationDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.resignationDate ? `Dimesso il ${formatDate(member.resignationDate)}` : `Giurato il ${formatDate(member.oathDate)}`}${member.memberParty ? ` · ${escapeHtml(member.memberParty)}` : ''}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-member="${member.id}">Modifica</button>${!member.resignationDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-resign-member="${member.id}">Dimetti</button>` : `<button type="button" class="btn btn-sm btn-outline-primary" data-new-nomination="${role}">Nuova nomina</button>`}${can('parliament', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parliamentMembers" data-entity-id="${member.id}" data-parent-id="${mandate.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun ${roleLabel.toLowerCase()} inserito.</p>`;
   if (members.filter(member => !member.resignationDate).length < limit) list.insertAdjacentHTML('beforeend', `<button type="button" class="btn btn-sm btn-outline-primary" data-new-nomination="${role}">+ Aggiungi ${roleLabel}</button>`);
 }
 
@@ -915,8 +1269,9 @@ function refreshDocumentTemplateOptions(category = '') {
 
 function renderSettings() {
   const categories = categoryNames();
+  ['top', 'right', 'bottom', 'left'].forEach(side => { const input = document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`); if (input) input.value = state.pageMargins[side]; });
   document.getElementById('numberingForm').innerHTML = categories.map(category => `<div class="row align-items-center g-2 mb-3"><div class="col"><label class="form-label mb-0" for="counter-${encodeURIComponent(category)}">${escapeHtml(category)}</label><div class="form-text">Formato: ${escapeHtml(category)} numero/anno</div></div><div class="col-auto"><input class="form-control counter-input" id="counter-${encodeURIComponent(category)}" data-category="${escapeHtml(category)}" type="text" inputmode="numeric" pattern="[0-9]+" value="${nextNumber(category)}"></div></div>`).join('') + '<button class="btn btn-primary mt-2" type="submit">Salva numerazione</button>';
-  document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template</small></span><strong>${nextNumber(category)}</strong></span>`).join('');
+  document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between align-items-center gap-2 border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template${state.documents.some(document => document.category === category) ? ` · ${state.documents.filter(document => document.category === category).length} documenti` : ''}</small></span><span class="d-flex align-items-center gap-2"><strong>${nextNumber(category)}</strong><button type="button" class="btn btn-sm btn-outline-danger" data-delete-category="${escapeHtml(category)}" title="Elimina categoria">Elimina</button></span></span>`).join('');
   document.getElementById('partyFieldList').innerHTML = state.partyFields.length ? state.partyFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nei nuovi partiti</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-party-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome, lo status e lo Statuto sono sempre disponibili.</p>';
   const parliamentSettingsForm = document.getElementById('parliamentSettingsForm');
   parliamentSettingsForm.innerHTML = `<div id="parliamentRoleSettings" class="col-12 vstack gap-2">${parliamentRoles().map(role => `<div class="row g-2 align-items-end parliament-role-setting" data-role-id="${role.id}"><div class="col"><label class="form-label">Nome ruolo</label><input class="form-control parliament-role-name" value="${escapeHtml(role.name)}" required></div><div class="col-auto"><label class="form-label">Numero</label><input class="form-control parliament-role-limit" type="number" min="0" value="${role.limit}" required></div><div class="col-auto"><button type="button" class="btn btn-outline-danger remove-parliament-role" data-role-id="${role.id}" ${parliamentRoles().length <= 1 ? 'disabled' : ''}>Rimuovi</button></div></div>`).join('')}</div><div class="col-12 d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addParliamentRole">+ Nuovo ruolo</button><button class="btn btn-primary" type="submit">Salva configurazione</button></div>`;
@@ -996,7 +1351,7 @@ function openPartyStatuteEditor(partyId) {
   const party = state.parties.find(item => item.id === partyId);
   if (!party) return;
   editingPartyId = party.id;
-  document.getElementById('partyStatuteEditorContent').innerHTML = party.statute || '';
+  document.getElementById('partyStatuteEditorContent').innerHTML = party.statute || ''; resetEditorHistory(document.getElementById('partyStatuteEditorContent'));
   document.getElementById('partyStatutePartyName').textContent = party.name;
   document.getElementById('partyStatuteSubtitle').textContent = `${statusLabel(party.status)} · documento unico del partito`;
   const status = document.getElementById('partyStatuteStatus');
@@ -1020,7 +1375,7 @@ function openCompanyRegulationEditor(companyId) {
   const company = state.companies.find(item => item.id === companyId);
   if (!company) return;
   editingCompanyId = company.id;
-  document.getElementById('companyRegulationEditorContent').innerHTML = company.regulation || '';
+  document.getElementById('companyRegulationEditorContent').innerHTML = company.regulation || ''; resetEditorHistory(document.getElementById('companyRegulationEditorContent'));
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
   document.getElementById('companyRegulationSubtitle').textContent = 'Documento unico dell’azienda';
   showEditorScreen('companyRegulationEditor');
@@ -1142,7 +1497,8 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
   document.getElementById('documentNumber').value = nextNumber(template?.category || document.getElementById('documentCategory').value);
   document.getElementById('odgStatus').value = 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(template?.body || '');
+  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(template?.body || ''); resetEditorHistory(document.getElementById('documentBodyEditor'));
+  applyPageMargins();
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Nuovo documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva documento';
@@ -1163,7 +1519,8 @@ function openDocumentEditor(documentId) {
   document.getElementById('documentNumber').value = documentRecord.number;
   document.getElementById('odgStatus').value = documentRecord.status || 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(documentRecord.body);
+  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(documentRecord.body); resetEditorHistory(document.getElementById('documentBodyEditor'));
+  applyPageMargins();
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Modifica documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva modifiche';
@@ -1216,7 +1573,8 @@ function openTemplateEditor(templateId = '') {
   refreshCategoryOptions();
   document.getElementById('templateName').value = template?.name || '';
   document.getElementById('templateCategory').value = template?.category || categoryNames()[0];
-  document.getElementById('templateBodyEditor').innerHTML = template?.body || '';
+  document.getElementById('templateBodyEditor').innerHTML = template?.body || ''; resetEditorHistory(document.getElementById('templateBodyEditor'));
+  applyPageMargins();
   document.querySelector('#templateModal .modal-title').textContent = template ? 'Modifica template' : 'Nuovo template';
   document.querySelector('#templateModal button[type="submit"]').textContent = template ? 'Salva modifiche' : 'Salva template';
   showEditorScreen('templateModal');
@@ -1224,24 +1582,155 @@ function openTemplateEditor(templateId = '') {
 
 function printDocument(id) {
   const documentRecord = state.documents.find(item => item.id === id); if (!documentRecord) return;
+  const margins = normalizePageMargins(state.pageMargins);
   const printWindow = window.open('', '_blank');
-  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:60px auto;color:#17202a}h1{font-size:28px} .meta{font-family:Arial,sans-serif;color:#68727d;border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:32px} .body{line-height:1.7} img{max-width:100%;max-height:220px;display:block;margin:20px 0}</style></head><body><div class="meta">Corte Costituzionale di Zero<br>${escapeHtml(documentCode(documentRecord))}</div><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" alt="">` : ''}<div class="body">${sanitizeRichHtml(documentRecord.body)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script@5.1.1/400.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/400.css"><style>@page{size:A4;margin:${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm}body{margin:0;color:#17202a;font-family:Georgia,'Times New Roman',serif;font-size:12pt}h1{font-size:28px}.body{line-height:1.7}.body img{max-width:100%;max-height:220px;display:block;margin:0 0 20px}.body table{max-width:100%;border-collapse:collapse}.body td{border:1px solid #aeb7bf;padding:.5rem}</style></head><body><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" alt="">` : ''}<div class="body">${sanitizeRichHtml(documentRecord.body)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
   printWindow.document.close();
 }
 
-async function downloadDocumentPdf(id) {
-  const documentRecord = state.documents.find(item => item.id === id);
-  if (!documentRecord || !can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
-  if (typeof window.html2pdf !== 'function') { showToast('La libreria PDF non è disponibile. Usa PDF / stampa.'); return; }
+async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = '' } = {}) {
+  if (!can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
+  if (typeof window.html2pdf !== 'function') { showToast('La libreria PDF non è disponibile.'); return; }
+  const margins = normalizePageMargins(state.pageMargins);
   const container = document.createElement('article');
-  container.style.cssText = 'width: 180mm; padding: 16mm; background: #fff; color: #17202a; font-family: Georgia, serif; line-height: 1.6;';
-  container.innerHTML = `<div style="font-family: Arial, sans-serif; color: #68727d; border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 24px;">Corte Costituzionale di Zero<br>${escapeHtml(documentCode(documentRecord))}</div><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" style="max-width: 100%; max-height: 220px; display: block; margin: 20px 0;" alt="">` : ''}<div>${sanitizeRichHtml(documentRecord.body)}</div>`;
+  container.className = 'pdf-export-source';
+  container.style.cssText = [
+    'width:210mm',
+    'box-sizing:border-box',
+    'position:relative',
+    'background:#fff',
+    'color:#17202a',
+    'font-family:Georgia,"Times New Roman",serif',
+    'font-size:12pt',
+    'line-height:1.55',
+    'min-width:0',
+    'overflow:visible',
+    'overflow-wrap:break-word',
+    'word-break:normal',
+    'margin:0',
+    'padding:0'
+  ].join(';');
+
+  // html2pdf riceve una pagina larga esattamente 210 mm e senza margini esterni.
+  // I margini vengono applicati una sola volta al foglio interno: questo evita
+  // il taglio a destra causato dal precedente doppio calcolo della larghezza.
+  const page = document.createElement('div');
+  page.className = 'pdf-export-page';
+  page.style.cssText = [
+    'position:relative',
+    'width:210mm',
+    'min-height:297mm',
+    'box-sizing:border-box',
+    `padding:${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`,
+    'overflow:visible',
+    'isolation:isolate'
+  ].join(';');
+
+  const content = document.createElement('div');
+  content.className = 'pdf-export-content';
+  content.style.cssText = 'position:relative;z-index:1;width:100%;min-width:0;max-width:none;box-sizing:border-box;overflow:visible;overflow-wrap:break-word;word-break:normal;';
+  content.innerHTML = sanitizeRichHtml(body);
+
+  // Le immagini mobili dell’editor vengono rese come sfondo del foglio: il
+  // testo conserva quindi flusso e posizione anche nella conversione PDF.
+  const editorImages = [...content.querySelectorAll('.editor-image')].map(editorImage => ({
+    src: editorImage.getAttribute('src') || '',
+    width: Number.parseFloat(editorImage.style.width) || 0,
+    left: Number.parseFloat(editorImage.style.left) || 16,
+    top: Number.parseFloat(editorImage.style.top) || 16
+  }));
+  content.querySelectorAll('.editor-image').forEach(image => image.remove());
+
+  // Include anche l’eventuale immagine ereditata dagli archivi precedenti,
+  // evitando il duplicato se è stata già ricollocata nel corpo dell’editor.
+  const backgroundImages = image ? [{ src: image, width: 0, left: 0, top: 0 }, ...editorImages] : editorImages;
+  const renderedSources = new Set();
+  backgroundImages.forEach(editorImage => {
+    if (!editorImage.src || renderedSources.has(editorImage.src)) return;
+    renderedSources.add(editorImage.src);
+    const background = document.createElement('img');
+    background.className = 'pdf-export-background';
+    background.src = editorImage.src;
+    background.alt = '';
+    const pxToMm = value => value * 25.4 / 96;
+    const widthMm = editorImage.width ? pxToMm(editorImage.width) : 0;
+    const leftMm = pxToMm(editorImage.left || 0);
+    const topMm = pxToMm(editorImage.top || 0);
+    background.style.cssText = [
+      'position:absolute',
+      'z-index:0',
+      `left:${margins.left + leftMm}mm`,
+      `top:${margins.top + topMm}mm`,
+      widthMm ? `width:${widthMm}mm` : 'width:auto',
+      'height:auto',
+      'max-width:none',
+      'display:block',
+      'pointer-events:none'
+    ].join(';');
+    page.appendChild(background);
+  });
+
+  page.appendChild(content);
+  container.appendChild(page);
   document.body.appendChild(container);
-  try { await window.html2pdf().set({ margin: 0, filename: `${documentRecord.category}-${documentRecord.number}-${documentRecord.year}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(container).save(); showToast('PDF scaricato.'); } catch (error) { showToast('Impossibile generare il PDF.'); console.error(error); } finally { container.remove(); }
+  try {
+    if (document.fonts?.load) {
+      await Promise.all([
+        document.fonts.load('16px Georgia'),
+        document.fonts.load('16px Raleway'),
+        document.fonts.load('16px "Pinyon Script"')
+      ]).catch(() => undefined);
+    }
+    await Promise.all([...container.querySelectorAll('img')].map(image => image.complete ? Promise.resolve() : new Promise(resolve => { image.onload = image.onerror = resolve; })));
+    await window.html2pdf().set({
+      margin: 0,
+      filename: String(filename || 'documento.pdf').replace(/[\\/:*?"<>|]+/g, '-'),
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+      pagebreak: { mode: ['css', 'legacy'], before: ['.page-break'], avoid: ['table', 'blockquote', 'tr'] },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(container).save();
+    showToast('PDF scaricato.');
+  } catch (error) {
+    showToast('Impossibile generare il PDF.');
+    console.error(error);
+  } finally {
+    container.remove();
+  }
 }
 
+function downloadDocumentPdf(id) {
+  const documentRecord = state.documents.find(item => item.id === id);
+  if (!documentRecord) return;
+  return downloadRichPdf({ body: documentRecord.body, image: documentRecord.image, filename: `${documentRecord.category}-${documentRecord.number}-${documentRecord.year}.pdf` });
+}
+
+function downloadTemplatePdf(id) {
+  const template = state.templates.find(item => item.id === id);
+  if (!template) return;
+  return downloadRichPdf({ body: template.body, image: template.image, filename: `template-${template.category}-${template.name}.pdf` });
+}
+
+function downloadPartyStatutePdf(id) {
+  const party = state.parties.find(item => item.id === id);
+  if (!party?.statute) return;
+  return downloadRichPdf({ body: party.statute, filename: `statuto-${party.name}.pdf` });
+}
+
+function downloadCompanyRegulationPdf(id) {
+  const company = state.companies.find(item => item.id === id);
+  if (!company?.regulation) return;
+  return downloadRichPdf({ body: company.regulation, filename: `regolamento-${company.name}.pdf` });
+}
+
+
 function seedTestMandate() {
-  if (state.parliaments.length) return;
+  if (state.testMandateSeeded) return;
+  if (state.parliaments.length) {
+    state.testMandateSeeded = true;
+    writeStorage(STORAGE_KEYS.testMandateSeeded, state.testMandateSeeded);
+    return;
+  }
   const testMandate = {
     id: crypto.randomUUID(),
     legislation: 'XVIII',
@@ -1256,7 +1745,9 @@ function seedTestMandate() {
     updatedAt: new Date().toISOString()
   };
   state.parliaments.push(testMandate);
+  state.testMandateSeeded = true;
   writeStorage(STORAGE_KEYS.parliaments, state.parliaments);
+  writeStorage(STORAGE_KEYS.testMandateSeeded, state.testMandateSeeded);
 }
 
 async function initialize() {
@@ -1264,13 +1755,12 @@ async function initialize() {
   ensureAuthModals();
   ensureCredentialModal();
   ensureOdgCategory();
-  ensureDemoOdg();
   ensureInstitutionViews();
   ensureInterpretationView();
   ensureOdgView();
+  ensureTrashView();
   bindInstitutionEvents();
-  seedTestMandate();
-  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { const backendUnavailable = error.message === 'BACKEND_UNAVAILABLE'; const localUser = localAuth.users.find(user => user.username === username && user.password === password && !user.deletedAt); if (!backendUnavailable || !localUser) { alert.textContent = backendUnavailable ? 'Il server non è configurato oppure le credenziali locali non sono valide.' : (error.message || 'Credenziali non valide. Riprova.'); alert.classList.remove('d-none'); return; } currentUser = localUserPayload(localUser); ensureDemoOdg(); await requireFirstAccessCredentials(localUser); localStorage.setItem('cz_local_user', localUser.id); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } });
+  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { const backendUnavailable = error.message === 'BACKEND_UNAVAILABLE'; const localUser = localAuth.users.find(user => user.username === username && user.password === password && !user.deletedAt); if (!backendUnavailable || !localUser) { alert.textContent = backendUnavailable ? 'Il server non è configurato oppure le credenziali locali non sono valide.' : (error.message || 'Credenziali non valide. Riprova.'); alert.classList.remove('d-none'); return; } currentUser = localUserPayload(localUser); await requireFirstAccessCredentials(localUser); localStorage.setItem('cz_local_user', localUser.id); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } });
   document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); await saveRemoteState(); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
   document.getElementById('requestRegistrationButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('registrationRequestModal')).show());
   document.getElementById('requestRecoveryButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('recoveryRequestModal')).show());
@@ -1279,8 +1769,21 @@ async function initialize() {
   document.getElementById('credentialChangeForm').addEventListener('submit', saveFirstAccessCredentials);
   document.getElementById('refreshUsersButton')?.addEventListener('click', refreshUserManagement);
   document.addEventListener('change', event => { const roleSelect = event.target.closest('.user-role-select'); if (roleSelect) userManagementAction('change_user_role', { userId: roleSelect.dataset.userId, roleId: roleSelect.value }, 'Ruolo aggiornato.'); });
+  document.addEventListener('click', event => { const deleteUser = event.target.closest('.delete-user-button'); if (deleteUser) { event.stopImmediatePropagation(); if (confirm('Spostare questo utente nel cestino? Potrà essere ripristinato o eliminato definitivamente dalla sezione Utenti e permessi.')) userManagementAction('delete_user', { userId: deleteUser.dataset.userId }, 'Utente spostato nel cestino.'); } });
   document.addEventListener('click', event => { const createRoleButton = event.target.closest('#createRoleButton'); if (createRoleButton) userManagementAction('create_role', { name: document.getElementById('newRoleName').value }, 'Ruolo creato.'); const savePermissionsButton = event.target.closest('.save-role-permissions'); if (savePermissionsButton) { const permissions = {}; document.querySelectorAll(`.role-permission[data-role-id="${savePermissionsButton.dataset.roleId}"]`).forEach(input => { permissions[input.dataset.permission] ||= {}; permissions[input.dataset.permission][input.dataset.action] = input.checked; }); userManagementAction('save_role_permissions', { roleId: savePermissionsButton.dataset.roleId, permissions }, 'Permessi salvati.'); } });
   document.addEventListener('click', event => { const deleteButton = event.target.closest('.delete-user-button'); if (deleteButton && confirm('Eliminare definitivamente l’accesso di questo utente?')) userManagementAction('delete_user', { userId: deleteButton.dataset.userId }, 'Utente eliminato.'); const approveRegistration = event.target.closest('.approve-registration-button'); if (approveRegistration) { const roleId = document.querySelector(`.registration-role[data-request-id="${approveRegistration.dataset.requestId}"]`).value; userManagementAction('approve_registration', { requestId: approveRegistration.dataset.requestId, roleId }, 'Registrazione autorizzata.'); } const rejectRegistration = event.target.closest('.reject-registration-button'); if (rejectRegistration) userManagementAction('reject_registration', { requestId: rejectRegistration.dataset.requestId }, 'Richiesta rifiutata.'); const approveReset = event.target.closest('.approve-reset-button'); if (approveReset) { const passwordInput = document.querySelector(`.reset-password[data-request-id="${approveReset.dataset.requestId}"]`); userManagementAction('approve_password_reset', { requestId: approveReset.dataset.requestId, newPassword: passwordInput.value }, 'Password aggiornata.'); } });
+  document.addEventListener('click', event => {
+    const restoreUser = event.target.closest('.restore-user-button');
+    if (restoreUser) { event.stopImmediatePropagation(); userManagementAction('restore_user', { userId: restoreUser.dataset.userId }, 'Utente ripristinato.'); return; }
+    const purgeUser = event.target.closest('.purge-user-button');
+    if (purgeUser) { event.stopImmediatePropagation(); if (confirm('Eliminare definitivamente questo utente? L’account e i relativi dati di accesso non potranno essere ripristinati.')) userManagementAction('purge_user', { userId: purgeUser.dataset.userId }, 'Utente eliminato definitivamente.'); return; }
+    const trashButton = event.target.closest('[data-trash-item]');
+    if (trashButton) { event.stopImmediatePropagation(); moveToTrash(trashButton.dataset.trashItem, trashButton.dataset.entityId, trashButton.dataset.parentId || ''); return; }
+    const restoreTrash = event.target.closest('[data-restore-trash]');
+    if (restoreTrash) { event.stopImmediatePropagation(); restoreTrashItem(restoreTrash.dataset.restoreTrash); return; }
+    const purgeTrash = event.target.closest('[data-purge-trash]');
+    if (purgeTrash) { event.stopImmediatePropagation(); permanentlyDeleteTrashItem(purgeTrash.dataset.purgeTrash); }
+  });
   document.querySelectorAll('[data-view-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); setView(link.dataset.viewLink); }));
   document.getElementById('newOdgButton').addEventListener('click', () => openDocumentModal('', 'ODG'));
   document.getElementById('interpretationForm').addEventListener('submit', saveInterpretation);
@@ -1308,7 +1811,9 @@ async function initialize() {
   document.getElementById('closeCompanyRegulationEditor').addEventListener('click', closeCompanyRegulationEditor);
   document.getElementById('cancelCompanyRegulationEditor').addEventListener('click', closeCompanyRegulationEditor);
   document.getElementById('categoryForm').addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('categoryName').value.trim(); if (!name) return; if (categoryNames().some(category => category.toLowerCase() === name.toLowerCase())) { showToast('Questa categoria esiste già.'); return; } state.categories.push({ name }); state.counters[name] = 1; writeStorage(STORAGE_KEYS.categories, state.categories); writeStorage(STORAGE_KEYS.counters, state.counters); document.getElementById('categoryForm').reset(); refreshCategoryOptions(); renderSettings(); showToast('Categoria creata.'); });
+  document.getElementById('categoryList').addEventListener('click', event => { const button = event.target.closest('[data-delete-category]'); if (!button) return; event.stopPropagation(); deleteCategory(button.dataset.deleteCategory); });
   document.getElementById('numberingForm').addEventListener('submit', event => { event.preventDefault(); const inputs = [...document.querySelectorAll('.counter-input')]; if (inputs.some(input => !/^\d+$/.test(input.value.trim()) || numericValue(input.value) < 1)) { showToast('Inserisci solo numeri positivi, ad esempio 01 o 00001.'); return; } inputs.forEach(input => { state.counters[input.dataset.category] = input.value.trim(); }); writeStorage(STORAGE_KEYS.counters, state.counters); renderSettings(); showToast('Numerazione aggiornata.'); });
+  document.getElementById('pageMarginsForm').addEventListener('submit', event => { event.preventDefault(); const margins = Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`).value])); state.pageMargins = normalizePageMargins(margins); writeStorage(STORAGE_KEYS.pageMargins, state.pageMargins); applyPageMargins(); renderSettings(); showToast('Margini pagina aggiornati.'); });
   document.getElementById('partyFieldForm').addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('partyFieldName').value.trim(); if (!name) return; if (state.partyFields.some(field => field.name.toLowerCase() === name.toLowerCase())) { showToast('Questo campo esiste già.'); return; } state.partyFields.push({ id: crypto.randomUUID(), name }); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); document.getElementById('partyFieldForm').reset(); renderSettings(); renderParties(); showToast('Informazione minima aggiunta.'); });
   document.getElementById('partyFieldList').addEventListener('click', event => { const button = event.target.closest('[data-remove-party-field]'); if (!button) return; const fieldId = button.dataset.removePartyField; state.partyFields = state.partyFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); renderSettings(); renderParties(); showToast('Informazione minima rimossa.'); });
   document.getElementById('parliamentSettingsForm').addEventListener('submit', event => { event.preventDefault(); const roles = [...document.querySelectorAll('.parliament-role-setting')].map(row => ({ id: row.dataset.roleId, name: row.querySelector('.parliament-role-name').value.trim(), limit: Math.max(0, Number.parseInt(row.querySelector('.parliament-role-limit').value, 10) || 0) })).filter(role => role.name); if (!roles.length || new Set(roles.map(role => role.name.toLowerCase())).size !== roles.length) { showToast('Inserisci nomi di ruolo univoci.'); return; } state.parliamentSettings.roles = roles; writeStorage(STORAGE_KEYS.parliamentSettings, state.parliamentSettings); renderSettings(); renderParliaments(); showToast('Configurazione Parlamento salvata.'); });
@@ -1323,20 +1828,41 @@ async function initialize() {
   document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); });
   document.querySelectorAll('#documentModal [data-bs-dismiss="modal"], #templateModal [data-bs-dismiss="modal"]').forEach(button => { button.removeAttribute('data-bs-dismiss'); button.addEventListener('click', closeEditorScreen); });
   enhanceEditorToolbars();
-  document.querySelectorAll('.rich-editor').forEach(editor => { editor.addEventListener('keyup', () => saveEditorSelection(editor)); editor.addEventListener('mouseup', () => saveEditorSelection(editor)); editor.addEventListener('focus', () => saveEditorSelection(editor)); });
+  document.querySelectorAll('.rich-editor').forEach(editor => {
+    const captureSelection = () => { saveEditorSelection(editor); syncFontSizeControl(editor); };
+    editorHistory(editor); makeEditorImagesDraggable(editor);
+    editor.addEventListener('input', () => recordEditorChange(editor));
+    editor.addEventListener('keydown', event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') { event.preventDefault(); event.shiftKey ? redoEditorChange(editor) : undoEditorChange(editor); }
+      else if (key === 'y') { event.preventDefault(); redoEditorChange(editor); }
+    });
+    editor.addEventListener('keydown', event => {
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedEditorImage && editor.contains(selectedEditorImage)) {
+        event.preventDefault(); selectedEditorImage.remove(); selectedEditorImage = null; recordEditorChange(editor);
+      }
+    });
+    editor.addEventListener('keyup', captureSelection);
+    editor.addEventListener('mouseup', captureSelection);
+    editor.addEventListener('focus', captureSelection);
+  });
   document.querySelectorAll('[data-editor-command]').forEach(control => {
-    control.addEventListener('mousedown', event => { if (control.tagName !== 'SELECT' && control.type !== 'color') event.preventDefault(); });
+    control.addEventListener('mousedown', event => { if (control.tagName !== 'SELECT' && control.tagName !== 'INPUT' && control.type !== 'color') event.preventDefault(); });
     const applyCommand = () => {
       const command = control.dataset.editorCommand;
       if (command === 'fontSizePx') return applyPixelFontSize(control);
       if (command === 'insertTable') return insertTable(editorFromControl(control));
-      if (command === 'insertImage') return insertImage(editorFromControl(control));
+      if (command === 'insertImage') return insertImage(editorFromControl(control), 'cursor');
+      if (command === 'insertImageAbove') return insertImage(editorFromControl(control), 'above');
+      if (command === 'insertImageBelow') return insertImage(editorFromControl(control), 'below');
+      if (command === 'deleteImage') return deleteSelectedImage(control);
       if (command === 'createLink') { const url = prompt('Incolla l’indirizzo del collegamento'); if (url) executeEditorCommand(control, url); return; }
       executeEditorCommand(control, control.type === 'color' ? control.value : control.value || null);
     };
     control.addEventListener(control.tagName === 'SELECT' || control.type === 'color' || control.dataset.editorCommand === 'fontSizePx' ? 'change' : 'click', applyCommand);
   });
-  document.addEventListener('click', event => { const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
+  document.addEventListener('click', event => { const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
   document.addEventListener('keydown', event => { const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
   document.getElementById('documentDate').value = today();
   document.querySelectorAll('#documentModal, #templateModal, #parliamentModal').forEach(element => { element.classList.remove('modal', 'fade'); element.classList.add('editor-page', 'd-none'); });
@@ -1347,7 +1873,28 @@ async function initialize() {
   refreshCategoryOptions();
   refreshDocumentTemplateOptions();
   populateFontMenus();
-  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') { if (!currentUser) { const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin); currentUser = localUser ? localUserPayload(localUser) : null; } document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); }
+  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') { 
+    if (!currentUser) { 
+      const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin); 
+      currentUser = localUser ? localUserPayload(localUser) : null; 
+    } 
+    document.getElementById('loginView').classList.add('d-none'); 
+    document.getElementById('appView').classList.remove('d-none'); 
+    const initialView = window.location.hash.replace('#', '') || 'dashboard';
+    setView(initialView, false); 
+  } else {
+    document.getElementById('loginView').classList.remove('d-none');
+  }
+  
+  const loader = document.getElementById('loadingOverlay');
+  if (loader) loader.classList.add('d-none');
+
+  window.addEventListener('popstate', (event) => {
+    if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return;
+    const view = event.state?.view || window.location.hash.replace('#', '') || 'dashboard';
+    setView(view, false);
+    document.querySelectorAll('.editor-page').forEach(el => el.classList.add('d-none'));
+  });
 }
 
 document.addEventListener('DOMContentLoaded', initialize);

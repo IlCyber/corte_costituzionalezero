@@ -44,9 +44,17 @@ L'amministratore principale trova nella scheda autonoma **Utenti e permessi**:
 - autorizzazione dei recuperi password;
 - eliminazione dell'accesso di un utente.
 
-Nella stessa scheda è possibile creare ruoli personalizzati e, per ogni area, impostare separatamente i permessi **Vedere**, **Creare**, **Modificare**, **Eliminare** e **Approvare**. Le sezioni e i pulsanti non autorizzati vengono nascosti nell'interfaccia; l'API ripete il controllo lato server.
+Nella stessa scheda è possibile creare ruoli personalizzati e, per ogni area, impostare separatamente i permessi **Vedere**, **Creare**, **Modificare**, **Spostare nel cestino**, **Ripristinare**, **Eliminare definitivamente** e **Approvare**. Le sezioni e i pulsanti non autorizzati vengono nascosti nell'interfaccia; l'API ripete il controllo lato server.
 
-L'amministratore principale non puo eliminare se stesso o essere eliminato da un altro amministratore. L'eliminazione disattiva l'account e conserva i dati storici.
+L'amministratore principale non puo eliminare se stesso o essere eliminato da un altro amministratore. L'eliminazione di un account lo sposta nel cestino degli utenti, disattivandone immediatamente l'accesso; l'amministratore principale può poi ripristinarlo o eliminarlo definitivamente.
+
+### Cestino
+
+La scheda **Cestino** raccoglie gli elementi rimossi dagli archivi principali. I documenti (compresi gli ODG), i template, i partiti, le aziende, i mandati parlamentari, le nomine, le schede e i componenti di Governo e Corte, nonché le interpretazioni, sono tutti eliminabili attraverso questo flusso.
+
+Lo spostamento nel cestino rimuove subito l'elemento dalla relativa sezione principale senza cancellarne i dati. Dal cestino, un utente autorizzato può **ripristinarlo** nella posizione originaria oppure **eliminarlo definitivamente**. La seconda azione è irreversibile e richiede una conferma esplicita. Per i componenti di una scheda istituzionale, occorre ripristinare prima l'eventuale scheda padre eliminata.
+
+I tre passaggi sono governati da permessi indipendenti per ciascuna area: chi può spostare un elemento nel cestino non acquisisce automaticamente la facoltà di ripristinarlo o di eliminarlo definitivamente. Tutte le operazioni sono registrate nel log di sicurezza quando viene usato il backend.
 
 ### Sicurezza e log
 
@@ -61,11 +69,13 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 - Cercare per titolo, categoria o numero.
 - Riaprire una riga per modificare il documento.
 - Usare l'editor per formattazione, elenchi, tabelle, immagini, colori, collegamenti e stampa.
+- La toolbar resta visibile durante lo scorrimento del documento. In **Impostazioni → Margini pagina documento** puoi configurare in millimetri i margini superiore, destro, inferiore e sinistro; il modello viene applicato alla redazione, ai template e ai PDF.
+- **Scarica PDF** esporta il solo contenuto del documento, senza aggiungere automaticamente il titolo prima del testo, mantenendo margini, immagini e formattazioni dell'editor.
 - La sezione ODG usa la categoria automatica `ODG` e gli stati `Da valutare` / `Valutato`.
 
 ### Template
 
-Creare un template con nome, categoria, struttura e immagine opzionale. **Usa template** apre un nuovo documento precompilato. I template attuali sono creabili ma non eliminabili dall'interfaccia.
+Creare un template con nome, categoria, struttura e immagine opzionale. **Usa template** apre un nuovo documento precompilato. I template possono essere spostati nel cestino senza modificare i documenti già creati con essi.
 
 ### Partiti
 

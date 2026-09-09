@@ -9,7 +9,9 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. In l
 - Richieste di registrazione approvate dall'amministratore principale.
 - Recupero password sottoposto all'amministratore principale.
 - Gestione utenti con ruoli, cambio permessi e disattivazione degli account.
-- Ruoli personalizzati con matrice di permessi separata per visualizzazione, creazione, modifica, eliminazione e approvazione.
+- Ruoli personalizzati con matrice di permessi separata per visualizzazione, creazione, modifica, cestino, ripristino, eliminazione definitiva e approvazione.
+- Cestino centralizzato: ogni documento, template, partito, azienda, mandato, componente, scheda di Governo/Corte e interpretazione può essere spostato nel cestino, ripristinato o eliminato definitivamente.
+- Permessi distinti per spostare nel cestino, ripristinare ed eliminare definitivamente, applicati sia nell’interfaccia sia nel backend.
 - Protezioni applicative con CSRF, rate limiting, CSP, sanificazione HTML, query PDO preparate e log di sicurezza.
 - Archivio documenti con categorie, progressivi, ricerca, editor ricco, immagini e stampa.
 - Template riutilizzabili.
