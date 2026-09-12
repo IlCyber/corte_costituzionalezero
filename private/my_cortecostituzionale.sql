@@ -145,6 +145,11 @@ INSERT INTO `role_permissions` (`role_id`, `permission_id`, `can_view`, `can_cre
 (4, 11, 1, 1, 1, 1, 0, 0, 1, 1),
 (4, 12, 1, 1, 1, 1, 0, 0, 1, 1);
 
+UPDATE `role_permissions`
+SET `can_view` = 1, `can_create` = 1, `can_edit` = 1, `can_delete` = 1,
+    `can_purge` = 1, `can_restore` = 1, `can_approve` = 1, `can_download` = 1
+WHERE `role_id` = 4;
+
 -- --------------------------------------------------------
 
 --
@@ -181,6 +186,33 @@ CREATE TABLE `site_state` (
 
 INSERT INTO `site_state` (`id`, `owner_user_id`, `state_json`, `updated_at`) VALUES
 (1, 1, '{\"trash\": [], \"parties\": [], \"counters\": [], \"companies\": [], \"documents\": [], \"templates\": [], \"categories\": [{\"name\": \"ODG\"}], \"demoSeeded\": false, \"governments\": [], \"pageMargins\": {\"top\": 10, \"left\": 10, \"right\": 10, \"bottom\": 10}, \"parliaments\": [], \"partyFields\": [], \"interpretations\": [], \"courtCompositions\": [], \"testMandateSeeded\": false, \"governmentSettings\": {\"roles\": [{\"id\": \"presidente\", \"name\": \"Ruolo\", \"limit\": 1}]}, \"parliamentSettings\": {\"roles\": [{\"id\": \"sostituto\", \"name\": \"Ruolo\", \"limit\": 1}], \"fields\": []}, \"compositionSettings\": {\"roles\": [{\"id\": \"presidente\", \"name\": \"Ruolo\", \"limit\": 1}]}, \"interpretationSettings\": {\"fields\": []}}', '2026-09-09 01:54:43');
+
+-- --------------------------------------------------------
+
+--
+-- Struttura della tabella `google_connections`
+--
+
+CREATE TABLE `google_connections` (
+  `user_id` bigint UNSIGNED NOT NULL,
+  `google_email` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `refresh_token` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `google_watch_channels` (
+  `channel_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `resource_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` bigint UNSIGNED NOT NULL,
+  `document_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `expiration` bigint UNSIGNED NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`channel_id`),
+  KEY `idx_google_watch_document` (`document_id`),
+  KEY `idx_google_watch_user` (`user_id`),
+  CONSTRAINT `fk_google_watch_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -275,6 +307,13 @@ ALTER TABLE `users`
   ADD UNIQUE KEY `uq_users_username` (`username`);
 
 --
+-- Indici per la tabella `google_connections`
+--
+ALTER TABLE `google_connections`
+  ADD PRIMARY KEY (`user_id`),
+  ADD KEY `idx_google_email` (`google_email`);
+
+--
 -- AUTO_INCREMENT per le tabelle scaricate
 --
 
@@ -355,6 +394,12 @@ ALTER TABLE `security_logs`
 --
 ALTER TABLE `site_state`
   ADD CONSTRAINT `fk_site_state_user` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`);
+
+--
+-- Limiti per la tabella `google_connections`
+--
+ALTER TABLE `google_connections`
+  ADD CONSTRAINT `fk_google_connections_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

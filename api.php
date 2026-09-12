@@ -5,11 +5,41 @@ require_once __DIR__ . '/private/config.php';
 
 session_name(SESSION_NAME);
 session_set_cookie_params([
+    'lifetime' => 1800,
+    'path' => '/',
     'httponly' => true,
     'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
     'samesite' => 'Lax',
 ]);
 session_start();
+
+$maxLifetime = 1800;
+$currentIp = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+$currentUa = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200);
+
+if (!empty($_SESSION['user_id'])) {
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > $maxLifetime)) {
+        session_unset();
+        session_destroy();
+        http_response_code(401);
+        echo json_encode(['error' => 'Sessione scaduta per inattività.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    
+    if (!isset($_SESSION['client_ip'])) {
+        $_SESSION['client_ip'] = $currentIp;
+        $_SESSION['client_ua'] = $currentUa;
+    } else {
+        if ($_SESSION['client_ip'] !== $currentIp || $_SESSION['client_ua'] !== $currentUa) {
+            session_unset();
+            session_destroy();
+            http_response_code(401);
+            echo json_encode(['error' => 'Rilevato cambio di rete o dispositivo. Effettua nuovamente il login.'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+    }
+    $_SESSION['last_activity'] = time();
+}
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
@@ -125,6 +155,28 @@ function ensureTrashPermissionColumns(PDO $pdo): void
     }
 }
 
+function ensureGoogleConnectionTable(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS google_connections (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, google_email VARCHAR(190) NOT NULL, refresh_token TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS google_watch_channels (channel_id VARCHAR(190) NOT NULL PRIMARY KEY, resource_id VARCHAR(190) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, document_id VARCHAR(190) NOT NULL, expiration BIGINT UNSIGNED NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY idx_google_watch_document (document_id), CONSTRAINT fk_google_watch_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+
+function ensurePrimaryAdminFullPermissions(PDO $pdo): void
+{
+    $pdo->exec("UPDATE users SET role = 'admin', role_id = (SELECT id FROM roles WHERE role_key = 'admin' LIMIT 1), is_active = 1, deleted_at = NULL WHERE is_primary_admin = 1");
+    $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download) SELECT r.id, p.id, 1, 1, 1, 1, 1, 1, 1, 1 FROM roles r CROSS JOIN permissions p WHERE r.role_key = 'admin' ON DUPLICATE KEY UPDATE can_view = 1, can_create = 1, can_edit = 1, can_delete = 1, can_restore = 1, can_purge = 1, can_approve = 1, can_download = 1");
+}
+
+function ensureUserLastLoginColumn(PDO $pdo): void
+{
+    try {
+        $exists = $pdo->query("SHOW COLUMNS FROM users LIKE 'last_login'")->fetch();
+        if (!$exists) $pdo->exec("ALTER TABLE users ADD COLUMN last_login DATETIME DEFAULT NULL AFTER must_change_credentials");
+    } catch (Throwable $error) {
+        error_log('User schema migration failure: ' . $error->getMessage());
+    }
+}
+
 function database(): PDO
 {
     static $pdo = null;
@@ -142,6 +194,9 @@ function database(): PDO
             ]
         );
         ensureTrashPermissionColumns($pdo);
+        ensureGoogleConnectionTable($pdo);
+        ensureUserLastLoginColumn($pdo);
+        ensurePrimaryAdminFullPermissions($pdo);
         return $pdo;
     } catch (Throwable $error) {
         error_log($error->getMessage());
@@ -288,8 +343,274 @@ function trashEntryTitle(array $entry): string
     return substr((string) ($data['title'] ?? $data['name'] ?? $data['legislation'] ?? $data['period'] ?? $entry['label'] ?? 'Elemento'), 0, 160);
 }
 
+function googleConfigured(): bool
+{
+    return GOOGLE_DRIVE_FOLDER_ID !== 'INSERISCI_ID_CARTELLA_DRIVE' && !str_contains(GOOGLE_CLIENT_ID, 'INSERISCI_') && !str_contains(GOOGLE_CLIENT_SECRET, 'INSERISCI_') && !str_contains(GOOGLE_REDIRECT_URI, 'INSERISCI_');
+}
+
+function base64UrlEncode(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function googleAccessToken(PDO $pdo, int $userId): string
+{
+    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
+    $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
+    $query->execute([$userId]);
+    $refreshToken = (string) $query->fetchColumn();
+    if ($refreshToken === '') respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
+    $post = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'refresh_token' => $refreshToken, 'grant_type' => 'refresh_token']);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
+    $response = file_get_contents('https://oauth2.googleapis.com/token', false, $context);
+    $payload = json_decode((string) $response, true);
+    if (!is_array($payload) || empty($payload['access_token'])) respond(['error' => 'La connessione Google è scaduta. Ricollega l’account dalle impostazioni.'], 409);
+    return (string) $payload['access_token'];
+}
+
+function googleRequest(PDO $pdo, int $userId, string $method, string $url, ?array $body = null, bool $binary = false, bool $allowFailure = false): mixed
+{
+    $headers = ['Authorization: Bearer ' . googleAccessToken($pdo, $userId), 'Accept: application/json'];
+    if ($body !== null) $headers[] = 'Content-Type: application/json';
+    $curl = curl_init($url);
+    curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $headers, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => GOOGLE_API_TIMEOUT, CURLOPT_POSTFIELDS => $body === null ? null : json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+    $response = curl_exec($curl);
+    $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $error = curl_error($curl);
+    curl_close($curl);
+    if ($response === false || $error !== '' || $status < 200 || $status >= 300) {
+        $details = json_decode((string) $response, true);
+        $message = is_array($details) ? (string) ($details['error']['message'] ?? $details['error_description'] ?? '') : '';
+        error_log('Google API failure [' . $status . '] ' . $method . ' ' . $url . ': ' . ($message ?: ($error ?: substr((string) $response, 0, 500))));
+        if ($allowFailure) return null;
+        respond(['error' => $message !== '' ? 'Google: ' . $message : 'Google ha rifiutato la richiesta.'], 502);
+    }
+    return $binary ? $response : (json_decode((string) $response, true) ?: []);
+}
+
+function googleDocumentTitle(string $title): string
+{
+    return trim(preg_replace('/[\\/:*?"<>|]+/', '-', $title)) ?: 'Documento senza titolo';
+}
+
+function googleStructuralText(array $elements): string
+{
+    $text = '';
+    foreach ($elements as $element) {
+        if (isset($element['textRun']['content'])) $text .= (string) $element['textRun']['content'];
+        if (isset($element['paragraph']['elements']) && is_array($element['paragraph']['elements'])) $text .= googleStructuralText($element['paragraph']['elements']);
+        if (isset($element['table']['tableRows']) && is_array($element['table']['tableRows'])) {
+            foreach ($element['table']['tableRows'] as $row) foreach (($row['tableCells'] ?? []) as $cell) $text .= googleStructuralText($cell['content'] ?? []);
+        }
+    }
+    return trim(preg_replace('/\R{3,}/', "\n\n", $text));
+}
+
+function googleDocumentSnapshot(PDO $pdo, int $userId, string $documentId): string
+{
+    $document = googleRequest($pdo, $userId, 'GET', 'https://docs.googleapis.com/v1/documents/' . rawurlencode($documentId));
+    return googleStructuralText($document['body']['content'] ?? []);
+}
+
+function googleIdsFromStateItem(array $data): array
+{
+    return array_values(array_unique(array_filter([
+        $data['googleDocumentId'] ?? null,
+        $data['googleStatuteDocumentId'] ?? null,
+        $data['googleRegulationDocumentId'] ?? null,
+    ], static fn (mixed $id): bool => is_string($id) && preg_match('/^[a-zA-Z0-9_-]+$/', $id) === 1)));
+}
+
+function updateGoogleTrashState(PDO $pdo, int $userId, array $data, bool $trashed, bool $permanent = false): void
+{
+    $ids = googleIdsFromStateItem($data);
+    if (empty($ids)) return;
+    
+    try {
+        if (!googleConfigured()) return;
+        $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
+        $query->execute([$userId]);
+        if (!(string) $query->fetchColumn()) return;
+    } catch (Throwable $error) {
+        return;
+    }
+
+    foreach ($ids as $documentId) {
+        if ($permanent) {
+            googleRequest($pdo, $userId, 'DELETE', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId), null, false, true);
+        } else {
+            googleRequest($pdo, $userId, 'PATCH', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId), ['trashed' => $trashed], false, true);
+        }
+    }
+}
+
+function googleWatchDocument(PDO $pdo, int $userId, string $documentId): void
+{
+    $channelId = bin2hex(random_bytes(24));
+    $payload = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '/watch', ['id' => $channelId, 'type' => 'web_hook', 'address' => GOOGLE_WEBHOOK_URI, 'token' => hash_hmac('sha256', $channelId, SESSION_NAME)], false, true);
+    if (!is_array($payload)) { error_log('Google Drive webhook non attivato per il documento ' . $documentId); return; }
+    $resourceId = (string) ($payload['resourceId'] ?? '');
+    $expiration = (int) ($payload['expiration'] ?? 0);
+    if ($resourceId === '' || $expiration <= 0) return;
+    $query = $pdo->prepare('INSERT INTO google_watch_channels (channel_id, resource_id, user_id, document_id, expiration) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE resource_id = VALUES(resource_id), user_id = VALUES(user_id), document_id = VALUES(document_id), expiration = VALUES(expiration)');
+    $query->execute([$channelId, $resourceId, $userId, $documentId, $expiration]);
+}
+
+function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): void
+{
+    $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,modifiedTime,lastModifyingUser(displayName,emailAddress),webViewLink']));
+    $snapshot = googleDocumentSnapshot($pdo, $userId, $documentId);
+    $state = rawSiteState($pdo) ?: [];
+    $changed = false;
+    foreach (['documents', 'templates'] as $key) foreach (($state[$key] ?? []) as &$item) {
+        if (($item['googleDocumentId'] ?? '') !== $documentId) continue;
+        $item['googleModifiedTime'] = $file['modifiedTime'] ?? null;
+        $item['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
+        $item['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
+        $changed = true;
+    }
+    foreach (($state['parties'] ?? []) as &$party) {
+        if (($party['googleStatuteDocumentId'] ?? '') !== $documentId) continue;
+        $modifiedTime = $file['modifiedTime'] ?? null;
+        $previousSnapshot = (string) ($party['googleLatestText'] ?? '');
+        if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
+            $party['history'] ??= [];
+            $party['history'][] = ['label' => 'Statuto Google', 'from' => 'Versione precedente', 'to' => 'Versione aggiornata', 'at' => $modifiedTime, 'previousStatute' => $previousSnapshot, 'nextStatute' => $snapshot, 'googleModifiedTime' => $modifiedTime, 'googleModifiedBy' => $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null)];
+        }
+        $party['googleLatestText'] = $snapshot;
+        $party['googleModifiedTime'] = $modifiedTime;
+        $party['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
+        $party['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
+        $changed = true;
+    }
+    foreach (($state['companies'] ?? []) as &$company) {
+        if (($company['googleRegulationDocumentId'] ?? '') !== $documentId) continue;
+        $modifiedTime = $file['modifiedTime'] ?? null;
+        $previousSnapshot = (string) ($company['googleLatestText'] ?? '');
+        if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
+            $company['history'] ??= [];
+            $company['history'][] = ['label' => 'Regolamento Google', 'from' => 'Versione precedente', 'to' => 'Versione aggiornata', 'at' => $modifiedTime, 'previousStatute' => $previousSnapshot, 'nextStatute' => $snapshot, 'googleModifiedTime' => $modifiedTime, 'googleModifiedBy' => $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null)];
+        }
+        $company['googleLatestText'] = $snapshot;
+        $company['googleModifiedTime'] = $modifiedTime;
+        $company['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
+        $company['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
+        $changed = true;
+    }
+    if (!$changed) return;
+    $encoded = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $query = $pdo->prepare('UPDATE site_state SET state_json = ?, updated_at = UTC_TIMESTAMP() WHERE id = 1');
+    $query->execute([$encoded]);
+}
+
 $action = $_GET['action'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($action === 'google_webhook' && $method === 'POST') {
+    $channelId = (string) ($_SERVER['HTTP_X_GOOG_CHANNEL_ID'] ?? '');
+    $token = (string) ($_SERVER['HTTP_X_GOOG_CHANNEL_TOKEN'] ?? '');
+    if ($channelId === '' || !hash_equals(hash_hmac('sha256', $channelId, SESSION_NAME), $token)) { http_response_code(401); exit; }
+    $pdo = database();
+    $query = $pdo->prepare('SELECT user_id, document_id FROM google_watch_channels WHERE channel_id = ? AND expiration > ? LIMIT 1');
+    $query->execute([$channelId, (int) (microtime(true) * 1000)]);
+    $watch = $query->fetch();
+    if ($watch) syncGoogleDocumentMetadata($pdo, (int) $watch['user_id'], (string) $watch['document_id']);
+    http_response_code(204);
+    exit;
+}
+
+if ($action === 'google_connect' && $method === 'GET') {
+    $userId = authenticatedUserId();
+    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa private/config.php.'], 503);
+    $_SESSION['google_oauth_state'] = bin2hex(random_bytes(24));
+    $query = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'response_type' => 'code', 'scope' => 'openid email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents', 'access_type' => 'offline', 'prompt' => 'consent', 'state' => $_SESSION['google_oauth_state']]);
+    header('Location: https://accounts.google.com/o/oauth2/v2/auth?' . $query, true, 302);
+    exit;
+}
+
+if ($action === 'google_callback' && $method === 'GET') {
+    $userId = authenticatedUserId();
+    $state = (string) ($_GET['state'] ?? '');
+    $code = (string) ($_GET['code'] ?? '');
+    if ($state === '' || !hash_equals((string) ($_SESSION['google_oauth_state'] ?? ''), $state) || $code === '') respond(['error' => 'Collegamento Google non valido.'], 400);
+    $post = http_build_query(['code' => $code, 'client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'grant_type' => 'authorization_code']);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
+    $tokenPayload = json_decode((string) file_get_contents('https://oauth2.googleapis.com/token', false, $context), true);
+    if (!is_array($tokenPayload) || empty($tokenPayload['refresh_token'])) respond(['error' => 'Google non ha restituito un refresh token. Riprova autorizzando l’accesso.'], 502);
+    $token = (string) $tokenPayload['access_token'];
+    $curl = curl_init('https://openidconnect.googleapis.com/v1/userinfo');
+    curl_setopt_array($curl, [CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => GOOGLE_API_TIMEOUT]);
+    $profile = json_decode((string) curl_exec($curl), true);
+    curl_close($curl);
+    $pdo = database();
+    $query = $pdo->prepare('INSERT INTO google_connections (user_id, google_email, refresh_token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token = VALUES(refresh_token), updated_at = UTC_TIMESTAMP()');
+    $query->execute([$userId, (string) ($profile['email'] ?? ''), (string) $tokenPayload['refresh_token']]);
+    unset($_SESSION['google_oauth_state']);
+    header('Location: ./index.html#settings?google=connected', true, 302);
+    exit;
+}
+
+if ($action === 'google_status' && $method === 'GET') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    $query = $pdo->prepare('SELECT google_email FROM google_connections WHERE user_id = ? LIMIT 1');
+    $query->execute([$userId]);
+    $email = $query->fetchColumn();
+    respond(['connected' => is_string($email) && $email !== '', 'email' => $email ?: null, 'configured' => googleConfigured()]);
+}
+
+if ($action === 'google_disconnect' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $query = $pdo->prepare('DELETE FROM google_connections WHERE user_id = ?');
+    $query->execute([$userId]);
+    respond(['ok' => true]);
+}
+
+if ($action === 'google_drive_files' && $method === 'GET') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    if (!hasPermission($pdo, $userId, 'documents', 'view')) respond(['error' => 'Non hai il permesso di vedere i documenti.'], 403);
+    $query = "'" . addslashes(GOOGLE_DRIVE_FOLDER_ID) . "' in parents and trashed = false and mimeType = 'application/vnd.google-apps.document'";
+    $url = 'https://www.googleapis.com/drive/v3/files?' . http_build_query(['q' => $query, 'fields' => 'files(id,name,webViewLink,modifiedTime)', 'orderBy' => 'name', 'pageSize' => 100]);
+    $files = googleRequest($pdo, $userId, 'GET', $url);
+    respond(['files' => is_array($files['files'] ?? null) ? $files['files'] : []]);
+}
+
+if ($action === 'google_document_create' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $body = requestBody();
+    $permission = (string) (($body['permission'] ?? 'documents'));
+    if (!in_array($permission, ['documents', 'templates'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di creare documenti Google.'], 403);
+    $title = googleDocumentTitle((string) ($body['title'] ?? 'Documento'));
+    $sourceDocumentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($body['sourceDocumentId'] ?? ''));
+    if ($sourceDocumentId !== '') {
+        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($sourceDocumentId) . '/copy?fields=id,name,webViewLink,mimeType', ['name' => $title, 'parents' => [GOOGLE_DRIVE_FOLDER_ID]]);
+    } else {
+        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,mimeType', ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document', 'parents' => [GOOGLE_DRIVE_FOLDER_ID]]);
+    }
+    $documentId = (string) ($created['id'] ?? '');
+    if ($documentId === '') respond(['error' => 'Google non ha restituito il documento creato.'], 502);
+    googleWatchDocument($pdo, $userId, $documentId);
+    auditLog($pdo, 'google_document_created', 'info', $userId, ['document_id' => $documentId, 'title' => $title]);
+    respond(['id' => $documentId, 'url' => 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit']);
+}
+
+if ($action === 'google_document_pdf' && $method === 'GET') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    if (!hasPermission($pdo, $userId, 'documents_pdf', 'download')) respond(['error' => 'Non hai il permesso di scaricare PDF.'], 403);
+    $documentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($_GET['id'] ?? ''));
+    if ($documentId === '') respond(['error' => 'Documento Google non valido.'], 422);
+    $pdf = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '/export?mimeType=application%2Fpdf', null, true);
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="documento-google.pdf"');
+    echo $pdf;
+    exit;
+}
 
 if ($action === 'login' && $method === 'POST') {
     $body = requestBody();
@@ -307,6 +628,14 @@ if ($action === 'login' && $method === 'POST') {
     $_SESSION['role'] = $user['role'];
     $_SESSION['role_id'] = $user['role_id'] ? (int) $user['role_id'] : null;
     $_SESSION['is_primary_admin'] = (bool) $user['is_primary_admin'];
+    
+    $_SESSION['client_ip'] = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+    $_SESSION['client_ua'] = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200);
+    $_SESSION['last_activity'] = time();
+    
+    $updateQuery = $pdo->prepare('UPDATE users SET last_login = UTC_TIMESTAMP() WHERE id = ?');
+    $updateQuery->execute([$user['id']]);
+
     respond(['user' => userPayload($user, $pdo), 'state' => stateForUser($pdo, (int) $user['id'])]);
 }
 
@@ -317,7 +646,7 @@ if ($action === 'change_credentials' && $method === 'POST') {
     $body = requestBody();
     $email = strtolower(trim((string) ($body['email'] ?? '')));
     $password = (string) ($body['password'] ?? '');
-    if (!validEmail($email) || strlen($password) < 8) respond(['error' => 'Inserisci una mail valida e una password di almeno 8 caratteri.'], 422);
+    if (!validEmail($email) || !preg_match('/^(?=.*[A-Za-z])(?=.*[\d\W]).{8,}$/', $password)) respond(['error' => 'Inserisci una mail valida e una password di almeno 8 caratteri contenente almeno un numero o simbolo.'], 422);
     $exists = $pdo->prepare('SELECT id FROM users WHERE username = ? AND id <> ? LIMIT 1');
     $exists->execute([$email, $userId]);
     if ($exists->fetch()) respond(['error' => 'Questa mail è già associata a un altro utente.'], 409);
@@ -334,7 +663,7 @@ if ($action === 'request_registration' && $method === 'POST') {
     $email = strtolower(trim((string) ($body['email'] ?? '')));
     $displayName = trim((string) ($body['displayName'] ?? ''));
     $password = (string) ($body['password'] ?? '');
-    if (!validEmail($email) || $displayName === '' || strlen($displayName) > 160 || strlen($password) < 8) respond(['error' => 'Inserisci un nome, una mail valida e una password di almeno 8 caratteri.'], 422);
+    if (!validEmail($email) || $displayName === '' || strlen($displayName) > 160 || !preg_match('/^(?=.*[A-Za-z])(?=.*[\d\W]).{8,}$/', $password)) respond(['error' => 'Inserisci un nome, una mail valida e una password di almeno 8 caratteri contenente almeno un numero o simbolo.'], 422);
     $pdo = database();
     rateLimit($pdo, 'registration_request', 5);
     $userQuery = $pdo->prepare('SELECT id FROM users WHERE username = ? LIMIT 1');
@@ -571,6 +900,7 @@ if ($action === 'trash_item' && $method === 'POST') {
         $originalIndex = stateItemIndex($items, $entityId);
         if ($originalIndex < 0) respond(['error' => 'Elemento non trovato o già eliminato.'], 404);
         $data = $items[$originalIndex];
+        updateGoogleTrashState($pdo, $userId, is_array($data) ? $data : [], true);
         array_splice($items, $originalIndex, 1);
     }
     unset($items);
@@ -604,6 +934,7 @@ if ($action === 'restore_trash_item' && $method === 'POST') {
         array_splice($items[$parentIndex][$config['member_key']], $position, 0, [$entry['data']]);
         $items[$parentIndex]['updatedAt'] = gmdate('c');
     } else {
+        updateGoogleTrashState($pdo, $userId, is_array($entry['data']) ? $entry['data'] : [], false);
         if (stateItemIndex($items, $dataId) >= 0) respond(['error' => 'Elemento già presente nell’archivio principale.'], 409);
         $position = min(max(0, (int) ($entry['originalIndex'] ?? 0)), count($items));
         array_splice($items, $position, 0, [$entry['data']]);
@@ -626,6 +957,7 @@ if ($action === 'purge_trash_item' && $method === 'POST') {
     if (!$config) respond(['error' => 'Elemento del cestino non eliminabile.'], 422);
     if (!hasPermission($pdo, $userId, $config['permission'], 'purge')) respond(['error' => 'Non hai il permesso di eliminare definitivamente questo elemento.'], 403);
     $title = trashEntryTitle($entry);
+    updateGoogleTrashState($pdo, $userId, is_array($entry['data']) ? $entry['data'] : [], false, true);
     array_splice($state['trash'], $trashIndex, 1);
     saveTrashMutationState($pdo, $userId, $state);
     auditLog($pdo, 'item_purged', 'critical', $userId, ['entity_type' => $entry['entityType'], 'trash_id' => $trashId, 'title' => $title]);

@@ -13,6 +13,7 @@ const PERMISSION_CATALOG = [
 ];
 const PERMISSION_ACTIONS = [['view', 'Vedere'], ['create', 'Creare'], ['edit', 'Modificare'], ['delete', 'Spostare nel cestino'], ['restore', 'Ripristinare'], ['purge', 'Eliminare definitivamente'], ['approve', 'Approvare'], ['download', 'Scaricare']];
 let editingDocumentId = null;
+let activeGoogleDocumentId = null;
 let editingTemplateId = null;
 let editingPartyId = null;
 let editingCompanyId = null;
@@ -25,6 +26,9 @@ let remoteMode = false;
 let remoteSaveTimer = null;
 let currentUser = null;
 let csrfToken = '';
+let googleConnection = { connected: false, configured: false, email: null };
+let activePartyStatuteDocumentId = null;
+let activeCompanyRegulationDocumentId = null;
 
 function normalizeParliamentSettings(settings = {}) {
   const safeSettings = settings && typeof settings === 'object' ? settings : {};
@@ -126,16 +130,130 @@ async function apiRequest(action, options = {}) {
   try {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
     if (csrfToken && options.method === 'POST') headers['X-CSRF-Token'] = csrfToken;
-    //mi da "Sessione non valida" con errore 401 unauthorized, correggi
     response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, { ...options, headers });
   } catch {
     throw new Error('BACKEND_UNAVAILABLE');
   }
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw new Error('BACKEND_UNAVAILABLE');
+  
   const payload = await response.json().catch(() => ({}));
+  
+  if (response.status === 401) {
+    if (localStorage.getItem(STORAGE_KEYS.session) === 'active') {
+      localStorage.removeItem(STORAGE_KEYS.session);
+      localStorage.removeItem('cz_local_user');
+      location.reload();
+    }
+    throw new Error(payload.error || 'Sessione scaduta. Effettua nuovamente il login.');
+  }
+
   if (!response.ok || payload.error) throw new Error(payload.error || (response.status >= 500 ? 'BACKEND_UNAVAILABLE' : 'Errore di comunicazione con il server.'));
   return payload;
+}
+async function refreshGoogleConnectionStatus() {
+  if (!remoteMode) { googleConnection = { connected: false, configured: false, email: null }; return; }
+  try { googleConnection = await apiRequest('google_status'); } catch { googleConnection = { connected: false, configured: false, email: null }; }
+  renderGoogleConnectionSettings();
+  applyPermissions();
+}
+function renderGoogleConnectionSettings() {
+  const status = document.getElementById('googleConnectionStatus');
+  const connect = document.getElementById('connectGoogleButton');
+  const disconnect = document.getElementById('disconnectGoogleButton');
+  if (!status || !connect || !disconnect) return;
+  if (!googleConnection.configured) { status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.'; connect.classList.add('disabled'); disconnect.classList.add('d-none'); return; }
+  status.textContent = googleConnection.connected ? `Collegato: ${googleConnection.email}` : 'Nessun account Google collegato. I documenti non sono disponibili.';
+  connect.classList.toggle('d-none', googleConnection.connected);
+  disconnect.classList.toggle('d-none', !googleConnection.connected);
+}
+async function disconnectGoogleAccount() {
+  try { await apiRequest('google_disconnect', { method: 'POST', body: '{}' }); await refreshGoogleConnectionStatus(); showToast('Account Google scollegato.'); } catch (error) { showToast(error.message); }
+}
+async function createGoogleDocument(title, permission = 'documents', sourceDocumentId = '') {
+  if (!remoteMode || !googleConnection.connected) throw new Error('Collega un account Google dalle impostazioni prima di gestire documenti.');
+  const payload = await apiRequest('google_document_create', { method: 'POST', body: JSON.stringify({ title, permission, sourceDocumentId }) });
+  return payload;
+}
+function openGoogleDocument(documentId) {
+  if (!remoteMode || !googleConnection.connected) { showToast('Collega un account Google dalle impostazioni prima di aprire documenti.'); return; }
+  if (!documentId) { showToast('Il documento non è ancora collegato a Google Documenti.'); return; }
+  window.open(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`, '_blank', 'noopener');
+}
+function setGoogleDocumentEditorState(documentId = '', title = '') {
+  const editorTitle = document.getElementById('googleDocumentEditorTitle');
+  const editorStatus = document.getElementById('googleDocumentEditorStatus');
+  const editorButton = document.getElementById('openGoogleDocumentEditorButton');
+  if (!editorTitle || !editorStatus || !editorButton) return;
+  editorTitle.textContent = documentId ? title || 'Documento Google collegato' : 'Documento Google non ancora creato';
+  editorStatus.textContent = documentId ? 'Il contenuto è gestito esclusivamente da Google Documenti.' : 'Salva i dati del documento per creare il Google Doc nella cartella configurata.';
+  editorButton.disabled = false;
+  editorButton.textContent = documentId ? 'Apri editor Google' : 'Crea e apri editor Google';
+  editorButton.onclick = async () => {
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) { showToast('Il browser ha bloccato la nuova scheda. Consenti i popup per questo sito.'); return; }
+    try {
+      const currentTitle = document.getElementById('documentTitle')?.value.trim();
+      if (!documentId) {
+        if (!currentTitle) { popup.close(); showToast('Inserisci prima il titolo del documento.'); return; }
+        const selectedTemplate = state.templates.find(template => template.id === document.getElementById('documentTemplate')?.value);
+        const created = await createGoogleDocument(currentTitle, 'documents', selectedTemplate?.googleDocumentId || '');
+        activeGoogleDocumentId = created.id;
+        persistCreatedGoogleDocument(created.id, currentTitle);
+        setGoogleDocumentEditorState(created.id, currentTitle);
+        documentId = created.id;
+      }
+      popup.location.href = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
+    } catch (error) { popup.close(); showToast(error.message); }
+  };
+}
+function persistCreatedGoogleDocument(googleDocumentId, title) {
+  const category = document.getElementById('documentCategory')?.value.trim() || categoryNames()[0];
+  const date = document.getElementById('documentDate')?.value || today();
+  const number = document.getElementById('documentNumber')?.value.trim() || nextNumber(category);
+  const template = state.templates.find(item => item.id === document.getElementById('documentTemplate')?.value);
+  const status = category === 'ODG' ? (document.getElementById('odgStatus')?.value || 'da valutare') : '';
+  if (!/^\d+$/.test(number) || numericValue(number) < 1) { showToast('Il documento Google è stato creato, ma inserisci un numero progressivo valido per archiviarlo.'); return; }
+  const record = { id: crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, status, createdAt: new Date().toISOString() };
+  state.documents.unshift(record);
+  advanceCounter(category, number);
+  writeStorage(STORAGE_KEYS.documents, state.documents);
+  writeStorage(STORAGE_KEYS.counters, state.counters);
+  editingDocumentId = record.id;
+  showToast('Documento creato e salvato automaticamente nell’archivio.');
+}
+function setGoogleSpecialEditorState(config) {
+  const titleElement = document.getElementById(config.titleId);
+  const statusElement = document.getElementById(config.statusId);
+  const button = document.getElementById(config.buttonId);
+  if (!titleElement || !statusElement || !button) return;
+  titleElement.textContent = config.documentId ? config.title : `${config.label} Google non ancora creato`;
+  statusElement.textContent = config.documentId ? 'Il contenuto è gestito esclusivamente da Google Documenti.' : 'Crea il documento per aprire l’editor Google.';
+  button.textContent = config.documentId ? 'Apri editor Google' : 'Crea e apri editor Google';
+  button.onclick = async () => {
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) { showToast('Il browser ha bloccato la nuova scheda. Consenti i popup per questo sito.'); return; }
+    try {
+      let documentId = config.documentId;
+      if (!documentId) {
+        documentId = (await config.create()).id;
+        config.setActive(documentId);
+        setGoogleSpecialEditorState({ ...config, documentId });
+      }
+      popup.location.href = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
+    } catch (error) { popup.close(); showToast(error.message); }
+  };
+}
+async function downloadGooglePdf(documentId, filename = 'documento-google.pdf') {
+  if (!remoteMode || !googleConnection.connected) { showToast('Collega un account Google dalle impostazioni prima di esportare PDF.'); return; }
+  if (!can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
+  try {
+    const response = await fetch(`${API_URL}?action=google_document_pdf&id=${encodeURIComponent(documentId)}`, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error('Esportazione Google non disponibile.');
+    const blob = await response.blob();
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); URL.revokeObjectURL(link.href);
+    showToast('PDF esportato da Google Documenti.');
+  } catch (error) { showToast(error.message); }
 }
 function remoteStatePayload(permission = 'documents') {
   return { permission, state: JSON.stringify(Object.fromEntries(Object.entries(state).filter(([key]) => key !== 'session'))) };
@@ -166,6 +284,7 @@ async function loadRemoteState() {
     currentUser = payload.user || null;
     csrfToken = currentUser?.csrfToken || '';
     applyRemoteState(payload.state);
+    await refreshGoogleConnectionStatus();
     return true;
   } catch {
     return false;
@@ -178,6 +297,7 @@ async function loginRemote(username, password) {
   csrfToken = currentUser?.csrfToken || '';
   ensureUserManagementCard();
   applyRemoteState(payload.state);
+  await refreshGoogleConnectionStatus();
   ensureOdgCategory();
   return payload;
 }
@@ -339,6 +459,7 @@ function applyPermissions() {
   document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
   const controls = { '#newDocumentButton': ['documents', 'create'], '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'], '#newPartyButton': ['parties', 'create'], '#newCompanyButton': ['companies', 'create'], '#newParliamentButton': ['parliament', 'create'], '#newOdgButton': ['odg', 'create'], '#newInterpretationButton': ['interpretations', 'create'] };
   Object.entries(controls).forEach(([selector, [permission, action]]) => document.querySelectorAll(selector).forEach(control => { control.classList.toggle('d-none', !can(permission, action)); }));
+  if (!googleConnection.connected) document.querySelectorAll('#newDocumentButton, #newTemplateButton, [data-bs-target="#templateModal"], [data-use-template], [data-open-party-statute], [data-open-company-regulation]').forEach(control => control.classList.add('d-none'));
   document.querySelectorAll('[data-new-institution]').forEach(button => button.classList.toggle('d-none', !can(button.dataset.newInstitution, 'create')));
 }
 
@@ -368,6 +489,7 @@ function ensureTrashView() {
   }
   const appContainer = document.querySelector('#appView > .container-fluid');
   if (!document.getElementById('trashView')) appContainer.insertAdjacentHTML('beforeend', '<section id="trashView" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Recupero e rimozione</p><h1 class="display-6 fw-bold mb-2">Cestino</h1><p class="text-secondary mb-0">Gli elementi nel cestino non sono visibili negli archivi principali. Ripristinali oppure rimuovili in modo definitivo secondo i permessi assegnati.</p></div><div class="stat-card trash-stat-card"><span class="text-secondary small">Elementi nel cestino</span><strong id="trashCount">0</strong></div></div><div class="card border-0 shadow-sm"><div class="card-body p-0"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Tipo</th><th>Elemento</th><th>Eliminato il</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="trashTableBody"></tbody></table></div><div id="emptyTrash" class="empty-state d-none"><div class="display-6"><i class="bi bi-trash3" aria-hidden="true"></i></div><h2 class="h5 mt-3">Il cestino è vuoto</h2><p class="text-secondary mb-0">Gli elementi spostati qui non compariranno più nelle rispettive sezioni principali.</p></div></div></div></section>');
+  ensureArchiveSearch('trashView', 'trashSearch', 'Cerca nel cestino', 'trashTableBody');
 }
 
 function formatDateTime(value) {
@@ -377,7 +499,8 @@ function formatDateTime(value) {
 
 function renderTrash() {
   ensureTrashView();
-  const entries = [...(Array.isArray(state.trash) ? state.trash : [])].sort((a, b) => String(b.deletedAt || '').localeCompare(String(a.deletedAt || '')));
+  const query = archiveSearchValue('trashSearch');
+  const entries = [...(Array.isArray(state.trash) ? state.trash : [])].filter(entry => matchesArchiveSearch([entry.label, trashEntryTitle(entry)], query)).sort((a, b) => String(b.deletedAt || '').localeCompare(String(a.deletedAt || '')));
   const body = document.getElementById('trashTableBody');
   body.innerHTML = entries.map(entry => {
     const config = trashConfig(entry.entityType);
@@ -472,19 +595,13 @@ function deleteCategory(name) {
 }
 function syncEditorValue(editorId, inputId) {
   const editor = document.getElementById(editorId);
-  const instance = typeof tinymce !== 'undefined' ? tinymce.get(editorId) : null;
-  const content = instance ? instance.getContent() : (editor?.value || editor?.innerHTML || '');
+  const content = editor?.value || editor?.innerHTML || '';
   document.getElementById(inputId).value = sanitizeRichHtml(String(content).trim());
 }
 function setRichEditorContent(editorId, html = '') {
   const editor = document.getElementById(editorId);
   const safeHtml = sanitizeRichHtml(html || '');
-  const instance = typeof tinymce !== 'undefined' ? tinymce.get(editorId) : null;
-  if (instance) {
-    instance.setContent(safeHtml);
-  } else if (editor) {
-    editor.value = safeHtml;
-  }
+  if (editor) editor.value = safeHtml;
 }
 function positionSelectedEditorImage(editor, position) {
   const node = editor.selection.getNode();
@@ -509,11 +626,11 @@ function positionSelectedEditorImage(editor, position) {
   editor.nodeChanged();
   editor.save();
 }
-function initTinyMceRichEditors() {
-  if (typeof tinymce === 'undefined' || typeof tinymce.init !== 'function') return;
+function initGoogleDocsLegacyEditor() {
+  if (typeof googleDocsLegacy === 'undefined' || typeof googleDocsLegacy.init !== 'function') return;
   const configuredMargins = normalizePageMargins(state.pageMargins);
-  tinymce.init({
-    selector: '.tinymce-rich-editor',
+  googleDocsLegacy.init({
+    selector: '.google-docs-legacy-editor',
     plugins: 'advlist autolink lists link image table charmap preview anchor searchreplace wordcount code fullscreen importcss pagebreak',
     toolbar: 'undo redo | styles | fontfamily fontsize | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | table image imageleft imagecenter imageright link unlink | pagebreak | preview fullscreen code | removeformat',
     toolbar_mode: 'floating',
@@ -553,9 +670,9 @@ function applyPageMargins() {
   const margins = normalizePageMargins(state.pageMargins);
   state.pageMargins = margins;
   document.querySelectorAll('.rich-editor').forEach(editor => { editor.style.padding = `${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`; });
-  if (typeof tinymce !== 'undefined') {
-    document.querySelectorAll('.tinymce-rich-editor').forEach(editor => {
-      const instance = tinymce.get(editor.id);
+  if (typeof googleDocsLegacy !== 'undefined') {
+    document.querySelectorAll('.google-docs-legacy-editor').forEach(editor => {
+      const instance = googleDocsLegacy.get(editor.id);
       if (instance) {
         const body = instance.getBody();
         if (body) body.style.padding = `${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`;
@@ -816,7 +933,7 @@ function organizeDocumentEditor() {
   sidebar.className = 'document-sidebar';
   canvas.className = 'document-canvas';
   [...row.children].forEach(element => {
-    const belongsToCanvas = element.querySelector('#documentBodyEditor');
+    const belongsToCanvas = element.querySelector('#googleDocumentEditorPanel');
     (belongsToCanvas ? canvas : sidebar).appendChild(element);
   });
 
@@ -1021,6 +1138,20 @@ function showEditorScreen(screenId) {
   document.getElementById(screenId).classList.remove('d-none');
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
+function ensureArchiveSearch(viewId, inputId, placeholder, targetId) {
+  const view = document.getElementById(viewId);
+  const target = document.getElementById(targetId);
+  if (!view || !target || document.getElementById(inputId)) return;
+  const insertionTarget = target.closest('tbody') ? target.closest('.card') : target;
+  insertionTarget.insertAdjacentHTML('beforebegin', `<div class="archive-search-row mb-4"><div class="input-group search-box"><span class="input-group-text"><i class="bi bi-search" aria-hidden="true"></i></span><input id="${inputId}" data-archive-search="${viewId}" type="search" class="form-control" placeholder="${placeholder}"></div></div>`);
+}
+function archiveSearchValue(inputId) { return document.getElementById(inputId)?.value.trim().toLowerCase() || ''; }
+function matchesArchiveSearch(values, query) { return !query || values.filter(Boolean).join(' ').toLowerCase().includes(query); }
+function ensureMemberSearch(targetId, inputId, placeholder) {
+  const target = document.getElementById(targetId);
+  if (!target || document.getElementById(inputId)) return;
+  target.insertAdjacentHTML('beforebegin', `<div class="mandate-member-search input-group mb-4"><span class="input-group-text"><i class="bi bi-search" aria-hidden="true"></i></span><input id="${inputId}" data-member-search="${targetId}" type="search" class="form-control" placeholder="${placeholder}"></div>`);
+}
 
 function closeEditorScreen() {
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
@@ -1031,7 +1162,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${document.googleDocumentId}">Apri Google Doc</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -1060,7 +1191,8 @@ function syncOdgStatusField() {
 }
 
 function renderOdg() {
-  const odgs = state.documents.filter(document => document.category === 'ODG').sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const query = archiveSearchValue('odgSearch');
+  const odgs = state.documents.filter(document => document.category === 'ODG' && matchesArchiveSearch([document.title, document.number, document.year, document.status], query)).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
   document.getElementById('emptyOdg').classList.toggle('d-none', odgs.length > 0);
   document.getElementById('odgCount').textContent = odgs.length;
@@ -1070,8 +1202,10 @@ function renderOdg() {
 
 function renderTemplates() {
   const grid = document.getElementById('templateGrid');
-  grid.innerHTML = state.templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4">${template.image ? `<img src="${template.image}" alt="" class="img-fluid mb-3" style="max-height: 110px; width: 100%; object-fit: cover;">` : ''}<p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">${escapeHtml(plainText(template.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end flex-wrap gap-2">${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="templates" data-entity-id="${template.id}">Cestino</button>` : ''}${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-template-pdf="${template.id}">Scarica PDF</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
-  document.getElementById('emptyTemplates').classList.toggle('d-none', state.templates.length > 0);
+  const query = archiveSearchValue('templateSearch');
+  const templates = state.templates.filter(template => matchesArchiveSearch([template.name, template.category], query));
+  grid.innerHTML = templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">Template Google Documenti</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end flex-wrap gap-2">${template.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${template.googleDocumentId}">Apri Google Doc</button>` : ''}${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="templates" data-entity-id="${template.id}">Cestino</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
+  document.getElementById('emptyTemplates').classList.toggle('d-none', templates.length > 0);
 }
 
 function deleteTemplate(templateId) {
@@ -1080,7 +1214,8 @@ function deleteTemplate(templateId) {
 
 function renderParties() {
   const grid = document.getElementById('partyGrid');
-  const parties = [...state.parties].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const query = archiveSearchValue('partySearch');
+  const parties = [...state.parties].filter(party => matchesArchiveSearch([party.name, party.status, ...Object.values(party.fields || {})], query)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   grid.innerHTML = parties.map(party => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${party.statute ? `Statuto aggiornato il ${formatDate(party.updatedAt.slice(0, 10))}` : 'Statuto da redigere'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${party.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${party.statute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-party-statute="${party.id}">${party.statute ? 'Modifica Statuto' : 'Scrivi Statuto'}</button></span></div></article></div>`).join('');
   document.getElementById('emptyParties').classList.toggle('d-none', parties.length > 0);
   document.getElementById('partyCount').textContent = parties.length;
@@ -1090,7 +1225,8 @@ function renderParties() {
 
 function renderCompanies() {
   const grid = document.getElementById('companyGrid');
-  const companies = [...state.companies].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const query = archiveSearchValue('companySearch');
+  const companies = [...state.companies].filter(company => matchesArchiveSearch([company.name, company.regulation], query)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   grid.innerHTML = companies.map(company => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${company.regulation ? `Regolamento aggiornato il ${formatDate(company.updatedAt.slice(0, 10))}` : 'Regolamento da redigere'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${company.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${company.regulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-company-regulation="${company.id}">${company.regulation ? 'Modifica Regolamento' : 'Scrivi Regolamento'}</button></span></div></article></div>`).join('');
   document.getElementById('emptyCompanies').classList.toggle('d-none', companies.length > 0);
   document.getElementById('companyCount').textContent = companies.length;
@@ -1137,7 +1273,8 @@ function renderInterpretationFields(interpretation = null) {
 }
 
 function renderInterpretations() {
-  const interpretations = [...state.interpretations].sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
+  const query = archiveSearchValue('interpretationSearch');
+  const interpretations = [...state.interpretations].filter(item => matchesArchiveSearch([item.name, item.text, ...Object.values(item.fields || {})], query)).sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
   document.getElementById('interpretationGrid').innerHTML = interpretations.map(item => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card interpretation-card card border-0 shadow-sm" data-open-interpretation="${item.id}" tabindex="0" role="button"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">Creata il ${formatDate(item.date)}</p><h2 class="h5 mb-3">${escapeHtml(item.name)}</h2><p class="card-text text-secondary interpretation-preview">${escapeHtml(item.text)}</p><dl class="party-facts mb-0">${state.interpretationSettings.fields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(item.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">Testo interpretativo</span><span class="d-flex gap-2">${can('interpretations', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="interpretations" data-entity-id="${item.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-interpretation="${item.id}">Apri scheda</button></span></div></article></div>`).join('');
   document.getElementById('emptyInterpretations').classList.toggle('d-none', interpretations.length > 0);
   document.getElementById('interpretationCount').textContent = interpretations.length;
@@ -1182,7 +1319,8 @@ function renderInstitutionSettings(type) {
 
 function renderInstitution(type) {
   const config = institutionConfigs[type];
-  const records = [...institutionRecords(type)].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const query = archiveSearchValue(`${type}Search`);
+  const records = [...institutionRecords(type)].filter(record => matchesArchiveSearch([record.period, record.status, ...record.members.flatMap(member => [member.name, member.role, member.annotations])], query)).sort((a, b) => b.startDate.localeCompare(a.startDate));
   document.getElementById(`${config.view}Grid`).innerHTML = records.map(record => { const active = record.members.filter(institutionActive).length; return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-institution="${type}" data-record-id="${record.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">${escapeHtml(record.period)}</p><h2 class="h4 mb-2">${config.itemLabel}</h2></div><span class="badge ${record.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(record.status)}</span></div><p class="text-secondary mb-3">${formatDate(record.startDate)} → ${formatDate(record.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${institutionSettings(type).roles.map(role => `<span>${record.members.filter(member => member.role === role.id && institutionActive(member)).length} ${escapeHtml(role.name.toLowerCase())}</span>`).join('')}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${record.members.length} nomine nello storico</span><span class="d-flex gap-2">${can(config.view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governments' : 'courtCompositions'}" data-entity-id="${record.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-institution="${type}" data-record-id="${record.id}">Gestisci</button></span></div></article></div>`; }).join('');
   document.getElementById(`${config.view}Empty`).classList.toggle('d-none', records.length > 0);
   document.getElementById(`${config.view}Count`).textContent = records.length;
@@ -1192,10 +1330,11 @@ function renderInstitution(type) {
 
 function renderInstitutionMembers(type, record) {
   const container = document.getElementById(`${type}RoleLists`);
-  container.innerHTML = institutionSettings(type).roles.map(role => { const members = record.members.filter(member => member.role === role.id); const active = members.filter(institutionActive).length; return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}${can(institutionConfigs[type].view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governmentMembers' : 'compositionMembers'}" data-entity-id="${member.id}" data-parent-id="${record.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`; }).join('');
+  const query = archiveSearchValue(`${type}MemberSearch`);
+  container.innerHTML = institutionSettings(type).roles.map(role => { const members = record.members.filter(member => member.role === role.id && matchesArchiveSearch([member.name, member.annotations], query)); const active = members.filter(institutionActive).length; return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}${can(institutionConfigs[type].view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governmentMembers' : 'compositionMembers'}" data-entity-id="${member.id}" data-parent-id="${record.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`; }).join('');
 }
 
-function openInstitutionEditor(type, recordId = '') { const config = institutionConfigs[type]; const record = institutionRecords(type).find(item => item.id === recordId); window[`editing${type}Id`] = record?.id || null; document.getElementById(`${type}Period`).value = record?.period || ''; document.getElementById(`${type}Start`).value = record?.startDate || today(); document.getElementById(`${type}End`).value = record?.endDate || ''; document.getElementById(`${type}Status`).value = record?.status || 'in corso'; document.querySelector(`#${type}Editor .modal-title`).textContent = record ? `${config.itemLabel} ${record.period}` : `Nuovo ${config.itemLabel.toLowerCase()}`; if (record) renderInstitutionMembers(type, record); else document.getElementById(`${type}RoleLists`).innerHTML = '<p class="small text-secondary">Salva la scheda per inserire le nomine.</p>'; showEditorScreen(`${type}Editor`); }
+function openInstitutionEditor(type, recordId = '') { const config = institutionConfigs[type]; const record = institutionRecords(type).find(item => item.id === recordId); window[`editing${type}Id`] = record?.id || null; document.getElementById(`${type}Period`).value = record?.period || ''; document.getElementById(`${type}Start`).value = record?.startDate || today(); document.getElementById(`${type}End`).value = record?.endDate || ''; document.getElementById(`${type}Status`).value = record?.status || 'in corso'; document.querySelector(`#${type}Editor .modal-title`).textContent = record ? `${config.itemLabel} ${record.period}` : `Nuovo ${config.itemLabel.toLowerCase()}`; ensureMemberSearch(`${type}RoleLists`, `${type}MemberSearch`, 'Cerca componente per nome o annotazioni'); if (record) renderInstitutionMembers(type, record); else document.getElementById(`${type}RoleLists`).innerHTML = '<p class="small text-secondary">Salva la scheda per inserire le nomine.</p>'; showEditorScreen(`${type}Editor`); }
 
 function saveInstitution(type, event) { event.preventDefault(); const existingId = window[`editing${type}Id`]; const existing = institutionRecords(type).find(item => item.id === existingId); const period = document.getElementById(`${type}Period`).value.trim(); const startDate = document.getElementById(`${type}Start`).value; const endDate = document.getElementById(`${type}End`).value; if (!period || !startDate || !endDate || endDate < startDate) { showToast('Inserisci dati validi per la scheda.'); return; } const record = { id: existingId || crypto.randomUUID(), period, startDate, endDate, status: document.getElementById(`${type}Status`).value, members: existing?.members || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() }; const records = institutionRecords(type); if (existing) records[records.indexOf(existing)] = record; else records.unshift(record); writeStorage(STORAGE_KEYS[institutionConfigs[type].key], records); renderInstitution(type); openInstitutionEditor(type, record.id); }
 
@@ -1209,7 +1348,8 @@ function bindInstitutionEvents() { Object.keys(institutionConfigs).forEach(type 
 
 function renderParliaments() {
   const grid = document.getElementById('parliamentGrid');
-  const mandates = [...state.parliaments].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const query = archiveSearchValue('parliamentSearch');
+  const mandates = [...state.parliaments].filter(mandate => matchesArchiveSearch([mandate.legislation, mandate.status, ...mandate.members.flatMap(member => [member.name, member.role, member.memberParty, member.memberCoalition])], query)).sort((a, b) => b.startDate.localeCompare(a.startDate));
   grid.innerHTML = mandates.map(mandate => { const active = mandate.members.filter(member => !member.resignationDate).length; const roleSummary = parliamentRoles().map(role => `<span>${mandate.members.filter(member => member.role === role.id && !member.resignationDate).length} ${escapeHtml(parliamentRoleLabel(role.id, true).toLowerCase())} attivi</span>`).join(''); return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-parliament="${mandate.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">Legislazione ${escapeHtml(mandate.legislation)}</p><h2 class="h4 mb-2">Mandato parlamentare</h2></div><span class="badge ${mandate.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(mandate.status)}</span></div><p class="text-secondary mb-3">${formatDate(mandate.startDate)} → ${formatDate(mandate.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${roleSummary}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${mandate.members.length} nomine nello storico</span><span class="d-flex gap-2">${can('parliament', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parliaments" data-entity-id="${mandate.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-parliament-action="${mandate.id}">Gestisci mandato</button></span></div></article></div>`; }).join('');
   document.getElementById('emptyParliaments').classList.toggle('d-none', mandates.length > 0);
   document.getElementById('parliamentCount').textContent = mandates.length;
@@ -1218,7 +1358,8 @@ function renderParliaments() {
 }
 
 function renderMemberList(mandate, role) {
-  const members = mandate.members.filter(member => member.role === role);
+  const query = archiveSearchValue('parliamentMemberSearch');
+  const members = mandate.members.filter(member => member.role === role && matchesArchiveSearch([member.name, member.memberParty, member.memberCoalition, member.annotations], query));
   const list = document.querySelector(`[data-role-list="${role}"]`);
   const limit = parliamentRole(role)?.limit ?? 0;
   const roleLabel = parliamentRoleLabel(role);
@@ -1237,6 +1378,7 @@ function renderParliamentMembers(mandate) {
     document.getElementById('titularList')?.closest('.col-12')?.classList.add('d-none');
     document.getElementById('substituteList')?.closest('.col-12')?.classList.add('d-none');
   }
+  ensureMemberSearch('parliamentRoleLists', 'parliamentMemberSearch', 'Cerca parlamentare per nome, partito o coalizione');
   container.innerHTML = parliamentRoles().map(role => `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list" data-role-list="${role.id}"></div></section>`).join('');
   parliamentRoles().forEach(role => renderMemberList(mandate, role.id));
 }
@@ -1281,6 +1423,7 @@ function openNewParliament() {
     document.getElementById('substituteList')?.closest('.col-12')?.classList.add('d-none');
   }
   roleLists.innerHTML = '<p class="small text-secondary mb-0">Salva il mandato per inserire le nomine.</p>';
+  ensureMemberSearch('parliamentRoleLists', 'parliamentMemberSearch', 'Cerca parlamentare per nome, partito o coalizione');
   document.querySelector('#parliamentModal .modal-title').textContent = 'Nuovo mandato';
   showEditorScreen('parliamentModal');
 }
@@ -1380,14 +1523,14 @@ function renderPartyHistory(party = null) {
   const panel = document.getElementById('partyHistoryPanel');
   const history = party?.history || [];
   panel.classList.toggle('d-none', !party || history.length === 0);
-  document.getElementById('partyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Statuto' ? `<button type="button" class="history-entry history-version" data-open-statute-history="${party.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
+  document.getElementById('partyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Statuto' || entry.label === 'Statuto Google' ? `<button type="button" class="history-entry history-version" data-open-statute-history="${party.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}${entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : ''}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
 }
 
 function renderCompanyHistory(company = null) {
   const panel = document.getElementById('companyHistoryPanel');
   const history = company?.history || [];
   panel.classList.toggle('d-none', !company || history.length === 0);
-  document.getElementById('companyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Regolamento' ? `<button type="button" class="history-entry history-version" data-open-company-history="${company.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
+  document.getElementById('companyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Regolamento' || entry.label === 'Regolamento Google' ? `<button type="button" class="history-entry history-version" data-open-company-history="${company.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}${entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : ''}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
 }
 
 function diffStatuteText(previousText, nextText) {
@@ -1443,13 +1586,15 @@ function openPartyEditor(partyId = '') {
 function openPartyStatuteEditor(partyId) {
   const party = state.parties.find(item => item.id === partyId);
   if (!party) return;
+  if (party.googleStatuteDocumentId) { openGoogleDocument(party.googleStatuteDocumentId); return; }
   editingPartyId = party.id;
-  setRichEditorContent('partyStatuteEditorContent', party.statute || '');
+  activePartyStatuteDocumentId = null;
   document.getElementById('partyStatutePartyName').textContent = party.name;
   document.getElementById('partyStatuteSubtitle').textContent = `${statusLabel(party.status)} · documento unico del partito`;
   const status = document.getElementById('partyStatuteStatus');
   status.textContent = statusLabel(party.status);
   status.className = `badge ${statusClass(party.status)}`;
+  setGoogleSpecialEditorState({ titleId: 'partyStatuteGoogleTitle', statusId: 'partyStatuteGoogleStatus', buttonId: 'openPartyStatuteGoogleButton', documentId: '', label: 'Statuto', title: `Statuto - ${party.name}`, create: () => createGoogleDocument(`Statuto - ${party.name}`), setActive: id => { activePartyStatuteDocumentId = id; } });
   showEditorScreen('partyStatuteEditor');
 }
 
@@ -1467,32 +1612,32 @@ function openCompanyEditor(companyId = '') {
 function openCompanyRegulationEditor(companyId) {
   const company = state.companies.find(item => item.id === companyId);
   if (!company) return;
+  if (company.googleRegulationDocumentId) { openGoogleDocument(company.googleRegulationDocumentId); return; }
   editingCompanyId = company.id;
-  setRichEditorContent('companyRegulationEditorContent', company.regulation || '');
+  activeCompanyRegulationDocumentId = null;
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
   document.getElementById('companyRegulationSubtitle').textContent = 'Documento unico dell’azienda';
+  setGoogleSpecialEditorState({ titleId: 'companyRegulationGoogleTitle', statusId: 'companyRegulationGoogleStatus', buttonId: 'openCompanyRegulationGoogleButton', documentId: '', label: 'Regolamento', title: `Regolamento - ${company.name}`, create: () => createGoogleDocument(`Regolamento - ${company.name}`), setActive: id => { activeCompanyRegulationDocumentId = id; } });
   showEditorScreen('companyRegulationEditor');
 }
 
 function closeCompanyRegulationEditor() {
   editingCompanyId = null;
-  setRichEditorContent('companyRegulationEditorContent', '');
+  activeCompanyRegulationDocumentId = null;
   setView('companies');
 }
 
-function saveCompanyRegulation(event) {
+async function saveCompanyRegulation(event) {
   event.preventDefault();
   const company = state.companies.find(item => item.id === editingCompanyId);
   if (!company) return;
-  syncEditorValue('companyRegulationEditorContent', 'companyRegulationValue');
-  const regulation = document.getElementById('companyRegulationValue').value.trim();
-  if (!plainText(regulation).trim()) { showToast('Inserisci il contenuto del Regolamento.'); return; }
-  if (company.regulation !== regulation) company.history.push({ label: 'Regolamento', from: company.regulation ? 'Versione precedente' : 'Non presente', to: 'Versione aggiornata', at: new Date().toISOString(), previousStatute: company.regulation || '', nextStatute: regulation });
-  company.regulation = regulation;
+  const googleRegulationDocumentId = company.googleRegulationDocumentId || activeCompanyRegulationDocumentId || (await createGoogleDocument(`Regolamento - ${company.name}`)).id;
+  company.googleRegulationDocumentId = googleRegulationDocumentId;
   company.updatedAt = new Date().toISOString();
   writeStorage(STORAGE_KEYS.companies, state.companies);
   closeCompanyRegulationEditor();
   renderCompanies();
+  openGoogleDocument(googleRegulationDocumentId);
   showToast('Regolamento salvato.');
 }
 
@@ -1534,23 +1679,21 @@ function saveCompany(event) {
 
 function closePartyStatuteEditor() {
   editingPartyId = null;
-  setRichEditorContent('partyStatuteEditorContent', '');
+  activePartyStatuteDocumentId = null;
   setView('parties');
 }
 
-function savePartyStatute(event) {
+async function savePartyStatute(event) {
   event.preventDefault();
   const party = state.parties.find(item => item.id === editingPartyId);
   if (!party) return;
-  syncEditorValue('partyStatuteEditorContent', 'partyStatuteValue');
-  const statute = document.getElementById('partyStatuteValue').value.trim();
-  if (!plainText(statute).trim()) { showToast('Inserisci il contenuto dello Statuto.'); return; }
-  if (party.statute !== statute) party.history.push({ label: 'Statuto', from: party.statute ? 'Versione precedente' : 'Non presente', to: 'Versione aggiornata', at: new Date().toISOString(), previousStatute: party.statute || '', nextStatute: statute });
-  party.statute = statute;
+  const googleStatuteDocumentId = party.googleStatuteDocumentId || activePartyStatuteDocumentId || (await createGoogleDocument(`Statuto - ${party.name}`)).id;
+  party.googleStatuteDocumentId = googleStatuteDocumentId;
   party.updatedAt = new Date().toISOString();
   writeStorage(STORAGE_KEYS.parties, state.parties);
   closePartyStatuteEditor();
   renderParties();
+  openGoogleDocument(googleStatuteDocumentId);
   showToast('Statuto salvato.');
 }
 
@@ -1580,19 +1723,20 @@ function saveParty(event) {
 
 function openDocumentModal(templateId = '', forcedCategory = '') {
   editingDocumentId = null;
+  activeGoogleDocumentId = null;
   const template = state.templates.find(item => item.id === templateId);
   document.getElementById('documentForm').reset();
   refreshCategoryOptions();
   document.getElementById('documentCategory').value = forcedCategory || template?.category || categoryNames()[0];
+  setGoogleDocumentEditorState('', '');
   refreshDocumentTemplateOptions(document.getElementById('documentCategory').value);
+  document.addEventListener('click', event => { const googleButton = event.target.closest('[data-open-google]'); if (googleButton) { event.stopImmediatePropagation(); openGoogleDocument(googleButton.dataset.openGoogle); } });
   document.getElementById('documentDate').value = today();
   document.getElementById('documentTemplate').value = templateId;
   document.getElementById('documentNumber').value = nextNumber(template?.category || document.getElementById('documentCategory').value);
   document.getElementById('odgStatus').value = 'da valutare';
   syncOdgStatusField();
-  setRichEditorContent('documentBodyEditor', template?.body || '');
   applyPageMargins();
-  syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Nuovo documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva documento';
   showEditorScreen('documentModal');
@@ -1601,6 +1745,7 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
 function openDocumentEditor(documentId) {
   const documentRecord = state.documents.find(item => item.id === documentId);
   if (!documentRecord) return;
+  if (documentRecord.googleDocumentId) { openGoogleDocument(documentRecord.googleDocumentId); return; }
   editingDocumentId = documentId;
   document.getElementById('documentForm').reset();
   refreshCategoryOptions();
@@ -1612,9 +1757,7 @@ function openDocumentEditor(documentId) {
   document.getElementById('documentNumber').value = documentRecord.number;
   document.getElementById('odgStatus').value = documentRecord.status || 'da valutare';
   syncOdgStatusField();
-  setRichEditorContent('documentBodyEditor', documentRecord.body);
   applyPageMargins();
-  syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Modifica documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva modifiche';
   showEditorScreen('documentModal');
@@ -1622,51 +1765,56 @@ function openDocumentEditor(documentId) {
 
 async function saveDocument(event) {
   event.preventDefault();
-  syncEditorValue('documentBodyEditor', 'documentBody');
-  if (!plainText(document.getElementById('documentBody').value).trim()) { showToast('Inserisci il contenuto del documento.'); return; }
   const category = document.getElementById('documentCategory').value.trim();
   const template = state.templates.find(item => item.id === document.getElementById('documentTemplate').value);
-  const uploadedImage = await readFileAsDataUrl(document.getElementById('documentImage').files[0]);
   const date = document.getElementById('documentDate').value;
   const number = document.getElementById('documentNumber').value.trim();
   if (!/^\d+$/.test(number) || numericValue(number) < 1) { showToast('Il numero deve contenere solo cifre.'); return; }
   const existingDocument = state.documents.find(item => item.id === editingDocumentId);
-  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: document.getElementById('documentTitle').value.trim(), category, number, year: date.slice(0, 4), date, body: document.getElementById('documentBody').value.trim(), image: uploadedImage || template?.image || existingDocument?.image || '', templateName: template?.name || '', status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
+  const title = document.getElementById('documentTitle').value.trim();
+  if (!title) { showToast('Inserisci il titolo del documento.'); return; }
+  const sourceTemplateDocumentId = template?.googleDocumentId || '';
+  const googleDocumentId = existingDocument?.googleDocumentId || activeGoogleDocumentId || (await createGoogleDocument(title, 'documents', sourceTemplateDocumentId)).id;
+  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
   if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
   else state.documents.unshift(documentRecord);
   advanceCounter(category, number);
   writeStorage(STORAGE_KEYS.documents, state.documents); writeStorage(STORAGE_KEYS.counters, state.counters);
   editingDocumentId = null;
+  activeGoogleDocumentId = null;
   closeEditorScreen();
   renderDocuments();
   if (category === 'ODG') renderOdg();
+  setGoogleDocumentEditorState(googleDocumentId, title);
+  openGoogleDocument(googleDocumentId);
   showToast('Documento salvato nell’archivio.');
 }
 
 async function saveTemplate(event) {
   event.preventDefault();
-  syncEditorValue('templateBodyEditor', 'templateBody');
-  if (!plainText(document.getElementById('templateBody').value).trim()) { showToast('Inserisci la struttura del template.'); return; }
   const existingTemplate = state.templates.find(item => item.id === editingTemplateId);
-  const uploadedImage = await readFileAsDataUrl(document.getElementById('templateImage').files[0]);
   const category = document.getElementById('templateCategory').value.trim();
-  const template = { id: editingTemplateId || crypto.randomUUID(), name: document.getElementById('templateName').value.trim(), category, body: document.getElementById('templateBody').value.trim(), image: uploadedImage || existingTemplate?.image || '' };
+  const name = document.getElementById('templateName').value.trim();
+  if (!name || !category) { showToast('Inserisci nome e categoria del template.'); return; }
+  const googleDocumentId = existingTemplate?.googleDocumentId || (await createGoogleDocument(name, 'templates')).id;
+  const template = { id: editingTemplateId || crypto.randomUUID(), name, category, body: '', image: '', googleDocumentId };
   if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
   else state.templates.push(template);
   writeStorage(STORAGE_KEYS.templates, state.templates);
   editingTemplateId = null;
   closeEditorScreen();
   document.getElementById('templateForm').reset(); refreshCategoryOptions(); refreshDocumentTemplateOptions(); renderTemplates(); renderDocuments(); showToast(existingTemplate ? 'Template aggiornato.' : 'Template salvato.');
+  openGoogleDocument(googleDocumentId);
 }
 
 function openTemplateEditor(templateId = '') {
   const template = state.templates.find(item => item.id === templateId);
+  if (template?.googleDocumentId) { openGoogleDocument(template.googleDocumentId); return; }
   editingTemplateId = template?.id || null;
   document.getElementById('templateForm').reset();
   refreshCategoryOptions();
   document.getElementById('templateName').value = template?.name || '';
   document.getElementById('templateCategory').value = template?.category || categoryNames()[0];
-  setRichEditorContent('templateBodyEditor', template?.body || '');
   applyPageMargins();
   document.querySelector('#templateModal .modal-title').textContent = template ? 'Modifica template' : 'Nuovo template';
   document.querySelector('#templateModal button[type="submit"]').textContent = template ? 'Salva modifiche' : 'Salva template';
@@ -1715,7 +1863,7 @@ function normalizeEditorImageGeometryForPdf(body = '') {
 
 async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = '' } = {}) {
   if (!can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
-  if (typeof window.html2pdf !== 'function') { showToast('La libreria PDF non è disponibile.'); return; }
+  if (typeof window.googleDocsExport !== 'function') { showToast('L’esportazione PDF è disponibile tramite Google Documenti.'); return; }
 
   const margins = normalizePageMargins(state.pageMargins);
 
@@ -1827,7 +1975,7 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
     }));
 
     // 3. APPLICAZIONE DEI MARGINI E COMPENSAZIONE LATERALE
-    await window.html2pdf().set({
+    await window.googleDocsExport().set({
       // Aggiungiamo +2mm di sicurezza ai margini del PDF per compensare la riduzione di printableWidthMm
       margin: [margins.top, Number(margins.left) + 2, margins.bottom, Number(margins.right) + 2], 
       filename: String(filename || 'documento.pdf').replace(/[\\/:*?"<>|]+/g, '-'),
@@ -1857,26 +2005,26 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
 
 function downloadDocumentPdf(id) {
   const documentRecord = state.documents.find(item => item.id === id);
-  if (!documentRecord) return;
-  return downloadRichPdf({ body: documentRecord.body, image: documentRecord.image, filename: `${documentRecord.category}-${documentRecord.number}-${documentRecord.year}.pdf` });
+  if (!documentRecord?.googleDocumentId) return;
+  return downloadGooglePdf(documentRecord.googleDocumentId, `${documentRecord.category}-${documentRecord.number}-${documentRecord.year}.pdf`);
 }
 
 function downloadTemplatePdf(id) {
   const template = state.templates.find(item => item.id === id);
-  if (!template) return;
-  return downloadRichPdf({ body: template.body, image: template.image, filename: `template-${template.category}-${template.name}.pdf` });
+  if (!template?.googleDocumentId) return;
+  return downloadGooglePdf(template.googleDocumentId, `template-${template.category}-${template.name}.pdf`);
 }
 
 function downloadPartyStatutePdf(id) {
   const party = state.parties.find(item => item.id === id);
-  if (!party?.statute) return;
-  return downloadRichPdf({ body: party.statute, filename: `statuto-${party.name}.pdf` });
+  if (!party?.googleStatuteDocumentId) return;
+  return downloadGooglePdf(party.googleStatuteDocumentId, `statuto-${party.name}.pdf`);
 }
 
 function downloadCompanyRegulationPdf(id) {
   const company = state.companies.find(item => item.id === id);
-  if (!company?.regulation) return;
-  return downloadRichPdf({ body: company.regulation, filename: `regolamento-${company.name}.pdf` });
+  if (!company?.googleRegulationDocumentId) return;
+  return downloadGooglePdf(company.googleRegulationDocumentId, `regolamento-${company.name}.pdf`);
 }
 
 
@@ -1915,8 +2063,18 @@ async function initialize() {
   ensureInterpretationView();
   ensureOdgView();
   ensureTrashView();
+  ensureArchiveSearch('templatesView', 'templateSearch', 'Cerca template per nome o categoria', 'templateGrid');
+  ensureArchiveSearch('partiesView', 'partySearch', 'Cerca partiti per nome, stato o valore', 'partyGrid');
+  ensureArchiveSearch('companiesView', 'companySearch', 'Cerca aziende per nome o regolamento', 'companyGrid');
+  ensureArchiveSearch('parliamentView', 'parliamentSearch', 'Cerca mandati, parlamentari o partiti', 'parliamentGrid');
+  ensureArchiveSearch('odgView', 'odgSearch', 'Cerca ODG per titolo, numero o stato', 'odgGrid');
+  ensureArchiveSearch('interpretationsView', 'interpretationSearch', 'Cerca interpretazioni per nome, testo o valore', 'interpretationGrid');
+  ensureArchiveSearch('governmentView', 'governmentSearch', 'Cerca periodi o componenti del Governo', 'governmentGrid');
+  ensureArchiveSearch('compositionView', 'compositionSearch', 'Cerca periodi o componenti della Corte', 'compositionGrid');
+  renderGoogleConnectionSettings();
+  applyPermissions();
   bindInstitutionEvents();
-  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { const backendUnavailable = error.message === 'BACKEND_UNAVAILABLE'; const localUser = localAuth.users.find(user => user.username === username && user.password === password && !user.deletedAt); if (!backendUnavailable || !localUser) { alert.textContent = backendUnavailable ? 'Il server non è configurato oppure le credenziali locali non sono valide.' : (error.message || 'Credenziali non valide. Riprova.'); alert.classList.remove('d-none'); return; } currentUser = localUserPayload(localUser); await requireFirstAccessCredentials(localUser); localStorage.setItem('cz_local_user', localUser.id); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } });
+  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { alert.textContent = error.message || 'Credenziali non valide. Riprova.'; alert.classList.remove('d-none'); } });
   document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); await saveRemoteState(); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
   document.getElementById('requestRegistrationButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('registrationRequestModal')).show());
   document.getElementById('requestRecoveryButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('recoveryRequestModal')).show());
@@ -1924,6 +2082,7 @@ async function initialize() {
   document.getElementById('recoveryRequestForm').addEventListener('submit', submitRecoveryRequest);
   document.getElementById('credentialChangeForm').addEventListener('submit', saveFirstAccessCredentials);
   document.getElementById('refreshUsersButton')?.addEventListener('click', refreshUserManagement);
+  document.getElementById('disconnectGoogleButton')?.addEventListener('click', disconnectGoogleAccount);
   document.addEventListener('change', event => { const roleSelect = event.target.closest('.user-role-select'); if (roleSelect) userManagementAction('change_user_role', { userId: roleSelect.dataset.userId, roleId: roleSelect.value }, 'Ruolo aggiornato.'); });
   document.addEventListener('click', event => { const deleteUser = event.target.closest('.delete-user-button'); if (deleteUser) { event.stopImmediatePropagation(); if (confirm('Spostare questo utente nel cestino? Potrà essere ripristinato o eliminato definitivamente dalla sezione Utenti e permessi.')) userManagementAction('delete_user', { userId: deleteUser.dataset.userId }, 'Utente spostato nel cestino.'); } });
   document.addEventListener('click', event => { const createRoleButton = event.target.closest('#createRoleButton'); if (createRoleButton) userManagementAction('create_role', { name: document.getElementById('newRoleName').value }, 'Ruolo creato.'); const savePermissionsButton = event.target.closest('.save-role-permissions'); if (savePermissionsButton) { const permissions = {}; document.querySelectorAll(`.role-permission[data-role-id="${savePermissionsButton.dataset.roleId}"]`).forEach(input => { permissions[input.dataset.permission] ||= {}; permissions[input.dataset.permission][input.dataset.action] = input.checked; }); userManagementAction('save_role_permissions', { roleId: savePermissionsButton.dataset.roleId, permissions }, 'Permessi salvati.'); } });
@@ -1950,6 +2109,8 @@ async function initialize() {
   document.getElementById('interpretationFieldList').addEventListener('click', event => { const button = event.target.closest('[data-remove-interpretation-field]'); if (!button) return; state.interpretationSettings.fields = state.interpretationSettings.fields.filter(field => field.id !== button.dataset.removeInterpretationField); writeStorage(STORAGE_KEYS.interpretationSettings, state.interpretationSettings); renderInterpretationSettings(); showToast('Valore base rimosso.'); });
   document.addEventListener('click', event => { const button = event.target.closest('[data-open-interpretation]'); if (button) { event.stopPropagation(); openInterpretationEditor(button.dataset.openInterpretation); } });
   document.getElementById('documentSearch').addEventListener('input', renderDocuments);
+  document.addEventListener('input', event => { const search = event.target.closest('[data-archive-search]'); if (!search) return; const view = search.dataset.archiveSearch; if (view === 'templatesView') renderTemplates(); if (view === 'partiesView') renderParties(); if (view === 'companiesView') renderCompanies(); if (view === 'parliamentView') renderParliaments(); if (view === 'odgView') renderOdg(); if (view === 'interpretationsView') renderInterpretations(); if (view === 'governmentView') renderInstitution('government'); if (view === 'compositionView') renderInstitution('composition'); if (view === 'trashView') renderTrash(); });
+  document.addEventListener('input', event => { const search = event.target.closest('[data-member-search]'); if (!search) return; if (search.id === 'parliamentMemberSearch') { const mandate = state.parliaments.find(item => item.id === editingParliamentId); if (mandate) renderParliamentMembers(mandate); } if (search.id === 'governmentMemberSearch') { const record = state.governments.find(item => item.id === window.editinggovernmentId); if (record) renderInstitutionMembers('government', record); } if (search.id === 'compositionMemberSearch') { const record = state.courtCompositions.find(item => item.id === window.editingcompositionId); if (record) renderInstitutionMembers('composition', record); } });
   document.getElementById('documentForm').addEventListener('submit', saveDocument);
   document.getElementById('templateForm').addEventListener('submit', saveTemplate);
   document.getElementById('partyForm').addEventListener('submit', saveParty);
@@ -1983,7 +2144,6 @@ async function initialize() {
   document.getElementById('documentTemplate').addEventListener('change', event => openDocumentModal(event.target.value));
   document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); });
   document.querySelectorAll('#documentModal [data-bs-dismiss="modal"], #templateModal [data-bs-dismiss="modal"]').forEach(button => { button.removeAttribute('data-bs-dismiss'); button.addEventListener('click', closeEditorScreen); });
-  initTinyMceRichEditors();
   document.querySelectorAll('.rich-editor').forEach(editor => {
     editor.style.border = '1px solid var(--line)';
     editor.style.borderRadius = '.375rem';
@@ -2000,11 +2160,7 @@ async function initialize() {
   refreshCategoryOptions();
   refreshDocumentTemplateOptions();
   populateFontMenus();
-  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') {
-    if (!currentUser) {
-      const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin);
-      currentUser = localUser ? localUserPayload(localUser) : null;
-    }
+  if (remoteMode && localStorage.getItem(STORAGE_KEYS.session) === 'active') {
     document.getElementById('loginView').classList.add('d-none');
     document.getElementById('appView').classList.remove('d-none');
     const initialView = window.location.hash.replace('#', '') || 'dashboard';

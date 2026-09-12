@@ -1,6 +1,6 @@
 # Casellario digitale della Corte Costituzionale di Zero
 
-Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. In locale funziona anche senza backend, usando `localStorage`; su Altervista usa `api.php`, sessioni PHP e MySQL 8.0.
+Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’archivio documentale richiede `api.php`, sessioni PHP, MySQL 8.0 e un account Google collegato dalle impostazioni.
 
 ## Funzionalita
 

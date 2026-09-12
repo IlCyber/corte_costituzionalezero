@@ -17,7 +17,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&display=swap">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/tinymce@7/tinymce.min.js"></script>
 </head>
 
 <body>
@@ -92,6 +91,7 @@
             </li>
             <li class="nav-item"><a class="nav-link" href="#parties" data-view-link="parties">Partiti</a></li>
             <li class="nav-item"><a class="nav-link" href="#companies" data-view-link="companies">Aziende</a></li>
+            <li class="nav-item"><a class="nav-link" href="#coalitions" data-view-link="coalitions">Coalizioni</a></li>
             <li class="nav-item"><a class="nav-link" href="#parliament" data-view-link="parliament">Parlamento</a></li>
             <li class="nav-item"><a class="nav-link" href="#templates" data-view-link="templates">Template</a></li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
@@ -102,7 +102,7 @@
       </div>
     </nav>
 
-    <div class="container-fluid px-4 px-xl-5 py-4 py-lg-5" style="padding-top: 0rem !important;">
+    <div class="container-fluid px-4 px-xl-5 py-4 py-lg-5">
       <section id="dashboardView" class="app-view">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
           <div>
@@ -200,7 +200,7 @@
                 id="partyFieldCount">0</strong></div>
           </div>
         </div>
-        <div id="partyGrid" class="row g-4"></div>
+        <div id="partyGrid" class="row g-4 section-scroll"></div>
         <div id="emptyParties" class="empty-state d-none">
           <div class="display-6">□</div>
           <h3 class="h5 mt-3">Nessun partito archiviato</h3>
@@ -227,11 +227,51 @@
                 id="companyRegulationCount">0</strong></div>
           </div>
         </div>
-        <div id="companyGrid" class="row g-4"></div>
+        <div id="companyGrid" class="row g-4 section-scroll"></div>
         <div id="emptyCompanies" class="empty-state d-none">
           <div class="display-6">□</div>
           <h3 class="h5 mt-3">Nessuna azienda archiviata</h3>
           <p class="text-secondary mb-0">Crea la prima azienda per iniziare.</p>
+        </div>
+      </section>
+
+      <section id="coalitionsView" class="app-view d-none">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Alleanze politiche</p>
+            <h1 class="display-6 fw-bold mb-2">Coalizioni</h1>
+            <p class="text-secondary mb-0">Gestisci le coalizioni di partiti, stato attivo/inattivo e annotazioni.</p>
+          </div>
+          <button class="btn btn-primary" id="newCoalitionButton">+ Nuova coalizione</button>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-12">
+            <div class="stat-card">
+              <span class="text-secondary small">Coalizioni archiviate</span>
+              <strong id="coalitionCount">0</strong>
+            </div>
+          </div>
+        </div>
+        <div class="card border-0 shadow-sm">
+          <div class="card-body p-0">
+            <div class="table-responsive section-scroll">
+              <table class="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th class="ps-4">Nome</th>
+                    <th>Status</th>
+                    <th class="text-end pe-4">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="coalitionTableBody"></tbody>
+              </table>
+            </div>
+            <div id="emptyCoalitions" class="empty-state d-none">
+              <div class="display-6">□</div>
+              <h3 class="h5 mt-3">Nessuna coalizione trovata</h3>
+              <p class="text-secondary mb-0">Crea la prima coalizione per iniziare.</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -257,7 +297,7 @@
                 id="memberCount">0</strong></div>
           </div>
         </div>
-        <div id="parliamentGrid" class="row g-4"></div>
+        <div id="parliamentGrid" class="row g-4 section-scroll"></div>
         <div id="emptyParliaments" class="empty-state d-none">
           <div class="display-6">□</div>
           <h3 class="h5 mt-3">Nessun mandato archiviato</h3>
@@ -272,6 +312,12 @@
           <p class="text-secondary mb-0">Gestisci categorie, numerazione e le informazioni minime richieste per ogni
             partito.</p>
         </div>
+        <div class="card border-0 shadow-sm mb-4" id="googleConnectionCard">
+          <div class="card-body p-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+            <div><h2 class="h5 mb-1">Account Google Documenti</h2><p id="googleConnectionStatus" class="text-secondary small mb-0">Verifica della connessione in corso...</p></div>
+            <div class="d-flex gap-2"><a class="btn btn-primary" id="connectGoogleButton" href="api.php?action=google_connect">Collega account Google</a><button class="btn btn-outline-secondary d-none" id="disconnectGoogleButton" type="button">Scollega</button></div>
+          </div>
+        </div>
         <div class="row g-4">
           <div class="col-12 col-xl-7">
             <div class="card border-0 shadow-sm mb-4">
@@ -279,28 +325,6 @@
                 <h2 class="h5 mb-1">Progressivi per categoria</h2>
                 <p class="text-secondary small mb-4">Il prossimo documento userà il numero indicato.</p>
                 <form id="numberingForm"></form>
-              </div>
-            </div>
-            <div class="card border-0 shadow-sm mb-4">
-              <div class="card-body p-4">
-                <h2 class="h5 mb-1">Margini pagina documento</h2>
-                <p class="text-secondary small mb-4">Imposta i margini in millimetri. Il modello viene applicato a
-                  documenti, template e PDF scaricati.</p>
-                <form id="pageMarginsForm" class="row g-3">
-                  <div class="col-6"><label class="form-label" for="pageMarginTop">Superiore (mm)</label><input
-                      id="pageMarginTop" class="form-control page-margin-input" type="number" min="5" max="60" required>
-                  </div>
-                  <div class="col-6"><label class="form-label" for="pageMarginRight">Destro (mm)</label><input
-                      id="pageMarginRight" class="form-control page-margin-input" type="number" min="5" max="60"
-                      required></div>
-                  <div class="col-6"><label class="form-label" for="pageMarginBottom">Inferiore (mm)</label><input
-                      id="pageMarginBottom" class="form-control page-margin-input" type="number" min="5" max="60"
-                      required></div>
-                  <div class="col-6"><label class="form-label" for="pageMarginLeft">Sinistro (mm)</label><input
-                      id="pageMarginLeft" class="form-control page-margin-input" type="number" min="5" max="60"
-                      required></div>
-                  <div class="col-12"><button class="btn btn-primary" type="submit">Salva margini</button></div>
-                </form>
               </div>
             </div>
             <div class="card border-0 shadow-sm mb-4">
@@ -362,7 +386,7 @@
   </main>
 
   <div class="modal fade" id="documentModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <form id="documentForm">
           <div class="modal-header">
@@ -388,9 +412,11 @@
                 <div class="form-text">Puoi usare 01, 00001 o qualsiasi altra numerazione a cifre.</div>
               </div>
               <div class="col-12"><label class="form-label">Contenuto</label>
-                <textarea id="documentBodyEditor" class="rich-editor form-control tinymce-rich-editor"
-                  data-placeholder="Scrivi il contenuto del documento..."></textarea><textarea id="documentBody"
-                  class="d-none"></textarea>
+                <div id="googleDocumentEditorPanel" class="google-document-editor-panel">
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div>
+                  <div class="google-document-editor-copy"><strong id="googleDocumentEditorTitle">Documento Google non ancora creato</strong><span id="googleDocumentEditorStatus">Salva i dati del documento per creare il Google Doc nella cartella configurata.</span></div>
+                  <button type="button" id="openGoogleDocumentEditorButton" class="btn btn-primary" disabled><i class="bi bi-box-arrow-up-right me-1"></i>Apri editor Google</button>
+                </div>
               </div>
                 <div class="col-12" style="display: none"><label for="documentImage" class="form-label">Immagine predefinita</label><input
                   id="documentImage" type="file" accept="image/*" class="form-control">
@@ -423,9 +449,7 @@
               <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
                   id="templateCategory" class="form-select" required></select></div>
               <div class="col-12"><label class="form-label">Struttura del contenuto</label>
-                <textarea id="templateBodyEditor" class="rich-editor form-control tinymce-rich-editor"
-                  data-placeholder="Inserisci una traccia riutilizzabile..."></textarea><textarea id="templateBody"
-                  class="d-none"></textarea>
+                <div class="google-document-editor-panel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong>Template Google Documenti</strong><span>Il contenuto viene scritto nell’editor ufficiale di Google dopo il salvataggio.</span></div></div>
               </div>
               <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine predefinita</label><input
                   id="templateImage" type="file" accept="image/*" class="form-control">
@@ -500,8 +524,7 @@
                 <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label>
-                <textarea class="rich-editor form-control tinymce-rich-editor" id="partyStatuteEditorContent"
-                  data-placeholder="Scrivi lo Statuto del partito..."></textarea><input type="hidden" id="partyStatuteValue">
+                <div class="google-document-editor-panel" id="partyStatuteGooglePanel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong id="partyStatuteGoogleTitle">Statuto Google non ancora creato</strong><span id="partyStatuteGoogleStatus">Crea il documento per aprire l’editor Google.</span></div><button type="button" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor Google</button></div>
               </section>
             </div>
           </div>
@@ -556,9 +579,7 @@
                 <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label>
-                <textarea class="rich-editor form-control tinymce-rich-editor" id="companyRegulationEditorContent"
-                  data-placeholder="Scrivi il Regolamento dell’azienda..."></textarea><input type="hidden"
-                  id="companyRegulationValue">
+                <div class="google-document-editor-panel" id="companyRegulationGooglePanel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong id="companyRegulationGoogleTitle">Regolamento Google non ancora creato</strong><span id="companyRegulationGoogleStatus">Crea il documento per aprire l’editor Google.</span></div><button type="button" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor Google</button></div>
               </section>
             </div>
           </div>
@@ -597,7 +618,7 @@
     </div>
   </div>
   <div class="modal fade" id="parliamentModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <form id="parliamentForm">
           <div class="modal-header">
@@ -696,7 +717,6 @@
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app.js"></script>
 </body>
