@@ -126,11 +126,8 @@ async function apiRequest(action, options = {}) {
   try {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
     if (csrfToken && options.method === 'POST') headers['X-CSRF-Token'] = csrfToken;
-    response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
-      credentials: 'same-origin',
-      headers,
-      ...options,
-    });
+    //mi da "Sessione non valida" con errore 401 unauthorized, correggi
+    response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, { ...options, headers });
   } catch {
     throw new Error('BACKEND_UNAVAILABLE');
   }
@@ -365,7 +362,7 @@ function ensureTrashView() {
   if (nav && settingsLink && !nav.querySelector('[data-view-link="trash"]')) {
     const item = document.createElement('li');
     item.className = 'nav-item';
-    item.innerHTML = '<a class="nav-link" href="#trash" data-view-link="trash"><i class="bi bi-trash3 me-1" aria-hidden="true"></i>Cestino</a>';
+    item.innerHTML = '<a class="nav-link" href="#trash" data-view-link="trash">Cestino</a>';
     nav.insertBefore(item, settingsLink);
     item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('trash'); });
   }
@@ -425,7 +422,23 @@ function localRequestReset(email) {
 function formatDate(value) { return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${value}T12:00:00`)); }
 function today() { return new Date().toISOString().slice(0, 10); }
 function escapeHtml(value = '') { return value.replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character])); }
-function sanitizeRichHtml(value = '') { if (window.DOMPurify) return window.DOMPurify.sanitize(value, { USE_PROFILES: { html: true }, ALLOW_DATA_ATTR: false }); const container = document.createElement('div'); container.innerHTML = value; container.querySelectorAll('script,style,iframe,object,embed,form').forEach(element => element.remove()); container.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => { if (/^on/i.test(attribute.name) || (['href', 'src'].includes(attribute.name) && !/^(https?:|mailto:|data:image\/)/i.test(attribute.value))) element.removeAttribute(attribute.name); })); return container.innerHTML; }
+function sanitizeRichHtml(value = '') {
+  if (window.DOMPurify) return window.DOMPurify.sanitize(value, {
+    USE_PROFILES: { html: true },
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_ATTR: ['class', 'style', 'src', 'alt', 'href', 'title', 'target', 'rel', 'width', 'height'],
+    ALLOWED_CSS_PROPERTIES: ['position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'max-width', 'max-height', 'min-width', 'min-height', 'display', 'margin', 'z-index']
+  });
+  const container = document.createElement('div');
+  container.innerHTML = value;
+  container.querySelectorAll('script,style,iframe,object,embed,form').forEach(element => element.remove());
+  container.querySelectorAll('*').forEach(element => [...element.attributes].forEach(attribute => {
+    if (/^on/i.test(attribute.name) || (['href', 'src'].includes(attribute.name) && !/^(https?:|mailto:|data:image\/)/i.test(attribute.value))) {
+      element.removeAttribute(attribute.name);
+    }
+  }));
+  return container.innerHTML;
+}
 function plainText(value = '') { const container = document.createElement('div'); container.innerHTML = value; return container.textContent || ''; }
 function nextNumber(category) { const value = String(state.counters[category] ?? '1'); return /^\d+$/.test(value) && Number(value) > 0 ? value : '1'; }
 function numericValue(value) { const parsed = Number.parseInt(String(value), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
@@ -457,11 +470,98 @@ function deleteCategory(name) {
   renderSettings();
   showToast('Categoria eliminata.');
 }
-function syncEditorValue(editorId, inputId) { document.getElementById(inputId).value = sanitizeRichHtml(document.getElementById(editorId).innerHTML.trim()); }
+function syncEditorValue(editorId, inputId) {
+  const editor = document.getElementById(editorId);
+  const instance = typeof tinymce !== 'undefined' ? tinymce.get(editorId) : null;
+  const content = instance ? instance.getContent() : (editor?.value || editor?.innerHTML || '');
+  document.getElementById(inputId).value = sanitizeRichHtml(String(content).trim());
+}
+function setRichEditorContent(editorId, html = '') {
+  const editor = document.getElementById(editorId);
+  const safeHtml = sanitizeRichHtml(html || '');
+  const instance = typeof tinymce !== 'undefined' ? tinymce.get(editorId) : null;
+  if (instance) {
+    instance.setContent(safeHtml);
+  } else if (editor) {
+    editor.value = safeHtml;
+  }
+}
+function positionSelectedEditorImage(editor, position) {
+  const node = editor.selection.getNode();
+  const image = node?.nodeType === Node.ELEMENT_NODE && (node.matches('img') ? node : node.closest('img'));
+  if (!image) { showToast('Seleziona prima un’immagine.'); return; }
+  image.classList.add('editor-image');
+  makeImageDraggable(editor.getBody(), image, editor);
+  image.style.position = 'absolute';
+  image.style.right = 'auto';
+  image.style.transform = 'none';
+  image.style.top = image.style.top || '1rem';
+  if (position === 'center') {
+    image.style.left = '50%';
+    image.style.transform = 'translateX(-50%)';
+  } else if (position === 'right') {
+    image.style.left = 'auto';
+    image.style.right = '1rem';
+  } else {
+    image.style.left = '1rem';
+  }
+  image.dataset.imagePosition = position;
+  editor.nodeChanged();
+  editor.save();
+}
+function initTinyMceRichEditors() {
+  if (typeof tinymce === 'undefined' || typeof tinymce.init !== 'function') return;
+  const configuredMargins = normalizePageMargins(state.pageMargins);
+  tinymce.init({
+    selector: '.tinymce-rich-editor',
+    plugins: 'advlist autolink lists link image table charmap preview anchor searchreplace wordcount code fullscreen importcss pagebreak',
+    toolbar: 'undo redo | styles | fontfamily fontsize | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | table image imageleft imagecenter imageright link unlink | pagebreak | preview fullscreen code | removeformat',
+    toolbar_mode: 'floating',
+    menubar: false,
+    statusbar: false,
+    height: 'calc(100vh - 280px)',
+    min_height: 580,
+    max_height: 780,
+    branding: false,
+    resize: true,
+    default_link_target: '_blank',
+    font_family_formats: 'Georgia=Georgia;Raleway=Raleway;Pinyon Script=Pinyon Script;Times New Roman=Times New Roman;Arial=Arial;Helvetica=Helvetica;Verdana=Verdana;Tahoma=Tahoma;Trebuchet MS=Trebuchet MS;Courier New=Courier New;Lucida Console=Lucida Console;Garamond=Garamond;Palatino Linotype=Palatino Linotype;Book Antiqua=Book Antiqua;Impact=Impact;Comic Sans MS=Comic Sans MS',
+    font_size_formats: '8pt 9pt 10pt 11pt 12pt 14pt 16pt 18pt 20pt 24pt 28pt 32pt 36pt 42pt 48pt 56pt 64pt 72pt 84pt 96pt',
+    pagebreak_separator: '<div class="page-break"><span class="page-break-label">↧ pagina successiva</span></div>',
+    importcss_append: true,
+    content_css: ['https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/400.css', 'https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script@5.1.1/400.css'],
+    content_style: `body { position: relative; padding: ${configuredMargins.top}mm ${configuredMargins.right}mm ${configuredMargins.bottom}mm ${configuredMargins.left}mm; font-family: 'Raleway', Georgia, 'Times New Roman', serif; font-size: 12pt; line-height: 1.55; min-height: 297mm; width: 210mm; max-width: 210mm; margin: 0 auto; box-sizing: border-box; background: repeating-linear-gradient(90deg, transparent 0, transparent 14px, rgba(166,64,45,.035) 14px, rgba(166,64,45,.035) 15px), #fffdfb; border-left: 2px solid #a6402d; border-right: 2px solid #a6402d; box-shadow: inset 0 0 0 1px rgba(166,64,45,.08), inset -6px 0 0 rgba(166,64,45,.06), inset 6px 0 0 rgba(166,64,45,.06); } img { max-width: 100%; height: auto; } img.editor-image { position: absolute !important; z-index: 2 !important; margin: 0; cursor: grab; user-select: none; } img.editor-image.is-dragging { cursor: grabbing; opacity: .78; } img.editor-image.is-resizing { cursor: nwse-resize; opacity: .82; } table { border-collapse: collapse; max-width: 100%; } td { border: 1px solid #aeb7bf; padding: .5rem; } .page-break { page-break-before: always; position: relative; min-height: 32px; height: 32px; line-height: 32px; border-top: 2px dashed #a6402d; color: #a6402d; font-family: 'Pinyon Script', 'Raleway', serif; font-size: 22px; letter-spacing: .04em; text-align: center; margin: 24px 0; background: repeating-linear-gradient(90deg, transparent, transparent 10px, rgba(166,64,45,.08) 10px, rgba(166,64,45,.08) 11px); } .page-break::before { content: '↧ pagina successiva'; display: inline-block; padding: 0 1rem; background: #fffdfb; color: #a6402d; font-family: 'Pinyon Script', 'Raleway', serif; font-size: 22px; } .page-break-label { display: none; }`,
+    setup(editor) {
+      editor.ui.registry.addButton('imageleft', { text: 'Sinistra', tooltip: 'Posiziona immagine a sinistra', onAction: () => positionSelectedEditorImage(editor, 'left') });
+      editor.ui.registry.addButton('imagecenter', { text: 'Centro', tooltip: 'Centra immagine', onAction: () => positionSelectedEditorImage(editor, 'center') });
+      editor.ui.registry.addButton('imageright', { text: 'Destra', tooltip: 'Posiziona immagine a destra', onAction: () => positionSelectedEditorImage(editor, 'right') });
+      editor.on('init', function () {
+        const body = editor.getBody();
+        if (body) body.style.padding = `${configuredMargins.top}mm ${configuredMargins.right}mm ${configuredMargins.bottom}mm ${configuredMargins.left}mm`;
+        body.style.minHeight = '297mm';
+        body.style.width = '210mm';
+        body.style.maxWidth = '210mm';
+        body.style.boxSizing = 'border-box';
+        makeEditorImagesDraggable(body, editor);
+      });
+      editor.on('SetContent NodeChange', () => makeEditorImagesDraggable(editor.getBody(), editor));
+      editor.on('change', () => { editor.save(); });
+    }
+  });
+}
 function applyPageMargins() {
   const margins = normalizePageMargins(state.pageMargins);
   state.pageMargins = margins;
   document.querySelectorAll('.rich-editor').forEach(editor => { editor.style.padding = `${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`; });
+  if (typeof tinymce !== 'undefined') {
+    document.querySelectorAll('.tinymce-rich-editor').forEach(editor => {
+      const instance = tinymce.get(editor.id);
+      if (instance) {
+        const body = instance.getBody();
+        if (body) body.style.padding = `${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`;
+      }
+    });
+  }
 }
 function editorHistory(editor) {
   let history = editorHistories.get(editor);
@@ -502,10 +602,23 @@ function deleteSelectedImage(control) {
   if (!image) { showToast('Seleziona prima un’immagine.'); return; }
   image.remove(); selectedEditorImage = null; recordEditorChange(editor);
 }
-function makeImageDraggable(editor, image) {
+function makeImageDraggable(editor, image, tinyEditor = null) {
   if (!editor || !image || image.dataset.dragReady === 'true') return;
   image.dataset.dragReady = 'true'; image.draggable = false; image.contentEditable = 'false';
-  image.style.position = 'absolute'; image.style.zIndex = '0';
+  image.style.position = 'absolute'; image.style.zIndex = '2';
+  const ownerDocument = editor.ownerDocument || document;
+  const selectImage = () => {
+    editor.querySelectorAll('.editor-image.is-selected').forEach(item => item.classList.remove('is-selected'));
+    image.classList.add('is-selected'); selectedEditorImage = image;
+    if (tinyEditor) {
+      tinyEditor.selection.select(image);
+      tinyEditor.nodeChanged();
+    } else {
+      const selection = ownerDocument.getSelection();
+      const range = ownerDocument.createRange();
+      range.selectNode(image); selection.removeAllRanges(); selection.addRange(range);
+    }
+  };
   if (!image.style.left) image.style.left = '1rem';
   if (!image.style.top) image.style.top = '1rem';
   const getResizeEdge = event => {
@@ -532,16 +645,23 @@ function makeImageDraggable(editor, image) {
   });
   image.addEventListener('pointerdown', event => {
     event.preventDefault(); event.stopPropagation();
-    editor.querySelectorAll('.editor-image.is-selected').forEach(item => item.classList.remove('is-selected'));
-    image.classList.add('is-selected'); selectedEditorImage = image;
+    selectImage();
+    if (event.button !== 0) return;
     const editorBox = editor.getBoundingClientRect(); const imageBox = image.getBoundingClientRect();
+    const normalizedLeft = imageBox.left - editorBox.left + editor.scrollLeft;
+    const normalizedTop = imageBox.top - editorBox.top + editor.scrollTop;
+    image.style.right = 'auto'; image.style.transform = 'none';
+    image.style.left = `${Math.max(0, normalizedLeft)}px`;
+    image.style.top = `${Math.max(0, normalizedTop)}px`;
+    image.setPointerCapture?.(event.pointerId);
+    const normalizedImageBox = image.getBoundingClientRect();
     const edge = getResizeEdge(event);
     if (edge) {
-      const ratio = imageBox.width / Math.max(imageBox.height, 1);
-      const startWidth = imageBox.width;
-      const startHeight = imageBox.height;
-      const startLeft = imageBox.left - editorBox.left + editor.scrollLeft;
-      const startTop = imageBox.top - editorBox.top + editor.scrollTop;
+      const ratio = normalizedImageBox.width / Math.max(normalizedImageBox.height, 1);
+      const startWidth = normalizedImageBox.width;
+      const startHeight = normalizedImageBox.height;
+      const startLeft = normalizedImageBox.left - editorBox.left + editor.scrollLeft;
+      const startTop = normalizedImageBox.top - editorBox.top + editor.scrollTop;
       const startX = event.clientX;
       const startY = event.clientY;
       const resize = resizeEvent => {
@@ -569,25 +689,40 @@ function makeImageDraggable(editor, image) {
       };
       image.style.cursor = ({ n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' }[edge]);
       image.classList.add('is-resizing');
-      document.addEventListener('pointermove', resize);
-      const stopResize = () => { image.classList.remove('is-resizing'); recordEditorChange(editor); document.removeEventListener('pointermove', resize); document.removeEventListener('pointerup', stopResize); };
-      document.addEventListener('pointerup', stopResize, { once: true });
+      ownerDocument.addEventListener('pointermove', resize);
+      const stopResize = () => { image.classList.remove('is-resizing'); recordEditorChange(editor); tinyEditor?.save(); ownerDocument.removeEventListener('pointermove', resize); ownerDocument.removeEventListener('pointerup', stopResize); };
+      ownerDocument.addEventListener('pointerup', stopResize, { once: true });
       return;
     }
     {
-    const startX = event.clientX; const startY = event.clientY;
-    const startLeft = imageBox.left - editorBox.left + editor.scrollLeft; const startTop = imageBox.top - editorBox.top + editor.scrollTop;
-    image.classList.add('is-dragging');
-    const move = moveEvent => {
-      image.style.left = `${Math.max(0, startLeft + moveEvent.clientX - startX)}px`;
-      image.style.top = `${Math.max(0, startTop + moveEvent.clientY - startY)}px`;
-    };
-    const stop = () => { image.classList.remove('is-dragging'); recordEditorChange(editor); document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', stop); };
-    document.addEventListener('pointermove', move); document.addEventListener('pointerup', stop, { once: true });
+      const startX = event.clientX; const startY = event.clientY;
+      const startLeft = normalizedImageBox.left - editorBox.left + editor.scrollLeft; const startTop = normalizedImageBox.top - editorBox.top + editor.scrollTop;
+      image.classList.add('is-dragging');
+      const move = moveEvent => {
+        image.style.left = `${Math.max(0, startLeft + moveEvent.clientX - startX)}px`;
+        image.style.top = `${Math.max(0, startTop + moveEvent.clientY - startY)}px`;
+      };
+      const stop = () => { image.classList.remove('is-dragging'); recordEditorChange(editor); tinyEditor?.save(); ownerDocument.removeEventListener('pointermove', move); ownerDocument.removeEventListener('pointerup', stop); };
+      ownerDocument.addEventListener('pointermove', move); ownerDocument.addEventListener('pointerup', stop, { once: true });
     }
   });
+  image.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); selectImage(); });
 }
-function makeEditorImagesDraggable(editor) { editor?.querySelectorAll('.editor-image').forEach(image => makeImageDraggable(editor, image)); }
+function makeEditorImagesDraggable(editor, tinyEditor = null) { editor?.querySelectorAll('img').forEach(image => { image.classList.add('editor-image'); makeImageDraggable(editor, image, tinyEditor); }); }
+
+function renderDocumentLibraryList() {
+  const list = document.getElementById('documentLibraryList');
+  if (!list) return;
+  if (!state.documents?.length) {
+    list.innerHTML = '<p class="text-secondary small mb-0">Nessun documento presente.</p>';
+    return;
+  }
+  list.innerHTML = state.documents.slice(0, 18).map(document => `<button type="button" class="document-library-item" data-open-document="${escapeHtml(document.id)}">
+    <span class="document-library-code">${escapeHtml(documentCode(document))}</span>
+    <span class="document-library-title">${escapeHtml(document.title)}</span>
+    <span class="document-library-meta">${escapeHtml(document.category)}</span>
+  </button>`).join('');
+}
 
 function editorFromControl(control) { return control.closest('.modal-content')?.querySelector('.rich-editor'); }
 function saveEditorSelection(editor) {
@@ -673,56 +808,6 @@ function insertImage(editor, position = 'cursor') {
   });
   document.body.appendChild(picker); picker.click();
 }
-function addToolbarControl(toolbar, type, label, command, value = '') {
-  const control = document.createElement(type === 'select' ? 'select' : 'button');
-  control.className = type === 'select' ? 'form-select form-select-sm editor-select' : 'btn btn-sm btn-outline-secondary';
-  control.dataset.editorCommand = command;
-  control.setAttribute('type', 'button');
-  control.setAttribute('aria-label', label);
-  control.title = label;
-  if (type === 'select') control.innerHTML = value;
-  else control.innerHTML = label;
-  toolbar.appendChild(control);
-  return control;
-}
-function enhanceEditorToolbars() {
-  document.querySelectorAll('.editor-toolbar').forEach(toolbar => {
-    [['foreColor', 'Colore testo', 'bi-fonts', '#17202a'], ['hiliteColor', 'Evidenziatore', 'bi-highlighter', '#fff2a8']].forEach(([command, label, icon, value]) => {
-      const colorLabel = document.createElement('label');
-      colorLabel.className = 'editor-color-control';
-      colorLabel.title = label;
-      colorLabel.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i>`;
-      const color = document.createElement('input');
-      color.className = 'editor-color';
-      color.type = 'color';
-      color.value = value;
-      color.defaultValue = value;
-      color.setAttribute('aria-label', label);
-      color.title = label;
-      color.dataset.editorCommand = command;
-      colorLabel.appendChild(color);
-      toolbar.appendChild(colorLabel);
-    });
-    addToolbarControl(toolbar, 'button', 'Elenco numerato', 'insertOrderedList');
-    addToolbarControl(toolbar, 'button', 'Allinea a destra', 'justifyRight');
-    addToolbarControl(toolbar, 'button', 'Testo giustificato', 'justifyFull');
-    addToolbarControl(toolbar, 'button', 'Riduci rientro', 'outdent');
-    addToolbarControl(toolbar, 'button', 'Aumenta rientro', 'indent');
-    addToolbarControl(toolbar, 'button', 'Tabella', 'insertTable');
-    addToolbarControl(toolbar, 'button', 'Inserisci immagine', 'insertImageAbove');
-    addToolbarControl(toolbar, 'button', 'Elimina immagine selezionata', 'deleteImage');
-    addToolbarControl(toolbar, 'button', 'Linea', 'insertHorizontalRule');
-    addToolbarControl(toolbar, 'button', 'Collegamento', 'createLink');
-    addToolbarControl(toolbar, 'button', 'Pulisci formato', 'removeFormat');
-  });
-  const icons = { bold: 'bi-type-bold', italic: 'bi-type-italic', underline: 'bi-type-underline', justifyLeft: 'bi-text-left', justifyCenter: 'bi-text-center', justifyRight: 'bi-text-right', justifyFull: 'bi-justify', insertUnorderedList: 'bi-list-ul', insertOrderedList: 'bi-list-ol', outdent: 'bi-text-indent-left', indent: 'bi-text-indent-right', insertTable: 'bi-table', insertImage: 'bi-image', insertImageAbove: 'bi-image-alt', insertImageBelow: 'bi-image-alt-fill', deleteImage: 'bi-trash3', insertHorizontalRule: 'bi-dash-lg', createLink: 'bi-link-45deg', removeFormat: 'bi-eraser' };
-  const labels = { bold: 'Grassetto', italic: 'Corsivo', underline: 'Sottolineato', justifyLeft: 'Allinea a sinistra', justifyCenter: 'Allinea al centro', insertUnorderedList: 'Elenco puntato', insertOrderedList: 'Elenco numerato', fontName: 'Tipo di carattere', fontSizePx: 'Grandezza testo in pixel' };
-  document.querySelectorAll('.editor-toolbar [data-editor-command]').forEach(control => {
-    const icon = icons[control.dataset.editorCommand];
-    if (labels[control.dataset.editorCommand]) control.title = labels[control.dataset.editorCommand];
-    if (icon && control.tagName === 'BUTTON') control.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i>`;
-  });
-}
 function organizeDocumentEditor() {
   const row = document.querySelector('#documentModal .modal-body > .row');
   if (!row || row.querySelector('.document-sidebar')) return;
@@ -734,6 +819,7 @@ function organizeDocumentEditor() {
     const belongsToCanvas = element.querySelector('#documentBodyEditor');
     (belongsToCanvas ? canvas : sidebar).appendChild(element);
   });
+
   row.replaceChildren(sidebar, canvas);
 }
 function organizeTemplateEditor() {
@@ -896,6 +982,7 @@ async function userManagementAction(action, body, successMessage) {
 }
 
 function setView(view, pushState = true) {
+  closeEditorToolbarMenus();
   if (currentUser?.isPrimaryAdmin) ensureUserManagementCard();
   ensureGuideView();
   ensureTrashView();
@@ -923,6 +1010,12 @@ function setView(view, pushState = true) {
   }
 }
 
+function closeEditorToolbarMenus() {
+  document.activeElement?.blur();
+  document.querySelectorAll('.tox-toolbar__overflow--open').forEach(menu => menu.classList.remove('tox-toolbar__overflow--open'));
+  document.querySelectorAll('.tox-tbtn[aria-expanded="true"]').forEach(button => button.setAttribute('aria-expanded', 'false'));
+}
+
 function showEditorScreen(screenId) {
   document.querySelectorAll('.app-view, .editor-page').forEach(element => element.classList.add('d-none'));
   document.getElementById(screenId).classList.remove('d-none');
@@ -938,7 +1031,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2"><button class="btn btn-sm btn-outline-secondary" data-print-document="${document.id}">PDF / stampa</button>${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento libero'}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${can('documents_pdf', 'download') ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -1112,7 +1205,7 @@ function saveInstitutionMember(type, event) { event.preventDefault(); const reco
 
 function endInstitutionMember(type, memberId) { const record = institutionRecords(type).find(item => item.id === window[`editing${type}Id`]); const member = record?.members.find(item => item.id === memberId); if (!record || !member || member.endDate || !confirm(`Registrare la cessazione di ${member.name}?`)) return; member.endDate = today(); record.updatedAt = new Date().toISOString(); writeStorage(STORAGE_KEYS[institutionConfigs[type].key], institutionRecords(type)); renderInstitutionMembers(type, record); renderInstitution(type); }
 
-function bindInstitutionEvents() { Object.keys(institutionConfigs).forEach(type => { document.getElementById(`${type}Form`).addEventListener('submit', event => saveInstitution(type, event)); document.getElementById(`${type}PersonForm`).addEventListener('submit', event => saveInstitutionMember(type, event)); document.getElementById(`${type}SettingsForm`).addEventListener('submit', event => { event.preventDefault(); const roles = [...document.querySelectorAll(`#${type}SettingsForm .institution-role-setting`)].map(row => ({ id: row.dataset.roleId, name: row.querySelector('.institution-role-name').value.trim(), limit: Math.max(0, Number.parseInt(row.querySelector('.institution-role-limit').value, 10) || 0) })).filter(role => role.name); if (!roles.length || new Set(roles.map(role => role.name.toLowerCase())).size !== roles.length) { showToast('Inserisci nomi di ruolo univoci.'); return; } state[institutionConfigs[type].settingsKey].roles = roles; writeStorage(STORAGE_KEYS[institutionConfigs[type].settingsKey], state[institutionConfigs[type].settingsKey]); renderInstitutionSettings(type); renderInstitution(type); showToast('Configurazione salvata.'); }); document.getElementById(`${type}SettingsForm`).addEventListener('click', event => { const add = event.target.closest('[data-add-institution-role]'); if (add) { const row = document.createElement('div'); row.className = 'row g-2 align-items-end institution-role-setting'; row.dataset.roleId = crypto.randomUUID(); row.innerHTML = '<div class="col"><label class="form-label">Nome ruolo</label><input class="form-control institution-role-name" placeholder="Es. Sottosegretario" required></div><div class="col-auto"><label class="form-label">Numero</label><input class="form-control institution-role-limit" type="number" min="0" value="1" required></div><div class="col-auto"><button type="button" class="btn btn-outline-danger" data-remove-institution-role="'+type+'">Rimuovi</button></div>'; document.querySelector(`#${type}SettingsForm > .vstack`).appendChild(row); row.querySelector('input').focus(); return; } const remove = event.target.closest('[data-remove-institution-role]'); if (remove) remove.closest('.institution-role-setting').remove(); }); }); document.addEventListener('click', event => { const newInstitution = event.target.closest('[data-new-institution]'); if (newInstitution) openInstitutionEditor(newInstitution.dataset.newInstitution); const openInstitution = event.target.closest('[data-open-institution]'); if (openInstitution) openInstitutionEditor(openInstitution.dataset.openInstitution, openInstitution.dataset.recordId); const closeInstitution = event.target.closest('[data-close-institution]'); if (closeInstitution) { document.getElementById(`${closeInstitution.dataset.closeInstitution}Editor`).classList.add('d-none'); setView(institutionConfigs[closeInstitution.dataset.closeInstitution].view); } const addMember = event.target.closest('[data-add-institution-member]'); if (addMember) openInstitutionMember(addMember.dataset.addInstitutionMember, '', addMember.dataset.roleId || ''); const editMember = event.target.closest('[data-edit-institution-member]'); if (editMember) openInstitutionMember(editMember.dataset.editInstitutionMember, editMember.dataset.memberId); const endMember = event.target.closest('[data-end-institution-member]'); if (endMember) endInstitutionMember(endMember.dataset.endInstitutionMember, endMember.dataset.memberId); }); }
+function bindInstitutionEvents() { Object.keys(institutionConfigs).forEach(type => { document.getElementById(`${type}Form`).addEventListener('submit', event => saveInstitution(type, event)); document.getElementById(`${type}PersonForm`).addEventListener('submit', event => saveInstitutionMember(type, event)); document.getElementById(`${type}SettingsForm`).addEventListener('submit', event => { event.preventDefault(); const roles = [...document.querySelectorAll(`#${type}SettingsForm .institution-role-setting`)].map(row => ({ id: row.dataset.roleId, name: row.querySelector('.institution-role-name').value.trim(), limit: Math.max(0, Number.parseInt(row.querySelector('.institution-role-limit').value, 10) || 0) })).filter(role => role.name); if (!roles.length || new Set(roles.map(role => role.name.toLowerCase())).size !== roles.length) { showToast('Inserisci nomi di ruolo univoci.'); return; } state[institutionConfigs[type].settingsKey].roles = roles; writeStorage(STORAGE_KEYS[institutionConfigs[type].settingsKey], state[institutionConfigs[type].settingsKey]); renderInstitutionSettings(type); renderInstitution(type); showToast('Configurazione salvata.'); }); document.getElementById(`${type}SettingsForm`).addEventListener('click', event => { const add = event.target.closest('[data-add-institution-role]'); if (add) { const row = document.createElement('div'); row.className = 'row g-2 align-items-end institution-role-setting'; row.dataset.roleId = crypto.randomUUID(); row.innerHTML = '<div class="col"><label class="form-label">Nome ruolo</label><input class="form-control institution-role-name" placeholder="Es. Sottosegretario" required></div><div class="col-auto"><label class="form-label">Numero</label><input class="form-control institution-role-limit" type="number" min="0" value="1" required></div><div class="col-auto"><button type="button" class="btn btn-outline-danger" data-remove-institution-role="' + type + '">Rimuovi</button></div>'; document.querySelector(`#${type}SettingsForm > .vstack`).appendChild(row); row.querySelector('input').focus(); return; } const remove = event.target.closest('[data-remove-institution-role]'); if (remove) remove.closest('.institution-role-setting').remove(); }); }); document.addEventListener('click', event => { const newInstitution = event.target.closest('[data-new-institution]'); if (newInstitution) openInstitutionEditor(newInstitution.dataset.newInstitution); const openInstitution = event.target.closest('[data-open-institution]'); if (openInstitution) openInstitutionEditor(openInstitution.dataset.openInstitution, openInstitution.dataset.recordId); const closeInstitution = event.target.closest('[data-close-institution]'); if (closeInstitution) { document.getElementById(`${closeInstitution.dataset.closeInstitution}Editor`).classList.add('d-none'); setView(institutionConfigs[closeInstitution.dataset.closeInstitution].view); } const addMember = event.target.closest('[data-add-institution-member]'); if (addMember) openInstitutionMember(addMember.dataset.addInstitutionMember, '', addMember.dataset.roleId || ''); const editMember = event.target.closest('[data-edit-institution-member]'); if (editMember) openInstitutionMember(editMember.dataset.editInstitutionMember, editMember.dataset.memberId); const endMember = event.target.closest('[data-end-institution-member]'); if (endMember) endInstitutionMember(endMember.dataset.endInstitutionMember, endMember.dataset.memberId); }); }
 
 function renderParliaments() {
   const grid = document.getElementById('parliamentGrid');
@@ -1351,7 +1444,7 @@ function openPartyStatuteEditor(partyId) {
   const party = state.parties.find(item => item.id === partyId);
   if (!party) return;
   editingPartyId = party.id;
-  document.getElementById('partyStatuteEditorContent').innerHTML = party.statute || ''; resetEditorHistory(document.getElementById('partyStatuteEditorContent'));
+  setRichEditorContent('partyStatuteEditorContent', party.statute || '');
   document.getElementById('partyStatutePartyName').textContent = party.name;
   document.getElementById('partyStatuteSubtitle').textContent = `${statusLabel(party.status)} · documento unico del partito`;
   const status = document.getElementById('partyStatuteStatus');
@@ -1375,7 +1468,7 @@ function openCompanyRegulationEditor(companyId) {
   const company = state.companies.find(item => item.id === companyId);
   if (!company) return;
   editingCompanyId = company.id;
-  document.getElementById('companyRegulationEditorContent').innerHTML = company.regulation || ''; resetEditorHistory(document.getElementById('companyRegulationEditorContent'));
+  setRichEditorContent('companyRegulationEditorContent', company.regulation || '');
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
   document.getElementById('companyRegulationSubtitle').textContent = 'Documento unico dell’azienda';
   showEditorScreen('companyRegulationEditor');
@@ -1383,7 +1476,7 @@ function openCompanyRegulationEditor(companyId) {
 
 function closeCompanyRegulationEditor() {
   editingCompanyId = null;
-  document.getElementById('companyRegulationEditorContent').innerHTML = '';
+  setRichEditorContent('companyRegulationEditorContent', '');
   setView('companies');
 }
 
@@ -1441,7 +1534,7 @@ function saveCompany(event) {
 
 function closePartyStatuteEditor() {
   editingPartyId = null;
-  document.getElementById('partyStatuteEditorContent').innerHTML = '';
+  setRichEditorContent('partyStatuteEditorContent', '');
   setView('parties');
 }
 
@@ -1497,7 +1590,7 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
   document.getElementById('documentNumber').value = nextNumber(template?.category || document.getElementById('documentCategory').value);
   document.getElementById('odgStatus').value = 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(template?.body || ''); resetEditorHistory(document.getElementById('documentBodyEditor'));
+  setRichEditorContent('documentBodyEditor', template?.body || '');
   applyPageMargins();
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Nuovo documento';
@@ -1519,7 +1612,7 @@ function openDocumentEditor(documentId) {
   document.getElementById('documentNumber').value = documentRecord.number;
   document.getElementById('odgStatus').value = documentRecord.status || 'da valutare';
   syncOdgStatusField();
-  document.getElementById('documentBodyEditor').innerHTML = sanitizeRichHtml(documentRecord.body); resetEditorHistory(document.getElementById('documentBodyEditor'));
+  setRichEditorContent('documentBodyEditor', documentRecord.body);
   applyPageMargins();
   syncEditorValue('documentBodyEditor', 'documentBody');
   document.querySelector('#documentModal .modal-title').textContent = 'Modifica documento';
@@ -1573,7 +1666,7 @@ function openTemplateEditor(templateId = '') {
   refreshCategoryOptions();
   document.getElementById('templateName').value = template?.name || '';
   document.getElementById('templateCategory').value = template?.category || categoryNames()[0];
-  document.getElementById('templateBodyEditor').innerHTML = template?.body || ''; resetEditorHistory(document.getElementById('templateBodyEditor'));
+  setRichEditorContent('templateBodyEditor', template?.body || '');
   applyPageMargins();
   document.querySelector('#templateModal .modal-title').textContent = template ? 'Modifica template' : 'Nuovo template';
   document.querySelector('#templateModal button[type="submit"]').textContent = template ? 'Salva modifiche' : 'Salva template';
@@ -1584,95 +1677,140 @@ function printDocument(id) {
   const documentRecord = state.documents.find(item => item.id === id); if (!documentRecord) return;
   const margins = normalizePageMargins(state.pageMargins);
   const printWindow = window.open('', '_blank');
-  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script@5.1.1/400.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/400.css"><style>@page{size:A4;margin:${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm}body{margin:0;color:#17202a;font-family:Georgia,'Times New Roman',serif;font-size:12pt}h1{font-size:28px}.body{line-height:1.7}.body img{max-width:100%;max-height:220px;display:block;margin:0 0 20px}.body table{max-width:100%;border-collapse:collapse}.body td{border:1px solid #aeb7bf;padding:.5rem}</style></head><body><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" alt="">` : ''}<div class="body">${sanitizeRichHtml(documentRecord.body)}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+  const parser = new DOMParser();
+  const printableBody = parser.parseFromString(sanitizeRichHtml(documentRecord.body), 'text/html');
+  printableBody.querySelectorAll('.page-break').forEach(pageBreak => {
+    pageBreak.textContent = '';
+    pageBreak.style.cssText = 'page-break-before: always; break-before: page; height: 0; min-height: 0; margin: 0; border: 0; background: none; color: transparent;';
+  });
+  printWindow.document.write(`<html lang="it"><head><title>${escapeHtml(documentRecord.title)}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script@5.1.1/400.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/raleway@5.1.1/400.css"><style>@page{size:A4;margin:${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm}body{margin:0;color:#17202a;font-family:Georgia,'Times New Roman',serif;font-size:12pt}h1{font-size:28px}.body{line-height:1.7}.body img{max-width:100%;max-height:220px;display:block;margin:0 0 20px}.body table{max-width:100%;border-collapse:collapse}.body td{border:1px solid #aeb7bf;padding:.5rem}.body .page-break::before{content:none!important}</style></head><body><h1>${escapeHtml(documentRecord.title)}</h1>${documentRecord.image ? `<img src="${escapeHtml(documentRecord.image)}" alt="">` : ''}<div class="body">${printableBody.body.innerHTML}</div><script>window.onload=()=>window.print()<\/script></body></html>`);
   printWindow.document.close();
+}
+
+function pxToMm(value = 0) {
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, numeric * 25.4 / 96);
+}
+
+function normalizeEditorImageGeometryForPdf(body = '') {
+  const parser = new DOMParser();
+  const template = parser.parseFromString(body, 'text/html');
+  template.querySelectorAll('img.editor-image').forEach(image => {
+    const left = Number.parseFloat(image.style.left || '0');
+    const top = Number.parseFloat(image.style.top || '0');
+    const ratio = Number.parseFloat(image.style.width || image.getAttribute('width') || '0');
+    const width = Number.isFinite(ratio) ? ratio : 0;
+    if (image.style.position) image.style.position = 'absolute';
+    image.style.left = `${pxToMm(left)}mm`;
+    image.style.top = `${pxToMm(top)}mm`;
+    image.style.width = `${pxToMm(width)}mm`;
+    image.style.height = 'auto';
+    image.style.maxWidth = '100%';
+    image.style.display = 'block';
+    image.style.margin = '0';
+  });
+  return template.body.innerHTML;
 }
 
 async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = '' } = {}) {
   if (!can('documents_pdf', 'download')) { showToast('Non hai il permesso di scaricare PDF.'); return; }
   if (typeof window.html2pdf !== 'function') { showToast('La libreria PDF non è disponibile.'); return; }
-  const margins = normalizePageMargins(state.pageMargins);
-  const container = document.createElement('article');
-  container.className = 'pdf-export-source';
-  container.style.cssText = [
-    'width:210mm',
-    'box-sizing:border-box',
-    'position:relative',
-    'background:#fff',
-    'color:#17202a',
-    'font-family:Georgia,"Times New Roman",serif',
-    'font-size:12pt',
-    'line-height:1.55',
-    'min-width:0',
-    'overflow:visible',
-    'overflow-wrap:break-word',
-    'word-break:normal',
-    'margin:0',
-    'padding:0'
-  ].join(';');
 
-  // html2pdf riceve una pagina larga esattamente 210 mm e senza margini esterni.
-  // I margini vengono applicati una sola volta al foglio interno: questo evita
-  // il taglio a destra causato dal precedente doppio calcolo della larghezza.
-  const page = document.createElement('div');
-  page.className = 'pdf-export-page';
-  page.style.cssText = [
-    'position:relative',
-    'width:210mm',
-    'min-height:297mm',
-    'box-sizing:border-box',
-    `padding:${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm`,
-    'overflow:visible',
-    'isolation:isolate'
+  const margins = normalizePageMargins(state.pageMargins);
+
+  // 1. AREA STAMPABILE CON PICCOLA TOLLERANZA ANTITAGLIO
+  // Sottraiamo i margini utente e aggiungiamo un cuscinetto di sicurezza di 4mm per evitare il taglio millimetrico a destra.
+  const printableWidthMm = 210 - (Number(margins.left) + Number(margins.right)) - 6;
+
+  const source = document.createElement('article');
+  source.className = 'pdf-export-source';
+  source.style.cssText = [
+    `width: ${printableWidthMm}mm`, 
+    'box-sizing: border-box',
+    'position: relative',
+    'background: #fff',
+    'color: #17202a',
+    'font-family: Georgia, "Times New Roman", serif',
+    'font-size: 12pt',
+    'line-height: 1.55',
+    'overflow: visible',
+    'margin: 0',
+    'padding: 0'
   ].join(';');
 
   const content = document.createElement('div');
   content.className = 'pdf-export-content';
-  content.style.cssText = 'position:relative;z-index:1;width:100%;min-width:0;max-width:none;box-sizing:border-box;overflow:visible;overflow-wrap:break-word;word-break:normal;';
-  content.innerHTML = sanitizeRichHtml(body);
+  content.style.cssText = [
+    'position: relative',
+    'z-index: 1',
+    'width: 100%',
+    'box-sizing: border-box',
+    'overflow: visible'
+  ].join(';');
 
-  // Le immagini mobili dell’editor vengono rese come sfondo del foglio: il
-  // testo conserva quindi flusso e posizione anche nella conversione PDF.
-  const editorImages = [...content.querySelectorAll('.editor-image')].map(editorImage => ({
-    src: editorImage.getAttribute('src') || '',
-    width: Number.parseFloat(editorImage.style.width) || 0,
-    left: Number.parseFloat(editorImage.style.left) || 16,
-    top: Number.parseFloat(editorImage.style.top) || 16
-  }));
-  content.querySelectorAll('.editor-image').forEach(image => image.remove());
+  content.innerHTML = body;
 
-  // Include anche l’eventuale immagine ereditata dagli archivi precedenti,
-  // evitando il duplicato se è stata già ricollocata nel corpo dell’editor.
-  const backgroundImages = image ? [{ src: image, width: 0, left: 0, top: 0 }, ...editorImages] : editorImages;
-  const renderedSources = new Set();
-  backgroundImages.forEach(editorImage => {
-    if (!editorImage.src || renderedSources.has(editorImage.src)) return;
-    renderedSources.add(editorImage.src);
-    const background = document.createElement('img');
-    background.className = 'pdf-export-background';
-    background.src = editorImage.src;
-    background.alt = '';
-    const pxToMm = value => value * 25.4 / 96;
-    const widthMm = editorImage.width ? pxToMm(editorImage.width) : 0;
-    const leftMm = pxToMm(editorImage.left || 0);
-    const topMm = pxToMm(editorImage.top || 0);
-    background.style.cssText = [
-      'position:absolute',
-      'z-index:0',
-      `left:${margins.left + leftMm}mm`,
-      `top:${margins.top + topMm}mm`,
-      widthMm ? `width:${widthMm}mm` : 'width:auto',
-      'height:auto',
-      'max-width:none',
-      'display:block',
-      'pointer-events:none'
-    ].join(';');
-    page.appendChild(background);
+  content.querySelectorAll('.page-break').forEach(pageBreak => {
+    pageBreak.textContent = '';
+    pageBreak.style.cssText = 'page-break-before: always; break-before: page; height: 0; min-height: 0; margin: 0; border: 0; background: none; color: transparent;';
   });
 
-  page.appendChild(content);
-  container.appendChild(page);
-  document.body.appendChild(container);
+  // Pulizia elementi di interfaccia
+  content.querySelectorAll('button, .btn, a, input[type="button"], input[type="submit"], [data-print-document], [data-download-pdf], .print-button').forEach(item => item.remove());
+
+  // Gestione immagine/intestazione
+  if (image && !body.includes(image)) { 
+    const docImage = document.createElement('img');
+    docImage.className = 'pdf-export-background';
+    docImage.src = image;
+    docImage.alt = '';
+    docImage.style.cssText = [
+      'max-width: 100%',
+      'height: auto',
+      'display: block',
+      'margin: 0 auto 20px'
+    ].join(';');
+    content.insertBefore(docImage, content.firstChild);
+  }
+
+  // Preservazione millimetrica di posizioni e dimensioni delle immagini dell'editor
+  content.querySelectorAll('img').forEach(img => {
+    img.style.boxSizing = 'border-box';
+    if (!img.style.maxWidth) img.style.maxWidth = '100%';
+    
+    if (img.hasAttribute('width') && !img.style.width) {
+      img.style.width = img.getAttribute('width') + 'px';
+    }
+    if (img.hasAttribute('height') && !img.style.height) {
+      img.style.height = img.getAttribute('height') + 'px';
+    }
+  });
+
+  // 2. BLINDATURA DI SICUREZZA PER TUTTI GLI ELEMENTI INTERNI
+  content.querySelectorAll('*').forEach(el => {
+    el.style.boxSizing = 'border-box';
+    el.style.overflowWrap = 'break-word';
+    el.style.wordBreak = 'normal'; // Evita che le lettere vengano tagliate singolarmente
+    
+    // Se un elemento nidificato ha una larghezza fissa in pixel ereditata dall'editor 
+    // che supera lo spazio del foglio, la limitiamo al 100% per farlo andare a capo
+    if (el.style.width && el.style.width.includes('px')) {
+      el.style.maxWidth = '100%';
+    }
+    
+    // REGOLA SALVAVITA PER IL TESTO ALLINEATO A DESTRA:
+    // Aggiungiamo un micro-padding destro solo agli elementi di testo allineati a destra o giustificati.
+    // Questo sposta le firme leggermente verso l'interno di qualche pixel, salvandole dal taglio della canvas.
+    const textAlign = window.getComputedStyle(el).textAlign;
+    if (textAlign === 'right' || textAlign === 'justify') {
+      el.style.paddingRight = '8px';
+    }
+  });
+
+  source.appendChild(content);
+  document.body.appendChild(source);
+
   try {
     if (document.fonts?.load) {
       await Promise.all([
@@ -1681,21 +1819,39 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
         document.fonts.load('16px "Pinyon Script"')
       ]).catch(() => undefined);
     }
-    await Promise.all([...container.querySelectorAll('img')].map(image => image.complete ? Promise.resolve() : new Promise(resolve => { image.onload = image.onerror = resolve; })));
+
+    // Attendi il rendering completo delle immagini
+    await Promise.all([...source.querySelectorAll('img')].map(img => {
+      if (img.complete) return Promise.resolve();
+      return new Promise(resolve => { img.onload = img.onerror = resolve; });
+    }));
+
+    // 3. APPLICAZIONE DEI MARGINI E COMPENSAZIONE LATERALE
     await window.html2pdf().set({
-      margin: 0,
+      // Aggiungiamo +2mm di sicurezza ai margini del PDF per compensare la riduzione di printableWidthMm
+      margin: [margins.top, Number(margins.left) + 2, margins.bottom, Number(margins.right) + 2], 
       filename: String(filename || 'documento.pdf').replace(/[\\/:*?"<>|]+/g, '-'),
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
-      pagebreak: { mode: ['css', 'legacy'], before: ['.page-break'], avoid: ['table', 'blockquote', 'tr'] },
+      html2canvas: { 
+        scale: 2, 
+        useCORS: true, 
+        backgroundColor: '#ffffff', 
+        logging: false
+      },
+      pagebreak: { 
+        mode: ['css', 'legacy'], 
+        before: ['.page-break'], 
+        avoid: ['table', 'blockquote', 'tr', 'img', 'p'] // Esteso anche ai paragrafi <p> per evitare tagli orizzontali
+      },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(container).save();
+    }).from(source).save();
+
     showToast('PDF scaricato.');
   } catch (error) {
     showToast('Impossibile generare il PDF.');
     console.error(error);
   } finally {
-    container.remove();
+    source.remove(); 
   }
 }
 
@@ -1827,40 +1983,11 @@ async function initialize() {
   document.getElementById('documentTemplate').addEventListener('change', event => openDocumentModal(event.target.value));
   document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); });
   document.querySelectorAll('#documentModal [data-bs-dismiss="modal"], #templateModal [data-bs-dismiss="modal"]').forEach(button => { button.removeAttribute('data-bs-dismiss'); button.addEventListener('click', closeEditorScreen); });
-  enhanceEditorToolbars();
+  initTinyMceRichEditors();
   document.querySelectorAll('.rich-editor').forEach(editor => {
-    const captureSelection = () => { saveEditorSelection(editor); syncFontSizeControl(editor); };
-    editorHistory(editor); makeEditorImagesDraggable(editor);
-    editor.addEventListener('input', () => recordEditorChange(editor));
-    editor.addEventListener('keydown', event => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      const key = event.key.toLowerCase();
-      if (key === 'z') { event.preventDefault(); event.shiftKey ? redoEditorChange(editor) : undoEditorChange(editor); }
-      else if (key === 'y') { event.preventDefault(); redoEditorChange(editor); }
-    });
-    editor.addEventListener('keydown', event => {
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedEditorImage && editor.contains(selectedEditorImage)) {
-        event.preventDefault(); selectedEditorImage.remove(); selectedEditorImage = null; recordEditorChange(editor);
-      }
-    });
-    editor.addEventListener('keyup', captureSelection);
-    editor.addEventListener('mouseup', captureSelection);
-    editor.addEventListener('focus', captureSelection);
-  });
-  document.querySelectorAll('[data-editor-command]').forEach(control => {
-    control.addEventListener('mousedown', event => { if (control.tagName !== 'SELECT' && control.tagName !== 'INPUT' && control.type !== 'color') event.preventDefault(); });
-    const applyCommand = () => {
-      const command = control.dataset.editorCommand;
-      if (command === 'fontSizePx') return applyPixelFontSize(control);
-      if (command === 'insertTable') return insertTable(editorFromControl(control));
-      if (command === 'insertImage') return insertImage(editorFromControl(control), 'cursor');
-      if (command === 'insertImageAbove') return insertImage(editorFromControl(control), 'above');
-      if (command === 'insertImageBelow') return insertImage(editorFromControl(control), 'below');
-      if (command === 'deleteImage') return deleteSelectedImage(control);
-      if (command === 'createLink') { const url = prompt('Incolla l’indirizzo del collegamento'); if (url) executeEditorCommand(control, url); return; }
-      executeEditorCommand(control, control.type === 'color' ? control.value : control.value || null);
-    };
-    control.addEventListener(control.tagName === 'SELECT' || control.type === 'color' || control.dataset.editorCommand === 'fontSizePx' ? 'change' : 'click', applyCommand);
+    editor.style.border = '1px solid var(--line)';
+    editor.style.borderRadius = '.375rem';
+    editor.style.width = '100%';
   });
   document.addEventListener('click', event => { const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
   document.addEventListener('keydown', event => { const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
@@ -1873,19 +2000,19 @@ async function initialize() {
   refreshCategoryOptions();
   refreshDocumentTemplateOptions();
   populateFontMenus();
-  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') { 
-    if (!currentUser) { 
-      const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin); 
-      currentUser = localUser ? localUserPayload(localUser) : null; 
-    } 
-    document.getElementById('loginView').classList.add('d-none'); 
-    document.getElementById('appView').classList.remove('d-none'); 
+  if (localStorage.getItem(STORAGE_KEYS.session) === 'active') {
+    if (!currentUser) {
+      const localUser = localAuth.users.find(user => user.id === localStorage.getItem('cz_local_user')) || localAuth.users.find(user => user.isPrimaryAdmin);
+      currentUser = localUser ? localUserPayload(localUser) : null;
+    }
+    document.getElementById('loginView').classList.add('d-none');
+    document.getElementById('appView').classList.remove('d-none');
     const initialView = window.location.hash.replace('#', '') || 'dashboard';
-    setView(initialView, false); 
+    setView(initialView, false);
   } else {
     document.getElementById('loginView').classList.remove('d-none');
   }
-  
+
   const loader = document.getElementById('loadingOverlay');
   if (loader) loader.classList.add('d-none');
 

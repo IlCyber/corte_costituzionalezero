@@ -391,7 +391,23 @@ if ($action === 'admin_data' && $method === 'GET') {
     $registrations = $pdo->query("SELECT id, email, display_name, created_at FROM registration_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
     $resets = $pdo->query("SELECT id, email, created_at FROM password_reset_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
     $logs = $pdo->query('SELECT l.id, l.event_type, l.severity, l.ip_address, l.details, l.created_at, u.username FROM security_logs l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.created_at DESC LIMIT 200')->fetchAll();
-    respond(['users' => array_map(fn (array $user): array => userPayload($user, $pdo), $users), 'deletedUsers' => array_map(fn (array $user): array => userPayload($user, $pdo), $deletedUsers), 'roles' => $roles, 'permissions' => $permissions, 'rolePermissions' => $rolePermissions, 'registrations' => $registrations, 'resets' => $resets, 'logs' => $logs]);
+
+    $userPayloads = function (array $rows) use ($pdo): array {
+        return array_map(function (array $user) use ($pdo): array {
+            return userPayload($user, $pdo);
+        }, $rows);
+    };
+
+    respond([
+        'users' => $userPayloads($users),
+        'deletedUsers' => $userPayloads($deletedUsers),
+        'roles' => $roles,
+        'permissions' => $permissions,
+        'rolePermissions' => $rolePermissions,
+        'registrations' => $registrations,
+        'resets' => $resets,
+        'logs' => $logs,
+    ]);
 }
 
 if ($action === 'create_role' && $method === 'POST') {
@@ -580,7 +596,9 @@ if ($action === 'restore_trash_item' && $method === 'POST') {
     if (isset($config['member_key'])) {
         $parentIndex = stateItemIndex($items, (string) ($entry['parentId'] ?? ''));
         if ($parentIndex < 0) respond(['error' => 'Impossibile ripristinare il componente: ripristina prima la relativa scheda.'], 409);
-        $items[$parentIndex][$config['member_key']] ??= [];
+        if (!isset($items[$parentIndex][$config['member_key']]) || !is_array($items[$parentIndex][$config['member_key']])) {
+            $items[$parentIndex][$config['member_key']] = [];
+        }
         if (stateItemIndex($items[$parentIndex][$config['member_key']], $dataId) >= 0) respond(['error' => 'Elemento già presente nella scheda di origine.'], 409);
         $position = min(max(0, (int) ($entry['originalIndex'] ?? 0)), count($items[$parentIndex][$config['member_key']]));
         array_splice($items[$parentIndex][$config['member_key']], $position, 0, [$entry['data']]);

@@ -17,6 +17,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pinyon+Script&display=swap">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/tinymce@7/tinymce.min.js"></script>
 </head>
 
 <body>
@@ -101,7 +102,7 @@
       </div>
     </nav>
 
-    <div class="container-fluid px-4 px-xl-5 py-4 py-lg-5">
+    <div class="container-fluid px-4 px-xl-5 py-4 py-lg-5" style="padding-top: 0rem !important;">
       <section id="dashboardView" class="app-view">
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
           <div>
@@ -387,52 +388,8 @@
                 <div class="form-text">Puoi usare 01, 00001 o qualsiasi altra numerazione a cifre.</div>
               </div>
               <div class="col-12"><label class="form-label">Contenuto</label>
-                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione contenuto"><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="bold"><strong>B</strong></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="underline"><u>U</u></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="justifyCenter">Centro</button><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="insertUnorderedList">Elenco</button><select
-                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
-                    <option value="Georgia">Georgia</option>
-                    <option value="Raleway">Raleway</option>
-                    <option value="Pinyon Script">Pinyon Script</option>
-                    <option value="Arial">Arial</option>
-                    <option value="Verdana">Verdana</option>
-                  </select>
-                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
-                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
-                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
-                      data-editor-command="fontSizePx">
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                      <option value="11">11</option>
-                      <option value="12">12</option>
-                      <option value="14">14</option>
-                      <option value="16">16</option>
-                      <option value="18">18</option>
-                      <option value="20">20</option>
-                      <option value="24">24</option>
-                      <option value="28">28</option>
-                      <option value="32">32</option>
-                      <option value="36">36</option>
-                      <option value="42">42</option>
-                      <option value="48">48</option>
-                      <option value="56">56</option>
-                      <option value="64">64</option>
-                      <option value="72">72</option>
-                      <option value="84">84</option>
-                      <option value="96">96</option>
-                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
-                </div>
-                <div id="documentBodyEditor" class="rich-editor" contenteditable="true"
-                  data-placeholder="Scrivi il contenuto del documento..."></div><textarea id="documentBody"
+                <textarea id="documentBodyEditor" class="rich-editor form-control tinymce-rich-editor"
+                  data-placeholder="Scrivi il contenuto del documento..."></textarea><textarea id="documentBody"
                   class="d-none"></textarea>
               </div>
                 <div class="col-12" style="display: none"><label for="documentImage" class="form-label">Immagine predefinita</label><input
@@ -466,52 +423,8 @@
               <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
                   id="templateCategory" class="form-select" required></select></div>
               <div class="col-12"><label class="form-label">Struttura del contenuto</label>
-                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione template"><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="bold"><strong>B</strong></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="underline"><u>U</u></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="justifyCenter">Centro</button><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="insertUnorderedList">Elenco</button><select
-                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
-                    <option value="Georgia">Georgia</option>
-                    <option value="Raleway">Raleway</option>
-                    <option value="Pinyon Script">Pinyon Script</option>
-                    <option value="Arial">Arial</option>
-                    <option value="Verdana">Verdana</option>
-                  </select>
-                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
-                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
-                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
-                      data-editor-command="fontSizePx">
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                      <option value="11">11</option>
-                      <option value="12">12</option>
-                      <option value="14">14</option>
-                      <option value="16">16</option>
-                      <option value="18">18</option>
-                      <option value="20">20</option>
-                      <option value="24">24</option>
-                      <option value="28">28</option>
-                      <option value="32">32</option>
-                      <option value="36">36</option>
-                      <option value="42">42</option>
-                      <option value="48">48</option>
-                      <option value="56">56</option>
-                      <option value="64">64</option>
-                      <option value="72">72</option>
-                      <option value="84">84</option>
-                      <option value="96">96</option>
-                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
-                </div>
-                <div id="templateBodyEditor" class="rich-editor" contenteditable="true"
-                  data-placeholder="Inserisci una traccia riutilizzabile..."></div><textarea id="templateBody"
+                <textarea id="templateBodyEditor" class="rich-editor form-control tinymce-rich-editor"
+                  data-placeholder="Inserisci una traccia riutilizzabile..."></textarea><textarea id="templateBody"
                   class="d-none"></textarea>
               </div>
               <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine predefinita</label><input
@@ -587,50 +500,8 @@
                 <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label>
-                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione Statuto"><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="bold"><strong>B</strong></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="underline"><u>U</u></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="justifyCenter">Centro</button><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="insertUnorderedList">Elenco</button><select
-                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
-                    <option value="Georgia">Georgia</option>
-                    <option value="Raleway">Raleway</option>
-                    <option value="Pinyon Script">Pinyon Script</option>
-                  </select>
-                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
-                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
-                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
-                      data-editor-command="fontSizePx">
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                      <option value="11">11</option>
-                      <option value="12">12</option>
-                      <option value="14">14</option>
-                      <option value="16">16</option>
-                      <option value="18">18</option>
-                      <option value="20">20</option>
-                      <option value="24">24</option>
-                      <option value="28">28</option>
-                      <option value="32">32</option>
-                      <option value="36">36</option>
-                      <option value="42">42</option>
-                      <option value="48">48</option>
-                      <option value="56">56</option>
-                      <option value="64">64</option>
-                      <option value="72">72</option>
-                      <option value="84">84</option>
-                      <option value="96">96</option>
-                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
-                </div>
-                <div class="rich-editor" id="partyStatuteEditorContent" contenteditable="true"
-                  data-placeholder="Scrivi lo Statuto del partito..."></div><input type="hidden" id="partyStatuteValue">
+                <textarea class="rich-editor form-control tinymce-rich-editor" id="partyStatuteEditorContent"
+                  data-placeholder="Scrivi lo Statuto del partito..."></textarea><input type="hidden" id="partyStatuteValue">
               </section>
             </div>
           </div>
@@ -685,50 +556,8 @@
                 <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label>
-                <div class="editor-toolbar" role="toolbar" aria-label="Formattazione Regolamento"><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="bold"><strong>B</strong></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="italic"><em>I</em></button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="underline"><u>U</u></button><button type="button"
-                    class="btn btn-sm btn-outline-secondary" data-editor-command="justifyLeft">Sinistra</button><button
-                    type="button" class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="justifyCenter">Centro</button><button type="button"
-                    class="btn btn-sm btn-outline-secondary"
-                    data-editor-command="insertUnorderedList">Elenco</button><select
-                    class="form-select form-select-sm editor-select" data-editor-command="fontName" aria-label="Font">
-                    <option value="Georgia">Georgia</option>
-                    <option value="Raleway">Raleway</option>
-                    <option value="Pinyon Script">Pinyon Script</option>
-                  </select>
-                  <div class="editor-size-control" role="group" aria-label="Grandezza testo"><span
-                      class="editor-size-label">Dim.</span><select class="form-select form-select-sm editor-size"
-                      aria-label="Grandezza testo in pixel" title="Grandezza testo in pixel"
-                      data-editor-command="fontSizePx">
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                      <option value="11">11</option>
-                      <option value="12">12</option>
-                      <option value="14">14</option>
-                      <option value="16">16</option>
-                      <option value="18">18</option>
-                      <option value="20">20</option>
-                      <option value="24">24</option>
-                      <option value="28">28</option>
-                      <option value="32">32</option>
-                      <option value="36">36</option>
-                      <option value="42">42</option>
-                      <option value="48">48</option>
-                      <option value="56">56</option>
-                      <option value="64">64</option>
-                      <option value="72">72</option>
-                      <option value="84">84</option>
-                      <option value="96">96</option>
-                    </select><span class="editor-size-unit" aria-hidden="true">px</span></div>
-                </div>
-                <div class="rich-editor" id="companyRegulationEditorContent" contenteditable="true"
-                  data-placeholder="Scrivi il Regolamento dell’azienda..."></div><input type="hidden"
+                <textarea class="rich-editor form-control tinymce-rich-editor" id="companyRegulationEditorContent"
+                  data-placeholder="Scrivi il Regolamento dell’azienda..."></textarea><input type="hidden"
                   id="companyRegulationValue">
               </section>
             </div>

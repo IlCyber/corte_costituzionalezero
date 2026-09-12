@@ -1,8 +1,3 @@
-@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-400.css');
-@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-500.css');
-@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-600.css');
-@import url('https://cdn.jsdelivr.net/fontsource/fonts/raleway@latest/latin-700.css');
-@import url('https://cdn.jsdelivr.net/npm/@fontsource/pinyon-script/400.css');
 @font-face { font-family: 'Pinyon Script'; font-style: normal; font-weight: 400; src: url('fonts/PinyonScript-Regular.ttf') format('truetype'); font-display: swap; }
 
 :root {
@@ -102,6 +97,15 @@ img { max-width: 100%; height: auto; }
 #companyRegulationEditor .modal-body > .row { display: grid; grid-template-columns: 22rem minmax(0, 1fr); gap: 0; margin: 0; align-items: start; background: linear-gradient(90deg, #f4f6f7 0 22rem, #e9edf1 22rem 100%); }
 #companyRegulationEditor .modal-footer { background: #f7f8f9; border: 1px solid var(--line); border-top: 0; padding: 1rem 1.25rem; }
 #companyRegulationEditor .rich-editor { display: block; }
+#documentModal .modal-dialog { max-width: min(1800px, calc(100vw - 2rem)); }
+#documentModal .modal-body { padding: 0; background: #eef1f3; border: 1px solid var(--line); box-shadow: 0 .25rem .75rem rgba(23,32,42,.08); overflow: hidden; }
+#documentModal .modal-body > .row { display: grid; grid-template-columns: minmax(260px, 26rem) minmax(620px, 1fr); gap: 0; margin: 0; align-items: stretch; background: linear-gradient(90deg, #f4f6f7 0 26rem, #eef1f3 26rem 100%); min-height: min(760px, calc(100vh - 8rem)); }
+#documentModal .modal-body > .row > .document-sidebar { grid-column: 1; background: #f8f9fa; border-right: 1px solid var(--line); padding: 1.1rem; min-width: 0; }
+#documentModal .modal-body > .row > .document-sidebar > .col-12 { margin-bottom: .5rem; }
+#documentModal .modal-body > .row > .document-sidebar .form-label { font-size: .72rem; font-weight: 800; color: var(--muted); }
+#documentModal .modal-body > .row > .document-canvas { grid-column: 2; min-width: 0; background: #eef1f3; padding: 1rem; }
+#documentModal .modal-body > .row > .document-canvas .rich-editor { width: 210mm; max-width: 100%; min-height: 297mm; margin: 0 auto; padding: 12mm; }
+#documentModal .modal-footer { background: #f7f8f9; border-top: 1px solid var(--line); }
 .editor-page,
 .editor-page .modal-dialog,
 .editor-page .modal-content,
@@ -125,9 +129,18 @@ img { max-width: 100%; height: auto; }
 .rich-editor table.document-table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
 .rich-editor table.document-table td { min-width: 4rem; border: 1px solid #aeb7bf; padding: .5rem; }
 .rich-editor blockquote { margin: 1rem 0; padding: .75rem 1rem; border-left: .25rem solid var(--accent); background: #faf8f4; color: var(--muted); }
-.rich-editor { position: relative; overflow: hidden; width: min(100%, 21cm); min-height: max(29.7cm, calc(100vh - 18rem)); box-sizing: border-box; margin: 1.25rem auto 0; padding: 1.4cm 1.25cm; border: 1px solid #e2e6ea; background: #fff; box-shadow: 0 .35rem 1.25rem rgba(23,32,42,.12); font-size: 12pt; line-height: 1.65; outline: 0; }
+.page-break { page-break-before: always; min-height: 32px; height: 32px; line-height: 32px; border-top: 2px dashed var(--accent); color: var(--accent); font-family: 'Pinyon Script', 'Raleway', serif; font-size: 22px; letter-spacing: .04em; text-align: center; margin: 24px 0; background: repeating-linear-gradient(90deg, transparent, transparent 10px, rgba(166,64,45,.08) 10px, rgba(166,64,45,.08) 11px); position: relative; }
+.page-break::before { content: '↧ pagina successiva'; display: inline-block; padding: 0 1rem; background: #fffdfb; color: var(--accent); font-family: 'Pinyon Script', 'Raleway', serif; font-size: 22px; }
+.page-break-label { display: none; }
+.rich-editor { position: relative; overflow: hidden; width: min(100%, 21cm); min-height: max(29.7cm, calc(100vh - 18rem)); box-sizing: border-box; margin: 1.25rem auto 0; padding: 1.4cm 1.25cm; border: 1px solid #e2e6ea; background: repeating-linear-gradient(90deg, transparent 0, transparent 14px, rgba(166,64,45,.035) 14px, rgba(166,64,45,.035) 15px), #fffdfb; box-shadow: inset 0 0 0 1px rgba(166,64,45,.08), inset -6px 0 0 rgba(166,64,45,.06), inset 6px 0 0 rgba(166,64,45,.06), 0 .35rem 1.25rem rgba(23,32,42,.12); font-size: 12pt; line-height: 1.65; outline: 0; }
 .rich-editor:focus { border-color: #c66e59; box-shadow: 0 0 0 .2rem rgba(166, 64, 45, .14); }
 .rich-editor:empty::before { content: attr(data-placeholder); color: #9aa1a8; pointer-events: none; }
+.rich-editor::before, .rich-editor::after { content: ''; position: absolute; top: 0; bottom: 0; width: 2px; background: repeating-linear-gradient(180deg, var(--accent) 0 3px, transparent 3px 8px); opacity: .72; }
+.rich-editor::before { left: 0; }
+.rich-editor::after { right: 0; }
+.rich-editor::before, .rich-editor::after { content: ''; position: absolute; top: 0; bottom: 0; width: 2px; background: repeating-linear-gradient(180deg, var(--accent) 0 3px, transparent 3px 8px); opacity: .72; }
+.rich-editor::before { left: 0; }
+.rich-editor::after { right: 0; }
 .rich-editor ul, .rich-editor ol { padding-left: 1.5rem; }
 .rich-editor .editor-image { position: absolute; max-width: 100%; height: auto; display: block; margin: 0; cursor: grab; user-select: none; z-index: 0; }
 .rich-editor .editor-image:hover, .rich-editor .editor-image.is-selected { cursor: grab; }
@@ -212,6 +225,20 @@ img { max-width: 100%; height: auto; }
 #documentModal .document-canvas > .col-12 { width: auto; padding: 0; margin: 0; }
 #documentModal .document-canvas > .col-12 > .form-label { color: #68727d; font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 #documentModal .document-canvas .rich-editor { display: block; }
+#documentModal .document-sidebar { display: flex; flex-direction: column; gap: .75rem; }
+
+#documentModal .document-library-header,
+#documentModal .document-image-header { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+#documentModal .document-library-title,
+#documentModal .document-image-title { color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+#documentModal .document-library-list { display: flex; flex-direction: column; gap: .45rem; max-height: 12rem; overflow-y: auto; margin-top: .5rem; }
+#documentModal .document-library-item { width: 100%; border: 1px solid #dfe3e6; border-radius: .3rem; background: #f8f9fa; padding: .55rem .65rem; color: var(--ink); text-align: left; }
+#documentModal .document-library-item:hover { background: #eef3f4; border-color: var(--accent); }
+#documentModal .document-library-code { display: block; color: var(--muted); font-size: .68rem; font-weight: 700; }
+#documentModal .document-library-title { display: block; margin-top: .2rem; font-weight: 700; }
+#documentModal .document-library-meta { display: block; color: var(--muted); font-size: .72rem; margin-top: .2rem; }
+#documentModal .document-modal-fullscreen .modal-dialog { max-width: none !important; width: min(1800px, calc(100vw - 2rem)); }
+#documentModal.document-modal-fullscreen { max-width: none !important; }
 .editor-page#templateModal .modal-body { padding: 0; background: #e9edf1; overflow: hidden; }
 .editor-page#templateModal .modal-body,
 #partyStatuteEditor .modal-body,
@@ -236,6 +263,7 @@ img { max-width: 100%; height: auto; }
 .pdf-export-source table { width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
 .pdf-export-source td { border: 1px solid #aeb7bf; padding: .5rem; }
 .pdf-export-source img, .pdf-export-source table, .pdf-export-source blockquote { break-inside: avoid; page-break-inside: avoid; }
+.pdf-export-source .page-break::before { content: none !important; }
 .pdf-export-source p, .pdf-export-source li { break-inside: avoid; page-break-inside: avoid; }
 .pdf-export-source h1, .pdf-export-source h2, .pdf-export-source h3, .pdf-export-source h4 { break-after: avoid; page-break-after: avoid; }
 .modal-content { border: 0; border-radius: .4rem; }
