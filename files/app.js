@@ -473,6 +473,7 @@ const TRASH_ENTITY_CONFIG = {
   documents: { storageKey: 'documents', permission: 'documents', label: 'Documento' },
   templates: { storageKey: 'templates', permission: 'templates', label: 'Template' },
   parties: { storageKey: 'parties', permission: 'parties', label: 'Partito' },
+  coalitions: { storageKey: 'coalitions', permission: 'parties', label: 'Coalizione' },
   companies: { storageKey: 'companies', permission: 'companies', label: 'Azienda' },
   parliaments: { storageKey: 'parliaments', permission: 'parliament', label: 'Mandato parlamentare' },
   governments: { storageKey: 'governments', permission: 'government', label: 'Scheda Governo' },
