@@ -751,7 +751,7 @@ if ($action === 'admin_data' && $method === 'GET') {
     requirePrimaryAdmin();
     $users = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.is_active, r.name AS role_name, u.created_at FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NULL ORDER BY u.display_name, u.username')->fetchAll();
     $deletedUsers = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.deleted_at, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NOT NULL ORDER BY u.deleted_at DESC')->fetchAll();
-    $roles = $pdo->query('SELECT id, name, role_key, is_system FROM roles ORDER BY is_system DESC, name')->fetchAll();
+    $roles = $pdo->query("SELECT id, name, role_key, is_system FROM roles WHERE role_key NOT IN ('editor', 'reader', 'guest') ORDER BY is_system DESC, name")->fetchAll();
     $permissions = $pdo->query('SELECT id, permission_key, label, permission_group FROM permissions ORDER BY permission_group, label')->fetchAll();
     $rolePermissions = $pdo->query('SELECT role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download FROM role_permissions')->fetchAll();
     $registrations = $pdo->query("SELECT id, email, display_name, created_at FROM registration_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();

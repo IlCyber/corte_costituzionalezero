@@ -415,7 +415,8 @@ function localSecurityLog(eventType, severity = 'info', details = {}) {
   saveLocalAuth();
 }
 function localAdminData() {
-  return { users: localAuth.users.filter(user => !user.deletedAt).map(localUserPayload), deletedUsers: localAuth.users.filter(user => user.deletedAt).map(localUserPayload), roles: localAuth.roles, permissions: PERMISSION_CATALOG.map((permission, index) => ({ id: index + 1, permission_key: permission.key, label: permission.label, permission_group: permission.group })), rolePermissions: [], registrations: localAuth.registrations.filter(request => request.status === 'pending'), resets: localAuth.resets.filter(request => request.status === 'pending'), logs: localAuth.logs };
+  const visibleRoles = localAuth.roles.filter(role => !['editor', 'reader', 'guest'].includes(role.roleKey));
+  return { users: localAuth.users.filter(user => !user.deletedAt).map(localUserPayload), deletedUsers: localAuth.users.filter(user => user.deletedAt).map(localUserPayload), roles: visibleRoles, permissions: PERMISSION_CATALOG.map((permission, index) => ({ id: index + 1, permission_key: permission.key, label: permission.label, permission_group: permission.group })), rolePermissions: [], registrations: localAuth.registrations.filter(request => request.status === 'pending'), resets: localAuth.resets.filter(request => request.status === 'pending'), logs: localAuth.logs };
 }
 function localUserPayload(user) {
   const role = localAuth.roles.find(item => item.id === user.roleId || item.roleKey === user.role) || localAuth.roles[0];
