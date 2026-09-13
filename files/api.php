@@ -121,7 +121,7 @@ function sanitizeInlineStyle(string $style): string
 
 function sanitizeRichHtml(string $html): string
 {
-    $allowedTags = '<p><br><strong><b><em><i><u><ol><ul><li><h1><h2><h3><h4><blockquote><table><tbody><tr><td><hr><a><img><span><div><font>';
+    $allowedTags = '<p><strong><b><em><i><u><ol><ul><li><h1><h2><h3><h4><blockquote><table><tbody><tr><td><hr><a><img><span><div><font>';
     $html = strip_tags($html, $allowedTags);
     $html = preg_replace_callback('/\sstyle\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))/i', static function (array $match): string {
         $style = $match[2] ?: ($match[3] ?: $match[4]);
@@ -235,7 +235,26 @@ function stateForUser(PDO $pdo, int $userId): ?array
 
 function statePermissionMap(): array
 {
-    return ['documents' => 'documents', 'templates' => 'templates', 'counters' => 'settings', 'categories' => 'settings', 'parties' => 'parties', 'partyFields' => 'parties', 'companies' => 'companies', 'parliaments' => 'parliament', 'parliamentSettings' => 'parliament', 'governments' => 'government', 'governmentSettings' => 'government', 'courtCompositions' => 'composition', 'compositionSettings' => 'composition', 'interpretations' => 'interpretations', 'interpretationSettings' => 'interpretations'];
+    return [
+        'documents' => 'documents',
+        'templates' => 'templates',
+        'counters' => 'settings',
+        'categories' => 'settings',
+        'pageMargins' => 'settings',
+        'parties' => 'parties',
+        'partyFields' => 'parties',
+        'coalitions' => 'parties',
+        'coalitionFields' => 'parties',
+        'companies' => 'companies',
+        'parliaments' => 'parliament',
+        'parliamentSettings' => 'parliament',
+        'governments' => 'government',
+        'governmentSettings' => 'government',
+        'courtCompositions' => 'composition',
+        'compositionSettings' => 'composition',
+        'interpretations' => 'interpretations',
+        'interpretationSettings' => 'interpretations'
+    ];
 }
 
 function validEmail(string $email): bool
@@ -584,7 +603,7 @@ if ($action === 'google_document_create' && $method === 'POST') {
     requireCsrf($pdo);
     $body = requestBody();
     $permission = (string) (($body['permission'] ?? 'documents'));
-    if (!in_array($permission, ['documents', 'templates'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di creare documenti Google.'], 403);
+    if (!in_array($permission, ['documents', 'templates', 'parties', 'companies'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di creare documenti Google.'], 403);
     $title = googleDocumentTitle((string) ($body['title'] ?? 'Documento'));
     $sourceDocumentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($body['sourceDocumentId'] ?? ''));
     if ($sourceDocumentId !== '') {
@@ -610,6 +629,23 @@ if ($action === 'google_document_pdf' && $method === 'GET') {
     header('Content-Disposition: attachment; filename="documento-google.pdf"');
     echo $pdf;
     exit;
+}
+
+if ($action === 'google_document_check' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $body = requestBody();
+    $ids = $body['ids'] ?? [];
+    if (!is_array($ids)) respond(['error' => 'Parametro ids non valido.'], 422);
+    $results = [];
+    foreach ($ids as $rawId) {
+        $documentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $rawId);
+        if ($documentId === '') { $results[$rawId] = false; continue; }
+        $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?fields=id,trashed', null, false, true);
+        $results[$documentId] = is_array($file) && isset($file['id']) && empty($file['trashed']);
+    }
+    respond(['results' => $results]);
 }
 
 if ($action === 'login' && $method === 'POST') {

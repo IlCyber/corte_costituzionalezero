@@ -1,4 +1,4 @@
-const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', parties: 'cz_parties', partyFields: 'cz_party_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
+const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
 const defaultCounters = { Sentenze: 1, Ordinanze: 1, Decreti: 1, 'Documenti generali': 1 };
 const defaultPageMargins = { top: 25, right: 25, bottom: 25, left: 25 };
 const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentare', limit: 10 }, { id: 'sostituto', name: 'Sostituto', limit: 5 }], fields: [] };
@@ -16,6 +16,7 @@ let editingDocumentId = null;
 let activeGoogleDocumentId = null;
 let editingTemplateId = null;
 let editingPartyId = null;
+let editingCoalitionId = null;
 let editingCompanyId = null;
 let editingParliamentId = null;
 let editingMemberId = null;
@@ -55,6 +56,8 @@ const state = {
   pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
+  coalitions: readStorage(STORAGE_KEYS.coalitions, []),
+  coalitionFields: readStorage(STORAGE_KEYS.coalitionFields, []),
   companies: readStorage(STORAGE_KEYS.companies, []),
   parliaments: readStorage(STORAGE_KEYS.parliaments, []),
   parliamentSettings: normalizeParliamentSettings(readStorage(STORAGE_KEYS.parliamentSettings, defaultParliamentSettings)),
@@ -136,9 +139,9 @@ async function apiRequest(action, options = {}) {
   }
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw new Error('BACKEND_UNAVAILABLE');
-  
+
   const payload = await response.json().catch(() => ({}));
-  
+
   if (response.status === 401) {
     if (localStorage.getItem(STORAGE_KEYS.session) === 'active') {
       localStorage.removeItem(STORAGE_KEYS.session);
@@ -153,32 +156,99 @@ async function apiRequest(action, options = {}) {
 }
 async function refreshGoogleConnectionStatus() {
   if (!remoteMode) { googleConnection = { connected: false, configured: false, email: null }; return; }
+  const wasConnected = googleConnection.connected;
   try { googleConnection = await apiRequest('google_status'); } catch { googleConnection = { connected: false, configured: false, email: null }; }
   renderGoogleConnectionSettings();
   applyPermissions();
+  if (googleConnection.connected && !wasConnected) {
+    rehydrateGoogleLinks();
+  }
 }
 function renderGoogleConnectionSettings() {
   const status = document.getElementById('googleConnectionStatus');
   const connect = document.getElementById('connectGoogleButton');
   const disconnect = document.getElementById('disconnectGoogleButton');
+  const syncBtn = document.getElementById('syncGoogleLinksButton');
   if (!status || !connect || !disconnect) return;
-  if (!googleConnection.configured) { status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.'; connect.classList.add('disabled'); disconnect.classList.add('d-none'); return; }
+  if (!googleConnection.configured) { status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.'; connect.classList.add('disabled'); disconnect.classList.add('d-none'); if (syncBtn) syncBtn.classList.add('d-none'); return; }
   status.textContent = googleConnection.connected ? `Collegato: ${googleConnection.email}` : 'Nessun account Google collegato. I documenti non sono disponibili.';
   connect.classList.toggle('d-none', googleConnection.connected);
   disconnect.classList.toggle('d-none', !googleConnection.connected);
+  if (syncBtn) syncBtn.classList.toggle('d-none', !googleConnection.connected);
 }
 async function disconnectGoogleAccount() {
   try { await apiRequest('google_disconnect', { method: 'POST', body: '{}' }); await refreshGoogleConnectionStatus(); showToast('Account Google scollegato.'); } catch (error) { showToast(error.message); }
 }
+async function rehydrateGoogleLinks() {
+  if (!remoteMode) { showToast('La sincronizzazione Google richiede la modalità remota.'); return; }
+  if (!googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
+  const syncBtn = document.getElementById('syncGoogleLinksButton');
+  if (syncBtn) { syncBtn.disabled = true; syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Sincronizzazione...'; }
+  try {
+    // Collect all googleDocumentId-like fields from every entity in state
+    const idMap = new Map(); // googleId -> [{ key, index, field }]
+    const addId = (id, ref) => {
+      if (!id || typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
+      if (!idMap.has(id)) idMap.set(id, []);
+      idMap.get(id).push(ref);
+    };
+    const fields = ['googleDocumentId', 'googleStatuteDocumentId', 'googleRegulationDocumentId'];
+    [['documents', state.documents], ['templates', state.templates], ['parties', state.parties], ['companies', state.companies]]
+      .forEach(([key, collection]) => {
+        (collection || []).forEach((item, index) => {
+          fields.forEach(field => { if (item[field]) addId(item[field], { key, index, field }); });
+        });
+      });
+    if (idMap.size === 0) { showToast('Nessun file Google collegato trovato nell\'archivio.'); return; }
+    let results;
+    try {
+      const payload = await apiRequest('google_document_check', { method: 'POST', body: JSON.stringify({ ids: [...idMap.keys()] }) });
+      results = payload.results || {};
+    } catch (error) {
+      showToast('Errore durante la verifica dei file Google: ' + error.message); return;
+    }
+    let staleCount = 0;
+    idMap.forEach((refs, id) => {
+      if (!results[id]) {
+        refs.forEach(({ key, index, field }) => {
+          if (state[key]?.[index]) { delete state[key][index][field]; staleCount++; }
+        });
+      }
+    });
+    if (staleCount > 0) {
+      writeStorage(STORAGE_KEYS.documents, state.documents);
+      writeStorage(STORAGE_KEYS.templates, state.templates);
+      writeStorage(STORAGE_KEYS.parties, state.parties);
+      writeStorage(STORAGE_KEYS.companies, state.companies);
+      showToast(`Sincronizzazione completata. ${staleCount} collegament${staleCount === 1 ? 'o rimosso' : 'i rimossi'} (file non trovati su Drive).`);
+    } else {
+      showToast(`Sincronizzazione completata. Tutti i ${idMap.size} file Google sono raggiungibili.`);
+    }
+  } finally {
+    if (syncBtn) { syncBtn.disabled = false; syncBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizza file'; }
+  }
+}
+
 async function createGoogleDocument(title, permission = 'documents', sourceDocumentId = '') {
   if (!remoteMode || !googleConnection.connected) throw new Error('Collega un account Google dalle impostazioni prima di gestire documenti.');
   const payload = await apiRequest('google_document_create', { method: 'POST', body: JSON.stringify({ title, permission, sourceDocumentId }) });
   return payload;
 }
-function openGoogleDocument(documentId) {
+function extractGoogleDocId(urlOrId) {
+  if (!urlOrId) return '';
+  const match = String(urlOrId).match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(String(urlOrId))) return String(urlOrId);
+  return '';
+}
+function openGoogleDocument(documentIdOrUrl) {
   if (!remoteMode || !googleConnection.connected) { showToast('Collega un account Google dalle impostazioni prima di aprire documenti.'); return; }
-  if (!documentId) { showToast('Il documento non è ancora collegato a Google Documenti.'); return; }
-  window.open(`https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`, '_blank', 'noopener');
+  if (!documentIdOrUrl) { showToast('Il documento non è ancora collegato a Google Documenti.'); return; }
+  let url = String(documentIdOrUrl);
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://docs.google.com/document/d/${encodeURIComponent(documentIdOrUrl)}/edit`;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 function setGoogleDocumentEditorState(documentId = '', title = '') {
   const editorTitle = document.getElementById('googleDocumentEditorTitle');
@@ -227,21 +297,30 @@ function setGoogleSpecialEditorState(config) {
   const statusElement = document.getElementById(config.statusId);
   const button = document.getElementById(config.buttonId);
   if (!titleElement || !statusElement || !button) return;
-  titleElement.textContent = config.documentId ? config.title : `${config.label} Google non ancora creato`;
-  statusElement.textContent = config.documentId ? 'Il contenuto è gestito esclusivamente da Google Documenti.' : 'Crea il documento per aprire l’editor Google.';
-  button.textContent = config.documentId ? 'Apri editor Google' : 'Crea e apri editor Google';
+  const hasDoc = Boolean(config.documentId);
+  titleElement.textContent = hasDoc ? config.title : `${config.label} Google non ancora creato`;
+  statusElement.textContent = hasDoc ? 'Il contenuto è gestito ed archiviato su Google Documenti.' : 'Crea il documento per aprire l’editor Google.';
+  button.textContent = hasDoc ? 'Apri editor Google' : 'Crea e apri editor Google';
   button.onclick = async () => {
+    if (!googleConnection.connected) {
+      showToast('Collega prima un account Google dalle impostazioni.');
+      return;
+    }
     const popup = window.open('about:blank', '_blank');
     if (!popup) { showToast('Il browser ha bloccato la nuova scheda. Consenti i popup per questo sito.'); return; }
     try {
       let documentId = config.documentId;
       if (!documentId) {
-        documentId = (await config.create()).id;
+        const created = await config.create();
+        documentId = created.id;
         config.setActive(documentId);
         setGoogleSpecialEditorState({ ...config, documentId });
       }
       popup.location.href = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
-    } catch (error) { popup.close(); showToast(error.message); }
+    } catch (error) {
+      popup.close();
+      showToast(error.message || 'Impossibile completare l’operazione.');
+    }
   };
 }
 async function downloadGooglePdf(documentId, filename = 'documento-google.pdf') {
@@ -267,6 +346,28 @@ function applyRemoteState(remoteState) {
   state.governmentSettings = normalizeInstitutionSettings(state.governmentSettings, [{ id: 'presidente', name: 'Presidente del Consiglio', limit: 1 }, { id: 'ministro', name: 'Ministro', limit: 10 }]);
   state.compositionSettings = normalizeInstitutionSettings(state.compositionSettings, [{ id: 'presidente', name: 'Presidente della Corte', limit: 1 }, { id: 'giudice', name: 'Giudice costituzionale', limit: 15 }]);
   state.interpretationSettings = { fields: Array.isArray(state.interpretationSettings?.fields) ? state.interpretationSettings.fields : [] };
+  (state.parties || []).forEach(party => {
+    if (!party.googleStatuteDocumentId && (party.googleUrl || party.statuteUrl)) {
+      party.googleStatuteDocumentId = extractGoogleDocId(party.googleUrl || party.statuteUrl) || null;
+    }
+    if (party.googleStatuteDocumentId && !party.googleUrl) {
+      party.googleUrl = `https://docs.google.com/document/d/${encodeURIComponent(party.googleStatuteDocumentId)}/edit`;
+    }
+    if (party.googleUrl && !party.statuteUrl) {
+      party.statuteUrl = party.googleUrl;
+    }
+  });
+  (state.companies || []).forEach(company => {
+    if (!company.googleRegulationDocumentId && (company.googleUrl || company.regulationUrl)) {
+      company.googleRegulationDocumentId = extractGoogleDocId(company.googleUrl || company.regulationUrl) || null;
+    }
+    if (company.googleRegulationDocumentId && !company.googleUrl) {
+      company.googleUrl = `https://docs.google.com/document/d/${encodeURIComponent(company.googleRegulationDocumentId)}/edit`;
+    }
+    if (company.googleUrl && !company.regulationUrl) {
+      company.regulationUrl = company.googleUrl;
+    }
+  });
 }
 async function saveRemoteState(permission = 'documents') {
   await apiRequest('save_state', { method: 'POST', body: JSON.stringify(remoteStatePayload(permission)) });
@@ -326,7 +427,47 @@ function can(permission, action = 'view') {
   return Boolean(permissions['*']?.[action] || permissions[permission]?.[action]);
 }
 function permissionForStorageKey(key) {
-  return { documents: 'documents', templates: 'templates', counters: 'settings', categories: 'settings', pageMargins: 'settings', parties: 'parties', partyFields: 'parties', companies: 'companies', parliaments: 'parliament', parliamentSettings: 'parliament', governments: 'government', governmentSettings: 'government', courtCompositions: 'composition', compositionSettings: 'composition', interpretations: 'interpretations', interpretationSettings: 'interpretations', trash: 'documents' }[key] || 'documents';
+  const map = {
+    documents: 'documents',
+    templates: 'templates',
+    counters: 'settings',
+    categories: 'settings',
+    pageMargins: 'settings',
+    parties: 'parties',
+    partyFields: 'parties',
+    coalitions: 'parties',
+    coalitionFields: 'parties',
+    companies: 'companies',
+    parliaments: 'parliament',
+    parliamentSettings: 'parliament',
+    governments: 'government',
+    governmentSettings: 'government',
+    courtCompositions: 'composition',
+    compositionSettings: 'composition',
+    interpretations: 'interpretations',
+    interpretationSettings: 'interpretations',
+    trash: 'documents',
+    cz_documents: 'documents',
+    cz_templates: 'templates',
+    cz_counters: 'settings',
+    cz_categories: 'settings',
+    cz_page_margins: 'settings',
+    cz_parties: 'parties',
+    cz_party_fields: 'parties',
+    cz_coalitions: 'parties',
+    cz_coalition_fields: 'parties',
+    cz_companies: 'companies',
+    cz_parliaments: 'parliament',
+    cz_parliament_settings: 'parliament',
+    cz_governments: 'government',
+    cz_government_settings: 'government',
+    cz_court_compositions: 'composition',
+    cz_composition_settings: 'composition',
+    cz_interpretations: 'interpretations',
+    cz_interpretation_settings: 'interpretations',
+    cz_trash: 'documents'
+  };
+  return map[key] || 'documents';
 }
 const TRASH_ENTITY_CONFIG = {
   documents: { storageKey: 'documents', permission: 'documents', label: 'Documento' },
@@ -457,25 +598,22 @@ function applyPermissions() {
   const views = { dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' };
   Object.entries(views).forEach(([view, permission]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !can(permission)); }));
   document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
-  const controls = { '#newDocumentButton': ['documents', 'create'], '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'], '#newPartyButton': ['parties', 'create'], '#newCompanyButton': ['companies', 'create'], '#newParliamentButton': ['parliament', 'create'], '#newOdgButton': ['odg', 'create'], '#newInterpretationButton': ['interpretations', 'create'] };
+  const controls = {
+    '#newDocumentButton': ['documents', 'create'],
+    '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'],
+    '#newPartyButton': ['parties', 'create'],
+    '#newCompanyButton': ['companies', 'create'],
+    '#newParliamentButton': ['parliament', 'create'],
+    '#newOdgButton': ['odg', 'create'],
+    '#newInterpretationButton': ['interpretations', 'create'],
+    '[data-new-institution="government"]': ['government', 'create'],
+    '[data-new-institution="composition"]': ['composition', 'create']
+  };
   Object.entries(controls).forEach(([selector, [permission, action]]) => document.querySelectorAll(selector).forEach(control => { control.classList.toggle('d-none', !can(permission, action)); }));
-  if (!googleConnection.connected) document.querySelectorAll('#newDocumentButton, #newTemplateButton, [data-bs-target="#templateModal"], [data-use-template], [data-open-party-statute], [data-open-company-regulation]').forEach(control => control.classList.add('d-none'));
-  document.querySelectorAll('[data-new-institution]').forEach(button => button.classList.toggle('d-none', !can(button.dataset.newInstitution, 'create')));
+  if (!googleConnection.connected) document.querySelectorAll('#newDocumentButton, #newTemplateButton, [data-bs-target="#templateModal"], [data-use-template]').forEach(control => control.classList.add('d-none'));
 }
 
-function ensureGuideView() {
-  const nav = document.querySelector('#mainNav .navbar-nav');
-  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
-  if (nav && settingsLink && !nav.querySelector('[data-view-link="guide"]')) {
-    const item = document.createElement('li');
-    item.className = 'nav-item';
-    item.innerHTML = '<a class="nav-link" href="#guide" data-view-link="guide">Guida</a>';
-    nav.insertBefore(item, settingsLink);
-    item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('guide'); });
-  }
-  const appContainer = document.querySelector('#appView > .container-fluid');
-  if (!document.getElementById('guideView')) appContainer.insertAdjacentHTML('beforeend', '<section id="guideView" class="app-view d-none"><div class="mb-4"><p class="eyebrow text-secondary mb-2">Uso personale</p><h1 class="display-6 fw-bold mb-2">Guida</h1><p class="text-secondary mb-0">Qui trovi solo le operazioni disponibili per il tuo profilo.</p></div><div id="guideContent" class="row g-4"></div></section>');
-}
+
 
 function ensureTrashView() {
   const nav = document.querySelector('#mainNav .navbar-nav');
@@ -506,30 +644,14 @@ function renderTrash() {
     const config = trashConfig(entry.entityType);
     const canRestore = config && can(config.permission, 'restore');
     const canPurge = config && can(config.permission, 'purge');
-    return `<tr><td class="ps-4"><span class="badge text-bg-light">${escapeHtml(entry.label || config?.label || 'Elemento')}</span></td><td><strong>${escapeHtml(trashEntryTitle(entry))}</strong>${entry.parentId ? '<small class="d-block text-secondary">Elemento contenuto in una scheda archiviata</small>' : ''}</td><td class="small text-secondary">${escapeHtml(formatDateTime(entry.deletedAt))}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${canRestore ? `<button type="button" class="btn btn-sm btn-outline-primary" data-restore-trash="${entry.id}">Ripristina</button>` : ''}${canPurge ? `<button type="button" class="btn btn-sm btn-outline-danger" data-purge-trash="${entry.id}">Elimina definitivamente</button>` : ''}${!canRestore && !canPurge ? '<span class="small text-secondary">Nessuna azione autorizzata</span>' : ''}</div></td></tr>`;
+    const hasGoogleDoc = entry.data && (entry.data.googleDocumentId || entry.data.googleStatuteDocumentId || entry.data.googleRegulationDocumentId);
+    return `<tr><td class="ps-4"><span class="badge text-bg-light">${escapeHtml(entry.label || config?.label || 'Elemento')}</span></td><td><strong>${escapeHtml(trashEntryTitle(entry))}</strong>${entry.parentId ? '<small class="d-block text-secondary">Elemento contenuto in una scheda archiviata</small>' : ''}${hasGoogleDoc ? '<small class="d-block text-secondary">Include il documento Google associato</small>' : ''}</td><td class="small text-secondary">${escapeHtml(formatDateTime(entry.deletedAt))}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${canRestore ? `<button type="button" class="btn btn-sm btn-outline-primary" data-restore-trash="${entry.id}">Ripristina</button>` : ''}${canPurge ? `<button type="button" class="btn btn-sm btn-outline-danger" data-purge-trash="${entry.id}">Elimina definitivamente</button>` : ''}${!canRestore && !canPurge ? '<span class="small text-secondary">Nessuna azione autorizzata</span>' : ''}</div></td></tr>`;
   }).join('');
   document.getElementById('emptyTrash').classList.toggle('d-none', entries.length > 0);
   document.getElementById('trashCount').textContent = entries.length;
 }
 
-function renderGuide() {
-  const areas = [
-    ['documents', 'Documenti', 'Cerca gli atti per titolo, categoria o numero. Apri una riga per modificare un documento. Puoi creare nuovi atti solo se hai il permesso di creazione.', ['create', 'edit']],
-    ['documents_pdf', 'PDF', 'Da ogni documento puoi usare PDF / stampa oppure scaricare direttamente un file PDF, se il permesso Scarica PDF è attivo.', ['download']],
-    ['templates', 'Template', 'Usa un template per iniziare un documento precompilato. Puoi creare, modificare o eliminare template solo con i rispettivi permessi.', ['create', 'edit', 'delete']],
-    ['odg', 'ODG', 'Consulta gli ordini del giorno e il loro stato. Crea un ODG dalla relativa scheda se hai il permesso di creazione.', ['view', 'create']],
-    ['parties', 'Partiti', 'Consulta le schede dei partiti, modifica i dati e gestisci gli Statuti secondo i permessi assegnati.', ['view', 'edit']],
-    ['companies', 'Aziende', 'Consulta le aziende e i loro Regolamenti. Le modifiche dipendono dai permessi del ruolo.', ['view', 'edit']],
-    ['parliament', 'Parlamento', 'Consulta mandati e nomine parlamentari. Crea o modifica i dati solo se il ruolo lo consente.', ['view', 'create', 'edit']],
-    ['government', 'Governo', 'Consulta periodi, ruoli e componenti del Governo. Le azioni disponibili sono filtrate dal tuo ruolo.', ['view', 'create', 'edit']],
-    ['composition', 'Composizione della Corte', 'Consulta e gestisci i periodi e i componenti della Corte nei limiti dei permessi.', ['view', 'create', 'edit']],
-    ['interpretations', 'Interpretazioni', 'Leggi e gestisci le interpretazioni archiviate secondo le autorizzazioni disponibili.', ['view', 'create', 'edit']],
-    ['settings', 'Impostazioni', 'Gestisci configurazioni dell’archivio solo se hai accesso alle impostazioni.', ['view', 'edit']],
-    ['users', 'Utenti e permessi', 'Questa scheda è riservata all’amministratore principale: gestisce utenti, ruoli, permessi, richieste e log di sicurezza.', ['view', 'approve', 'edit']]
-  ];
-  const available = areas.filter(([permission]) => can(permission, 'view') || ['create', 'edit', 'delete', 'download', 'approve'].some(action => can(permission, action)));
-  document.getElementById('guideContent').innerHTML = available.map(([permission, title, description, actions]) => `<article class="col-12 col-md-6"><div class="card border-0 shadow-sm h-100"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">${escapeHtml(title)}</p><h2 class="h5">Come usarlo</h2><p class="text-secondary">${escapeHtml(description)}</p><div class="d-flex flex-wrap gap-2">${actions.filter(action => can(permission, action)).map(action => `<span class="badge text-bg-light">${escapeHtml({ view: 'Vedere', create: 'Creare', edit: 'Modificare', delete: 'Eliminare', download: 'Scaricare PDF', approve: 'Approvare' }[action])}</span>`).join('')}</div></div></div></article>`).join('') || '<div class="col-12"><div class="empty-state"><h2 class="h5">Nessuna funzione disponibile</h2><p class="text-secondary mb-0">Contatta l’amministratore principale per richiedere un’autorizzazione.</p></div></div>';
-}
+
 function localRequestRegistration(displayName, email, password) {
   if (localAuth.users.some(user => user.username === email && !user.deletedAt) || localAuth.registrations.some(request => request.email === email && request.status === 'pending')) throw new Error('Esiste già una richiesta o un utente con questa mail.');
   localAuth.registrations.push({ id: crypto.randomUUID(), email, displayName, password, status: 'pending', createdAt: new Date().toISOString() });
@@ -542,7 +664,18 @@ function localRequestReset(email) {
   saveLocalAuth();
   return { message: 'Se la mail è registrata, la richiesta locale è stata inoltrata all’amministratore.' };
 }
-function formatDate(value) { return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${value}T12:00:00`)); }
+function formatDate(value) {
+  if (!value) return '—';
+  try {
+    const str = String(value).trim();
+    if (!str) return '—';
+    const d = new Date(str.includes('T') ? str : `${str}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return '—';
+    return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+  } catch {
+    return '—';
+  }
+}
 function today() { return new Date().toISOString().slice(0, 10); }
 function escapeHtml(value = '') { return value.replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character])); }
 function sanitizeRichHtml(value = '') {
@@ -1101,15 +1234,15 @@ async function userManagementAction(action, body, successMessage) {
 function setView(view, pushState = true) {
   closeEditorToolbarMenus();
   if (currentUser?.isPrimaryAdmin) ensureUserManagementCard();
-  ensureGuideView();
   ensureTrashView();
   if (view === 'trash' && !hasTrashAccess()) view = 'dashboard';
-  if (view !== 'dashboard' && view !== 'trash' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' }[view] || 'documents')) view = 'dashboard';
+  if (view !== 'dashboard' && view !== 'trash' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', odg: 'odg', settings: 'settings', access: 'users' }[view] || 'documents')) view = 'dashboard';
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
   document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view));
   if (view === 'dashboard') renderDocuments();
   if (view === 'parties') renderParties();
+  if (view === 'coalitions') renderCoalitions();
   if (view === 'companies') renderCompanies();
   if (view === 'parliament') renderParliaments();
   if (view === 'government') renderInstitution('government');
@@ -1120,7 +1253,6 @@ function setView(view, pushState = true) {
   if (view === 'trash') renderTrash();
   if (view === 'settings') { renderSettings(); renderInstitutionSettings('government'); renderInstitutionSettings('composition'); renderInterpretationSettings(); }
   if (view === 'access') { ensureUserManagementCard(); refreshUserManagement(); }
-  if (view === 'guide') renderGuide();
   applyPermissions();
   if (pushState && window.location.hash !== '#' + view) {
     window.history.pushState({ view }, '', '#' + view);
@@ -1162,7 +1294,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${document.googleDocumentId}">Apri Google Doc</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${document.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${document.googleDocumentId}">Apri Google Doc</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -1193,7 +1325,7 @@ function syncOdgStatusField() {
 function renderOdg() {
   const query = archiveSearchValue('odgSearch');
   const odgs = state.documents.filter(document => document.category === 'ODG' && matchesArchiveSearch([document.title, document.number, document.year, document.status], query)).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
+  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-toggle-odg-status="${odg.id}">${odg.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button><button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
   document.getElementById('emptyOdg').classList.toggle('d-none', odgs.length > 0);
   document.getElementById('odgCount').textContent = odgs.length;
   document.getElementById('odgToEvaluateCount').textContent = odgs.filter(odg => odg.status !== 'valutato').length;
@@ -1215,22 +1347,59 @@ function deleteTemplate(templateId) {
 function renderParties() {
   const grid = document.getElementById('partyGrid');
   const query = archiveSearchValue('partySearch');
-  const parties = [...state.parties].filter(party => matchesArchiveSearch([party.name, party.status, ...Object.values(party.fields || {})], query)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  grid.innerHTML = parties.map(party => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${party.statute ? `Statuto aggiornato il ${formatDate(party.updatedAt.slice(0, 10))}` : 'Statuto da redigere'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${party.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${party.statute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-party-statute="${party.id}">${party.statute ? 'Modifica Statuto' : 'Scrivi Statuto'}</button></span></div></article></div>`).join('');
+  const parties = [...state.parties].filter(party => matchesArchiveSearch([party.name, party.status, ...Object.values(party.fields || {})], query)).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  grid.innerHTML = parties.map(party => {
+    const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
+    const dateFormatted = formatDate((party.updatedAt || party.createdAt || '').slice(0, 10));
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${hasStatute ? `Statuto registrato · Aggiornato il ${dateFormatted}` : 'Statuto da creare'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(party.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${hasStatute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}">${hasStatute ? 'Vedi statuto' : 'Crea statuto'}</button></span></div></article></div>`;
+  }).join('');
   document.getElementById('emptyParties').classList.toggle('d-none', parties.length > 0);
   document.getElementById('partyCount').textContent = parties.length;
   document.getElementById('activePartyCount').textContent = parties.filter(party => party.status === 'attivo').length;
   document.getElementById('partyFieldCount').textContent = state.partyFields.length;
 }
 
+function renderCoalitionFields(coalition = null) {
+  const fields = document.getElementById('coalitionFields');
+  if (fields) fields.innerHTML = state.coalitionFields.map(field => `<div class="col-12 col-md-6"><label class="form-label" for="coalition-field-${field.id}">${escapeHtml(field.name)}</label><input id="coalition-field-${field.id}" class="form-control coalition-field-input" data-field-id="${field.id}" required value="${escapeHtml(coalition?.fields?.[field.id] || '')}"></div>`).join('');
+}
+
+function renderCoalitionHistory(coalition = null) {
+  const panel = document.getElementById('coalitionHistoryPanel');
+  const history = coalition?.history || [];
+  if (panel) panel.classList.toggle('d-none', !coalition || history.length === 0);
+  const historyList = document.getElementById('coalitionHistory');
+  if (historyList) historyList.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at ? entry.at.slice(0, 10) : '')}</span></div>`).join('');
+}
+
+function renderCoalitions() {
+  const grid = document.getElementById('coalitionTableBody');
+  if (!grid) return;
+  const query = archiveSearchValue('coalitionSearch') || '';
+  const coalitions = [...state.coalitions].filter(coalition => {
+    const partyNames = (coalition.parties || []).map(id => state.parties.find(p => p.id === id)?.name).filter(Boolean);
+    return matchesArchiveSearch([coalition.name, coalition.status, ...partyNames, ...Object.values(coalition.fields || {})], query);
+  }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+
+  grid.innerHTML = coalitions.map(coalition => `<tr><td class="ps-4"><strong>${escapeHtml(coalition.name)}</strong></td><td><span class="badge ${statusClass(coalition.status)}">${statusLabel(coalition.status)}</span></td><td class="text-end pe-4"><div class="d-flex justify-content-end gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="coalitions" data-entity-id="${coalition.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-coalition="${coalition.id}">Modifica</button></div></td></tr>`).join('');
+
+  document.getElementById('emptyCoalitions').classList.toggle('d-none', coalitions.length > 0);
+  const countEl = document.getElementById('coalitionCount');
+  if (countEl) countEl.textContent = coalitions.length;
+}
+
 function renderCompanies() {
   const grid = document.getElementById('companyGrid');
   const query = archiveSearchValue('companySearch');
-  const companies = [...state.companies].filter(company => matchesArchiveSearch([company.name, company.regulation], query)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  grid.innerHTML = companies.map(company => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${company.regulation ? `Regolamento aggiornato il ${formatDate(company.updatedAt.slice(0, 10))}` : 'Regolamento da redigere'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${company.history?.length || 0} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${company.regulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-company-regulation="${company.id}">${company.regulation ? 'Modifica Regolamento' : 'Scrivi Regolamento'}</button></span></div></article></div>`).join('');
+  const companies = [...state.companies].filter(company => matchesArchiveSearch([company.name, company.regulation], query)).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  grid.innerHTML = companies.map(company => {
+    const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
+    const dateFormatted = formatDate((company.updatedAt || company.createdAt || '').slice(0, 10));
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${hasRegulation ? `Regolamento registrato · Aggiornato il ${dateFormatted}` : 'Regolamento da creare'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(company.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${hasRegulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}">${hasRegulation ? 'Vedi regolamento' : 'Crea regolamento'}</button></span></div></article></div>`;
+  }).join('');
   document.getElementById('emptyCompanies').classList.toggle('d-none', companies.length > 0);
   document.getElementById('companyCount').textContent = companies.length;
-  document.getElementById('companyRegulationCount').textContent = companies.filter(company => company.regulation).length;
+  document.getElementById('companyRegulationCount').textContent = companies.filter(company => company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl).length;
 }
 
 function institutionSettings(type) { return state[institutionConfigs[type].settingsKey]; }
@@ -1241,14 +1410,31 @@ function institutionActive(record) { return !record.endDate; }
 function ensureInstitutionViews() {
   const nav = document.querySelector('#mainNav .navbar-nav');
   const parliamentLink = nav?.querySelector('[data-view-link="parliament"]')?.closest('.nav-item');
-  if (nav && parliamentLink && !nav.querySelector('[data-view-link="government"]')) ['government', 'composition'].forEach(type => { const item = document.createElement('li'); item.className = 'nav-item'; item.innerHTML = `<a class="nav-link" href="#${institutionConfigs[type].view}" data-view-link="${institutionConfigs[type].view}">${institutionConfigs[type].label}</a>`; nav.insertBefore(item, parliamentLink.nextSibling); });
+  if (nav && parliamentLink && !nav.querySelector('[data-view-link="government"]')) {
+    let prev = parliamentLink;
+    ['government', 'composition'].forEach(type => {
+      const item = document.createElement('li');
+      item.className = 'nav-item';
+      item.innerHTML = `<a class="nav-link" href="#${institutionConfigs[type].view}" data-view-link="${institutionConfigs[type].view}">${institutionConfigs[type].label}</a>`;
+      nav.insertBefore(item, prev.nextSibling);
+      prev = item;
+    });
+  }
   const appContainer = document.querySelector('#appView > .container-fluid');
   Object.entries(institutionConfigs).forEach(([type, config]) => {
-    if (!document.getElementById(`${config.view}View`)) appContainer.insertAdjacentHTML('beforeend', `<section id="${config.view}View" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio istituzionale</p><h1 class="display-6 fw-bold mb-2">${config.label}</h1><p class="text-secondary mb-0">Gestisci periodi, ruoli, nomine e storico.</p></div><button class="btn btn-primary" type="button" data-new-institution="${type}">+ ${config.newLabel || `Nuovo ${config.itemLabel.toLowerCase()}`}</button></div><div class="row g-3 mb-4"><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Schede archiviate</span><strong id="${config.view}Count">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Periodi in corso</span><strong id="${config.view}CurrentCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Componenti registrati</span><strong id="${config.view}MemberCount">0</strong></div></div></div><div id="${config.view}Grid" class="row g-4"></div><div id="${config.view}Empty" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessuna scheda archiviata</h3><p class="text-secondary mb-0">Crea la prima scheda per iniziare.</p></div></section>`);
-    if (!document.getElementById(`${type}Editor`)) document.body.insertAdjacentHTML('beforeend', `<div class="editor-page d-none" id="${type}Editor"><div class="modal-dialog"><div class="modal-content"><form id="${type}Form"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio istituzionale</p><h2 class="modal-title h4">${config.itemLabel}</h2></div><button type="button" class="btn-close" data-close-institution="${type}" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-6"><label for="${type}Period" class="form-label">Periodo o denominazione</label><input id="${type}Period" class="form-control" required placeholder="Es. XVIII legislatura"></div><div class="col-md-3"><label for="${type}Start" class="form-label">Data inizio</label><input id="${type}Start" type="date" class="form-control" required></div><div class="col-md-3"><label for="${type}End" class="form-label">Data fine</label><input id="${type}End" type="date" class="form-control" required></div><div class="col-12"><label for="${type}Status" class="form-label">Stato</label><select id="${type}Status" class="form-select"><option value="in corso">In corso</option><option value="concluso">Concluso</option></select></div><div class="col-12"><hr><div class="d-flex justify-content-between align-items-center"><div><h3 class="h6 mb-1">Nomine e componenti</h3><p class="text-secondary small mb-0">Le cessazioni restano nello storico e non occupano il limite del ruolo.</p></div><button type="button" class="btn btn-sm btn-primary" data-add-institution-member="${type}">+ Nuova nomina</button></div></div><div class="col-12" id="${type}RoleLists"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-close-institution="${type}">Annulla</button><button class="btn btn-primary" type="submit">Salva ${config.itemLabel.toLowerCase()}</button></div></form></div></div></div>`);
-    if (!document.getElementById(`${type}PersonModal`)) document.body.insertAdjacentHTML('beforeend', `<div class="modal fade" id="${type}PersonModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content"><form id="${type}PersonForm"><div class="modal-header"><h2 class="modal-title h5">Nuova nomina</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="${type}PersonName" class="form-label">Nome e cognome</label><input id="${type}PersonName" class="form-control" required></div><div class="col-md-5"><label for="${type}PersonRole" class="form-label">Ruolo</label><select id="${type}PersonRole" class="form-select" required></select></div><div class="col-md-6"><label for="${type}PersonStart" class="form-label">Data nomina</label><input id="${type}PersonStart" type="date" class="form-control" required></div><div class="col-md-6"><label for="${type}PersonEnd" class="form-label">Data cessazione</label><input id="${type}PersonEnd" type="date" class="form-control"></div><div class="col-12"><label for="${type}PersonNotes" class="form-label">Annotazioni</label><textarea id="${type}PersonNotes" class="form-control" rows="3"></textarea></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva nomina</button></div></form></div></div></div>`);
+    if (!document.getElementById(`${config.view}View`)) {
+      appContainer.insertAdjacentHTML('beforeend', `<section id="${config.view}View" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio istituzionale</p><h1 class="display-6 fw-bold mb-2">${config.label}</h1><p class="text-secondary mb-0">Gestisci periodi, ruoli, nomine e storico.</p></div><button class="btn btn-primary" type="button" data-new-institution="${type}">+ ${config.newLabel || `Nuovo ${config.itemLabel.toLowerCase()}`}</button></div><div class="row g-3 mb-4"><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Schede archiviate</span><strong id="${config.view}Count">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Periodi in corso</span><strong id="${config.view}CurrentCount">0</strong></div></div><div class="col-12 col-md-4"><div class="stat-card"><span class="text-secondary small">Componenti registrati</span><strong id="${config.view}MemberCount">0</strong></div></div></div><div id="${config.view}Grid" class="row g-4"></div><div id="${config.view}Empty" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessuna scheda archiviata</h3><p class="text-secondary mb-0">Crea la prima scheda per iniziare.</p></div></section>`);
+    }
+    if (!document.getElementById(`${type}Editor`)) {
+      document.body.insertAdjacentHTML('beforeend', `<div class="editor-page d-none" id="${type}Editor"><div class="modal-dialog"><div class="modal-content"><form id="${type}Form"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio istituzionale</p><h2 class="modal-title h4">${config.itemLabel}</h2></div><button type="button" class="btn-close" data-close-institution="${type}" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-6"><label for="${type}Period" class="form-label">Periodo o denominazione</label><input id="${type}Period" class="form-control" required placeholder="Es. XVIII legislatura"></div><div class="col-md-3"><label for="${type}Start" class="form-label">Data inizio</label><input id="${type}Start" type="date" class="form-control" required></div><div class="col-md-3"><label for="${type}End" class="form-label">Data fine</label><input id="${type}End" type="date" class="form-control"></div><div class="col-12"><label for="${type}Status" class="form-label">Stato</label><select id="${type}Status" class="form-select"><option value="in corso">In corso</option><option value="concluso">Concluso</option></select></div><div class="col-12"><hr><div class="d-flex justify-content-between align-items-center"><div><h3 class="h6 mb-1">Nomine e componenti</h3><p class="text-secondary small mb-0">Le cessazioni restano nello storico e non occupano il limite del ruolo.</p></div><button type="button" class="btn btn-sm btn-primary" data-add-institution-member="${type}">+ Nuova nomina</button></div></div><div class="col-12" id="${type}RoleLists"></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-close-institution="${type}">Annulla</button><button class="btn btn-primary" type="submit">Salva ${config.itemLabel.toLowerCase()}</button></div></form></div></div></div>`);
+    }
+    if (!document.getElementById(`${type}PersonModal`)) {
+      document.body.insertAdjacentHTML('beforeend', `<div class="modal fade" id="${type}PersonModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content"><form id="${type}PersonForm"><div class="modal-header"><h2 class="modal-title h5">Nuova nomina</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-7"><label for="${type}PersonName" class="form-label">Nome e cognome</label><input id="${type}PersonName" class="form-control" required></div><div class="col-md-5"><label for="${type}PersonRole" class="form-label">Ruolo</label><select id="${type}PersonRole" class="form-select" required></select></div><div class="col-md-6"><label for="${type}PersonStart" class="form-label">Data nomina</label><input id="${type}PersonStart" type="date" class="form-control" required></div><div class="col-md-6"><label for="${type}PersonEnd" class="form-label">Data cessazione</label><input id="${type}PersonEnd" type="date" class="form-control"></div><div class="col-12"><label for="${type}PersonNotes" class="form-label">Annotazioni</label><textarea id="${type}PersonNotes" class="form-control" rows="3"></textarea></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva nomina</button></div></form></div></div></div>`);
+    }
     const settingsView = document.getElementById('settingsView');
-    if (!document.getElementById(`${type}SettingsCard`)) settingsView.querySelector('.row').insertAdjacentHTML('beforeend', `<div class="col-12 col-xl-6"><div class="card border-0 shadow-sm h-100" id="${type}SettingsCard"><div class="card-body p-4"><h2 class="h5 mb-1">Configurazione ${config.label}</h2><p class="text-secondary small">Crea i ruoli e imposta il numero massimo di componenti per ciascun ruolo.</p><form id="${type}SettingsForm" class="vstack gap-2"></form></div></div></div>`);
+    if (settingsView && !document.getElementById(`${type}SettingsCard`)) {
+      settingsView.querySelector('.row')?.insertAdjacentHTML('beforeend', `<div class="col-12 col-xl-6"><div class="card border-0 shadow-sm h-100" id="${type}SettingsCard"><div class="card-body p-4"><h2 class="h5 mb-1">Configurazione ${config.label}</h2><p class="text-secondary small">Crea i ruoli e imposta il numero massimo di componenti per ciascun ruolo.</p><form id="${type}SettingsForm" class="vstack gap-2"></form></div></div></div>`);
+    }
   });
 }
 
@@ -1263,7 +1449,7 @@ function ensureInterpretationView() {
   }
   const appContainer = document.querySelector('#appView > .container-fluid');
   if (!document.getElementById('interpretationsView')) appContainer.insertAdjacentHTML('beforeend', '<section id="interpretationsView" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Archivio interpretativo</p><h1 class="display-6 fw-bold mb-2">Interpretazioni</h1><p class="text-secondary mb-0">Conserva orientamenti e letture della Corte in forma testuale.</p></div><button class="btn btn-primary" type="button" id="newInterpretationButton">+ Nuova interpretazione</button></div><div class="row g-3 mb-4"><div class="col-12 col-md-6"><div class="stat-card"><span class="text-secondary small">Interpretazioni archiviate</span><strong id="interpretationCount">0</strong></div></div><div class="col-12 col-md-6"><div class="stat-card"><span class="text-secondary small">Ultima creazione</span><strong id="interpretationLastDate">--</strong></div></div></div><div id="interpretationGrid" class="row g-4"></div><div id="emptyInterpretations" class="empty-state d-none"><div class="display-6">□</div><h3 class="h5 mt-3">Nessuna interpretazione archiviata</h3><p class="text-secondary mb-0">Crea la prima interpretazione per iniziare.</p></div></section>');
-  if (!document.getElementById('interpretationEditor')) document.body.insertAdjacentHTML('beforeend', '<div class="editor-page d-none" id="interpretationEditor"><div class="modal-dialog"><div class="modal-content"><form id="interpretationForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio interpretativo</p><h2 class="modal-title h4">Nuova interpretazione</h2></div><button type="button" class="btn-close" id="closeInterpretationEditor" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-8"><label for="interpretationName" class="form-label">Nome interpretazione</label><input id="interpretationName" class="form-control" required placeholder="Es. Interpretazione dell’articolo 12"></div><div class="col-md-4"><label for="interpretationDate" class="form-label">Data di creazione</label><input id="interpretationDate" type="date" class="form-control" required></div><div id="interpretationBaseFields" class="row g-3"></div><div class="col-12"><label for="interpretationText" class="form-label">Testo dell’interpretazione</label><textarea id="interpretationText" class="form-control interpretation-text" rows="18" required placeholder="Scrivi qui l’interpretazione..."></textarea><div class="form-text">Questo contenuto è un testo interpretativo e non viene archiviato come documento.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" id="cancelInterpretationEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva interpretazione</button></div></form></div></div></div>');
+  if (!document.getElementById('interpretationEditor')) document.body.insertAdjacentHTML('beforeend', '<div class="editor-page d-none" id="interpretationEditor"><div class="modal-dialog"><div class="modal-content"><form id="interpretationForm"><div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Archivio interpretativo</p><h2 class="modal-title h4">Nuova interpretazione</h2></div><button type="button" class="btn-close" id="closeInterpretationEditor" aria-label="Chiudi"></button></div><div class="modal-body"><div class="row g-3"><div class="col-md-8"><label for="interpretationName" class="form-label">Nome interpretazione</label><input id="interpretationName" class="form-control" required placeholder="Es. Interpretazione dell’articolo 12"></div><div class="col-md-4"><label for="interpretationDate" class="form-label">Data di creazione</label><input id="interpretationDate" type="date" class="form-control" required></div><div id="interpretationBaseFields" class="row g-3"></div><div class="col-12"><label for="interpretationText" class="form-label">Testo dell’interpretazione</label><textarea id="interpretationText" class="form-control interpretation-text" rows="15" style="max-height:400px; overflow-y:auto;" required placeholder="Scrivi qui l’interpretazione..."></textarea><div class="form-text">Questo contenuto è un testo interpretativo e non viene archiviato come documento.</div></div></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" id="cancelInterpretationEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva interpretazione</button></div></form></div></div></div>');
   const settingsView = document.getElementById('settingsView');
   if (!document.getElementById('interpretationSettingsCard')) settingsView.querySelector('.row').insertAdjacentHTML('beforeend', '<div class="col-12 col-xl-6"><div class="card border-0 shadow-sm h-100" id="interpretationSettingsCard"><div class="card-body p-4"><h2 class="h5 mb-1">Valori base delle interpretazioni</h2><p class="text-secondary small">Questi campi saranno disponibili in ogni nuova interpretazione.</p><form id="interpretationFieldForm" class="row g-2 mb-3"><div class="col"><label for="interpretationFieldName" class="visually-hidden">Nome valore base</label><input id="interpretationFieldName" class="form-control" required placeholder="Es. Fonte normativa"></div><div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div></form><div id="interpretationFieldList" class="vstack gap-2"></div></div></div></div>');
 }
@@ -1320,23 +1506,78 @@ function renderInstitutionSettings(type) {
 function renderInstitution(type) {
   const config = institutionConfigs[type];
   const query = archiveSearchValue(`${type}Search`);
-  const records = [...institutionRecords(type)].filter(record => matchesArchiveSearch([record.period, record.status, ...record.members.flatMap(member => [member.name, member.role, member.annotations])], query)).sort((a, b) => b.startDate.localeCompare(a.startDate));
-  document.getElementById(`${config.view}Grid`).innerHTML = records.map(record => { const active = record.members.filter(institutionActive).length; return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-institution="${type}" data-record-id="${record.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">${escapeHtml(record.period)}</p><h2 class="h4 mb-2">${config.itemLabel}</h2></div><span class="badge ${record.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(record.status)}</span></div><p class="text-secondary mb-3">${formatDate(record.startDate)} → ${formatDate(record.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${institutionSettings(type).roles.map(role => `<span>${record.members.filter(member => member.role === role.id && institutionActive(member)).length} ${escapeHtml(role.name.toLowerCase())}</span>`).join('')}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${record.members.length} nomine nello storico</span><span class="d-flex gap-2">${can(config.view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governments' : 'courtCompositions'}" data-entity-id="${record.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-institution="${type}" data-record-id="${record.id}">Gestisci</button></span></div></article></div>`; }).join('');
+  const records = [...institutionRecords(type)].filter(record => matchesArchiveSearch([record.period, record.status, ...(record.members || []).flatMap(member => [member.name, member.role, member.annotations])], query)).sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+  document.getElementById(`${config.view}Grid`).innerHTML = records.map(record => {
+    const active = (record.members || []).filter(institutionActive).length;
+    const dateFormatted = `${formatDate(record.startDate)} → ${record.endDate ? formatDate(record.endDate) : 'In corso'}`;
+    return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-institution="${type}" data-record-id="${record.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">${escapeHtml(record.period)}</p><h2 class="h4 mb-2">${config.itemLabel}</h2></div><span class="badge ${record.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(record.status)}</span></div><p class="text-secondary mb-3">${dateFormatted}</p><div class="d-flex flex-wrap gap-3 small">${institutionSettings(type).roles.map(role => `<span>${(record.members || []).filter(member => member.role === role.id && institutionActive(member)).length} ${escapeHtml(role.name.toLowerCase())}</span>`).join('')}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${(record.members || []).length} nomine nello storico</span><span class="d-flex gap-2">${can(config.view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governments' : 'courtCompositions'}" data-entity-id="${record.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-institution="${type}" data-record-id="${record.id}">Gestisci</button></span></div></article></div>`;
+  }).join('');
   document.getElementById(`${config.view}Empty`).classList.toggle('d-none', records.length > 0);
   document.getElementById(`${config.view}Count`).textContent = records.length;
   document.getElementById(`${config.view}CurrentCount`).textContent = records.filter(record => record.status === 'in corso').length;
-  document.getElementById(`${config.view}MemberCount`).textContent = records.reduce((total, record) => total + record.members.length, 0);
+  document.getElementById(`${config.view}MemberCount`).textContent = records.reduce((total, record) => total + (record.members || []).length, 0);
 }
 
 function renderInstitutionMembers(type, record) {
   const container = document.getElementById(`${type}RoleLists`);
   const query = archiveSearchValue(`${type}MemberSearch`);
-  container.innerHTML = institutionSettings(type).roles.map(role => { const members = record.members.filter(member => member.role === role.id && matchesArchiveSearch([member.name, member.annotations], query)); const active = members.filter(institutionActive).length; return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}${can(institutionConfigs[type].view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governmentMembers' : 'compositionMembers'}" data-entity-id="${member.id}" data-parent-id="${record.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`; }).join('');
+  const membersList = record.members || [];
+  container.innerHTML = institutionSettings(type).roles.map(role => {
+    const members = membersList.filter(member => member.role === role.id && matchesArchiveSearch([member.name, member.annotations], query));
+    const active = members.filter(institutionActive).length;
+    return `<section class="mb-4"><h4 class="h6">${escapeHtml(role.name)}</h4><div class="parliament-member-list">${members.length ? members.map(member => `<div class="parliament-member ${member.endDate ? 'is-resigned' : ''}"><div><strong>${escapeHtml(member.name)}</strong><span class="d-block small text-secondary">${member.endDate ? `Cessato il ${formatDate(member.endDate)}` : `Nominato il ${formatDate(member.startDate)}`}${member.annotations ? ` · Annotazioni: ${escapeHtml(member.annotations)}` : ''}</span></div><div class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-edit-institution-member="${type}" data-member-id="${member.id}">Modifica</button>${!member.endDate ? `<button type="button" class="btn btn-sm btn-outline-danger" data-end-institution-member="${type}" data-member-id="${member.id}">Cessa</button>` : ''}${can(institutionConfigs[type].view, 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="${type === 'government' ? 'governmentMembers' : 'compositionMembers'}" data-entity-id="${member.id}" data-parent-id="${record.id}">Cestino</button>` : ''}</div></div>`).join('') : `<p class="small text-secondary mb-2">Nessun componente.</p>`}${active < role.limit ? `<button type="button" class="btn btn-sm btn-outline-primary" data-add-institution-member="${type}" data-role-id="${role.id}">+ Aggiungi ${escapeHtml(role.name)}</button>` : ''}</div></section>`;
+  }).join('');
 }
 
-function openInstitutionEditor(type, recordId = '') { const config = institutionConfigs[type]; const record = institutionRecords(type).find(item => item.id === recordId); window[`editing${type}Id`] = record?.id || null; document.getElementById(`${type}Period`).value = record?.period || ''; document.getElementById(`${type}Start`).value = record?.startDate || today(); document.getElementById(`${type}End`).value = record?.endDate || ''; document.getElementById(`${type}Status`).value = record?.status || 'in corso'; document.querySelector(`#${type}Editor .modal-title`).textContent = record ? `${config.itemLabel} ${record.period}` : `Nuovo ${config.itemLabel.toLowerCase()}`; ensureMemberSearch(`${type}RoleLists`, `${type}MemberSearch`, 'Cerca componente per nome o annotazioni'); if (record) renderInstitutionMembers(type, record); else document.getElementById(`${type}RoleLists`).innerHTML = '<p class="small text-secondary">Salva la scheda per inserire le nomine.</p>'; showEditorScreen(`${type}Editor`); }
+function openInstitutionEditor(type, recordId = '') {
+  const config = institutionConfigs[type];
+  const record = institutionRecords(type).find(item => item.id === recordId);
+  window[`editing${type}Id`] = record?.id || null;
+  document.getElementById(`${type}Period`).value = record?.period || '';
+  document.getElementById(`${type}Start`).value = record?.startDate || today();
+  document.getElementById(`${type}End`).value = record?.endDate || '';
+  document.getElementById(`${type}Status`).value = record?.status || 'in corso';
+  document.querySelector(`#${type}Editor .modal-title`).textContent = record ? `${config.itemLabel} ${record.period}` : `Nuovo ${config.itemLabel.toLowerCase()}`;
+  ensureMemberSearch(`${type}RoleLists`, `${type}MemberSearch`, 'Cerca componente per nome o annotazioni');
+  if (record) renderInstitutionMembers(type, record);
+  else document.getElementById(`${type}RoleLists`).innerHTML = '<p class="small text-secondary">Salva la scheda per inserire le nomine.</p>';
+  showEditorScreen(`${type}Editor`);
+}
 
-function saveInstitution(type, event) { event.preventDefault(); const existingId = window[`editing${type}Id`]; const existing = institutionRecords(type).find(item => item.id === existingId); const period = document.getElementById(`${type}Period`).value.trim(); const startDate = document.getElementById(`${type}Start`).value; const endDate = document.getElementById(`${type}End`).value; if (!period || !startDate || !endDate || endDate < startDate) { showToast('Inserisci dati validi per la scheda.'); return; } const record = { id: existingId || crypto.randomUUID(), period, startDate, endDate, status: document.getElementById(`${type}Status`).value, members: existing?.members || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() }; const records = institutionRecords(type); if (existing) records[records.indexOf(existing)] = record; else records.unshift(record); writeStorage(STORAGE_KEYS[institutionConfigs[type].key], records); renderInstitution(type); openInstitutionEditor(type, record.id); }
+function saveInstitution(type, event) {
+  event.preventDefault();
+  const existingId = window[`editing${type}Id`];
+  const existing = institutionRecords(type).find(item => item.id === existingId);
+  const period = document.getElementById(`${type}Period`).value.trim();
+  const startDate = document.getElementById(`${type}Start`).value;
+  const endDate = document.getElementById(`${type}End`).value;
+  const status = document.getElementById(`${type}Status`).value;
+  if (!period || !startDate) {
+    showToast('Inserisci il periodo e la data di inizio.');
+    return;
+  }
+  if (status === 'concluso' && (!endDate || endDate < startDate)) {
+    showToast('Per una scheda conclusa, inserisci una data di fine valida.');
+    return;
+  }
+  const record = {
+    id: existingId || crypto.randomUUID(),
+    period,
+    startDate,
+    endDate: status === 'in corso' ? (endDate || '') : endDate,
+    status,
+    members: existing?.members || [],
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const records = institutionRecords(type);
+  if (existing) records[records.indexOf(existing)] = record;
+  else records.unshift(record);
+  writeStorage(STORAGE_KEYS[institutionConfigs[type].key], records);
+  renderInstitution(type);
+  openInstitutionEditor(type, record.id);
+  showToast(`${institutionConfigs[type].itemLabel} salvato.`);
+}
 
 function openInstitutionMember(type, memberId = '', roleId = '') { const record = institutionRecords(type).find(item => item.id === window[`editing${type}Id`]); const member = record?.members.find(item => item.id === memberId); if (!record) return; window[`editing${type}MemberId`] = member?.id || null; document.getElementById(`${type}PersonRole`).innerHTML = institutionSettings(type).roles.map(role => `<option value="${role.id}">${escapeHtml(role.name)}</option>`).join(''); document.getElementById(`${type}PersonForm`).reset(); document.getElementById(`${type}PersonRole`).value = member?.role || roleId || institutionSettings(type).roles[0].id; document.getElementById(`${type}PersonName`).value = member?.name || ''; document.getElementById(`${type}PersonStart`).value = member?.startDate || today(); document.getElementById(`${type}PersonEnd`).value = member?.endDate || ''; document.getElementById(`${type}PersonNotes`).value = member?.annotations || ''; bootstrap.Modal.getOrCreateInstance(document.getElementById(`${type}PersonModal`)).show(); }
 
@@ -1349,12 +1590,17 @@ function bindInstitutionEvents() { Object.keys(institutionConfigs).forEach(type 
 function renderParliaments() {
   const grid = document.getElementById('parliamentGrid');
   const query = archiveSearchValue('parliamentSearch');
-  const mandates = [...state.parliaments].filter(mandate => matchesArchiveSearch([mandate.legislation, mandate.status, ...mandate.members.flatMap(member => [member.name, member.role, member.memberParty, member.memberCoalition])], query)).sort((a, b) => b.startDate.localeCompare(a.startDate));
-  grid.innerHTML = mandates.map(mandate => { const active = mandate.members.filter(member => !member.resignationDate).length; const roleSummary = parliamentRoles().map(role => `<span>${mandate.members.filter(member => member.role === role.id && !member.resignationDate).length} ${escapeHtml(parliamentRoleLabel(role.id, true).toLowerCase())} attivi</span>`).join(''); return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-parliament="${mandate.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">Legislazione ${escapeHtml(mandate.legislation)}</p><h2 class="h4 mb-2">Mandato parlamentare</h2></div><span class="badge ${mandate.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(mandate.status)}</span></div><p class="text-secondary mb-3">${formatDate(mandate.startDate)} → ${formatDate(mandate.endDate)}</p><div class="d-flex flex-wrap gap-3 small">${roleSummary}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${mandate.members.length} nomine nello storico</span><span class="d-flex gap-2">${can('parliament', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parliaments" data-entity-id="${mandate.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-parliament-action="${mandate.id}">Gestisci mandato</button></span></div></article></div>`; }).join('');
+  const mandates = [...state.parliaments].filter(mandate => matchesArchiveSearch([mandate.legislation, mandate.status, ...(mandate.members || []).flatMap(member => [member.name, member.role, member.memberParty, member.memberCoalition])], query)).sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+  grid.innerHTML = mandates.map(mandate => {
+    const active = (mandate.members || []).filter(member => !member.resignationDate).length;
+    const roleSummary = parliamentRoles().map(role => `<span>${(mandate.members || []).filter(member => member.role === role.id && !member.resignationDate).length} ${escapeHtml(parliamentRoleLabel(role.id, true).toLowerCase())} attivi</span>`).join('');
+    const dateFormatted = `${formatDate(mandate.startDate)} → ${mandate.endDate ? formatDate(mandate.endDate) : 'In corso'}`;
+    return `<div class="col-12 col-xl-6"><article class="parliament-card card border-0 shadow-sm" data-open-parliament="${mandate.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-3"><div><p class="eyebrow text-secondary mb-2">Legislazione ${escapeHtml(mandate.legislation)}</p><h2 class="h4 mb-2">Mandato parlamentare</h2></div><span class="badge ${mandate.status === 'in corso' ? 'text-bg-success' : 'text-bg-secondary'}">${mandateStatusLabel(mandate.status)}</span></div><p class="text-secondary mb-3">${dateFormatted}</p><div class="d-flex flex-wrap gap-3 small">${roleSummary}<span>${active} in carica</span></div></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${(mandate.members || []).length} nomine nello storico</span><span class="d-flex gap-2">${can('parliament', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parliaments" data-entity-id="${mandate.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-parliament-action="${mandate.id}">Gestisci mandato</button></span></div></article></div>`;
+  }).join('');
   document.getElementById('emptyParliaments').classList.toggle('d-none', mandates.length > 0);
   document.getElementById('parliamentCount').textContent = mandates.length;
   document.getElementById('currentParliamentCount').textContent = mandates.filter(mandate => mandate.status === 'in corso').length;
-  document.getElementById('memberCount').textContent = mandates.reduce((total, mandate) => total + mandate.members.length, 0);
+  document.getElementById('memberCount').textContent = mandates.reduce((total, mandate) => total + (mandate.members || []).length, 0);
 }
 
 function renderMemberList(mandate, role) {
@@ -1433,9 +1679,11 @@ function saveParliament(event) {
   const legislation = document.getElementById('legislationNumber').value.trim();
   const startDate = document.getElementById('mandateStart').value;
   const endDate = document.getElementById('mandateEnd').value;
-  if (!legislation || !startDate || !endDate || endDate < startDate) { showToast('Inserisci dati validi per il mandato.'); return; }
+  const status = document.getElementById('mandateStatus').value;
+  if (!legislation || !startDate) { showToast('Inserisci la legislazione e la data di inizio.'); return; }
+  if (status === 'concluso' && (!endDate || endDate < startDate)) { showToast('Per un mandato concluso, inserisci una data di fine valida.'); return; }
   const existing = state.parliaments.find(item => item.id === editingParliamentId);
-  const record = { id: editingParliamentId || crypto.randomUUID(), legislation, startDate, endDate, status: document.getElementById('mandateStatus').value, members: existing?.members || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const record = { id: editingParliamentId || crypto.randomUUID(), legislation, startDate, endDate: status === 'in corso' ? (endDate || '') : endDate, status, members: existing?.members || [], createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
   if (existing) state.parliaments[state.parliaments.indexOf(existing)] = record; else state.parliaments.unshift(record);
   writeStorage(STORAGE_KEYS.parliaments, state.parliaments);
   renderParliaments();
@@ -1509,6 +1757,8 @@ function renderSettings() {
   document.getElementById('numberingForm').innerHTML = categories.map(category => `<div class="row align-items-center g-2 mb-3"><div class="col"><label class="form-label mb-0" for="counter-${encodeURIComponent(category)}">${escapeHtml(category)}</label><div class="form-text">Formato: ${escapeHtml(category)} numero/anno</div></div><div class="col-auto"><input class="form-control counter-input" id="counter-${encodeURIComponent(category)}" data-category="${escapeHtml(category)}" type="text" inputmode="numeric" pattern="[0-9]+" value="${nextNumber(category)}"></div></div>`).join('') + '<button class="btn btn-primary mt-2" type="submit">Salva numerazione</button>';
   document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between align-items-center gap-2 border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template${state.documents.some(document => document.category === category) ? ` · ${state.documents.filter(document => document.category === category).length} documenti` : ''}</small></span><span class="d-flex align-items-center gap-2"><strong>${nextNumber(category)}</strong><button type="button" class="btn btn-sm btn-outline-danger" data-delete-category="${escapeHtml(category)}" title="Elimina categoria">Elimina</button></span></span>`).join('');
   document.getElementById('partyFieldList').innerHTML = state.partyFields.length ? state.partyFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nei nuovi partiti</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-party-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome, lo status e lo Statuto sono sempre disponibili.</p>';
+  const coalitionFieldList = document.getElementById('coalitionFieldList');
+  if (coalitionFieldList) coalitionFieldList.innerHTML = state.coalitionFields.length ? state.coalitionFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nelle nuove coalizioni</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-coalition-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome e lo status sono sempre disponibili.</p>';
   const parliamentSettingsForm = document.getElementById('parliamentSettingsForm');
   parliamentSettingsForm.innerHTML = `<div id="parliamentRoleSettings" class="col-12 vstack gap-2">${parliamentRoles().map(role => `<div class="row g-2 align-items-end parliament-role-setting" data-role-id="${role.id}"><div class="col"><label class="form-label">Nome ruolo</label><input class="form-control parliament-role-name" value="${escapeHtml(role.name)}" required></div><div class="col-auto"><label class="form-label">Numero</label><input class="form-control parliament-role-limit" type="number" min="0" value="${role.limit}" required></div><div class="col-auto"><button type="button" class="btn btn-outline-danger remove-parliament-role" data-role-id="${role.id}" ${parliamentRoles().length <= 1 ? 'disabled' : ''}>Rimuovi</button></div></div>`).join('')}</div><div class="col-12 d-flex gap-2"><button type="button" class="btn btn-outline-primary" id="addParliamentRole">+ Nuovo ruolo</button><button class="btn btn-primary" type="submit">Salva configurazione</button></div>`;
   document.getElementById('parliamentFieldList').innerHTML = state.parliamentSettings.fields.length ? state.parliamentSettings.fields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Disponibile per ogni parlamentare</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-parliament-field="${field.id}">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessuna informazione aggiuntiva configurata.</p>';
@@ -1516,7 +1766,12 @@ function renderSettings() {
 
 function renderPartyFields(party = null) {
   const fields = document.getElementById('partyFields');
-  fields.innerHTML = state.partyFields.map(field => `<div class="col-12 col-md-6"><label class="form-label" for="party-field-${field.id}">${escapeHtml(field.name)}</label><input id="party-field-${field.id}" class="form-control party-field-input" data-field-id="${field.id}" required value="${escapeHtml(party?.fields?.[field.id] || '')}"></div>`).join('');
+  let html = state.partyFields.map(field => `<div class="col-12 col-md-6"><label class="form-label" for="party-field-${field.id}">${escapeHtml(field.name)}</label><input id="party-field-${field.id}" class="form-control party-field-input" data-field-id="${field.id}" required value="${escapeHtml(party?.fields?.[field.id] || '')}"></div>`).join('');
+  if (party) {
+    const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
+    html += `<div class="col-12 mt-3"><div class="p-3 border rounded bg-light d-flex justify-content-between align-items-center"><div><strong class="d-block">Statuto del partito</strong><span class="text-secondary small">${hasStatute ? 'Statuto salvato e collegato su Google Documenti' : 'Nessuno statuto ancora collegato'}</span></div><button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}"><i class="bi ${hasStatute ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasStatute ? 'Vedi statuto' : 'Crea statuto'}</button></div></div>`;
+  }
+  fields.innerHTML = html;
 }
 
 function renderPartyHistory(party = null) {
@@ -1559,7 +1814,7 @@ function openStatuteHistory(partyId, historyIndex) {
   const hasStoredVersions = entry.previousStatute !== undefined && entry.nextStatute !== undefined;
   const diff = hasStoredVersions ? diffStatuteText(plainText(entry.previousStatute), plainText(entry.nextStatute)) : { previous: '<span class="text-secondary">Versione precedente non disponibile: questa modifica è stata registrata prima dell’archiviazione delle versioni.</span>', next: escapeHtml(plainText(party.statute || '')) || '<span class="text-secondary">Nessun contenuto</span>' };
   document.getElementById('statuteHistoryTitle').textContent = `${party.name} · Statuto`;
-  document.getElementById('statuteHistoryDate').textContent = `Versione salvata il ${formatDate(entry.at.slice(0, 10))}`;
+  document.getElementById('statuteHistoryDate').textContent = `Versione salvata il ${formatDate(entry.at ? entry.at.slice(0, 10) : '')}`;
   document.getElementById('statutePreviousVersion').innerHTML = diff.previous;
   document.getElementById('statuteNextVersion').innerHTML = diff.next;
   const showComparison = () => bootstrap.Modal.getOrCreateInstance(document.getElementById('statuteHistoryModal')).show();
@@ -1583,19 +1838,37 @@ function openPartyEditor(partyId = '') {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('partyModal')).show();
 }
 
-function openPartyStatuteEditor(partyId) {
+async function openPartyStatuteEditor(partyId) {
   const party = state.parties.find(item => item.id === partyId);
   if (!party) return;
-  if (party.googleStatuteDocumentId) { openGoogleDocument(party.googleStatuteDocumentId); return; }
-  editingPartyId = party.id;
-  activePartyStatuteDocumentId = null;
-  document.getElementById('partyStatutePartyName').textContent = party.name;
-  document.getElementById('partyStatuteSubtitle').textContent = `${statusLabel(party.status)} · documento unico del partito`;
-  const status = document.getElementById('partyStatuteStatus');
-  status.textContent = statusLabel(party.status);
-  status.className = `badge ${statusClass(party.status)}`;
-  setGoogleSpecialEditorState({ titleId: 'partyStatuteGoogleTitle', statusId: 'partyStatuteGoogleStatus', buttonId: 'openPartyStatuteGoogleButton', documentId: '', label: 'Statuto', title: `Statuto - ${party.name}`, create: () => createGoogleDocument(`Statuto - ${party.name}`), setActive: id => { activePartyStatuteDocumentId = id; } });
-  showEditorScreen('partyStatuteEditor');
+  const docUrl = party.googleUrl || party.statuteUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(party.googleStatuteDocumentId)}/edit` : null);
+  if (docUrl) {
+    openGoogleDocument(docUrl);
+    return;
+  }
+  if (!remoteMode || !googleConnection.connected) {
+    showToast('Collega prima un account Google dalle impostazioni per creare lo statuto.');
+    return;
+  }
+  try {
+    showToast('Creazione statuto su Google Documenti in corso...');
+    const result = await createGoogleDocument(`Statuto - ${party.name}`, 'parties');
+    const docId = result.id;
+    const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
+    party.googleStatuteDocumentId = docId;
+    party.googleUrl = url;
+    party.statuteUrl = url;
+    party.statute = party.statute || 'Statuto Google collegato';
+    party.updatedAt = new Date().toISOString();
+    writeStorage(STORAGE_KEYS.parties, state.parties);
+    renderParties();
+    if (editingPartyId === party.id) renderPartyFields(party);
+    showToast('Statuto creato con successo!');
+    openGoogleDocument(url);
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Errore nella creazione dello statuto.');
+  }
 }
 
 function openCompanyEditor(companyId = '') {
@@ -1603,22 +1876,54 @@ function openCompanyEditor(companyId = '') {
   editingCompanyId = company?.id || null;
   document.getElementById('companyForm').reset();
   document.getElementById('companyName').value = company?.name || '';
+  const regContainer = document.getElementById('companyModalRegulationContainer');
+  if (regContainer) {
+    if (company) {
+      const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
+      regContainer.classList.remove('d-none');
+      regContainer.innerHTML = `<div class="p-3 border rounded bg-light d-flex justify-content-between align-items-center mb-3"><div><strong class="d-block">Regolamento aziendale</strong><span class="text-secondary small">${hasRegulation ? 'Regolamento salvato e collegato su Google Documenti' : 'Nessun regolamento ancora collegato'}</span></div><button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}"><i class="bi ${hasRegulation ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasRegulation ? 'Vedi regolamento' : 'Crea regolamento'}</button></div>`;
+    } else {
+      regContainer.classList.add('d-none');
+      regContainer.innerHTML = '';
+    }
+  }
   renderCompanyHistory(company);
   document.querySelector('#companyModal .modal-title').textContent = company ? 'Modifica azienda' : 'Nuova azienda';
   document.querySelector('#companyModal button[type="submit"]').textContent = company ? 'Salva modifiche' : 'Salva azienda';
   bootstrap.Modal.getOrCreateInstance(document.getElementById('companyModal')).show();
 }
 
-function openCompanyRegulationEditor(companyId) {
+async function openCompanyRegulationEditor(companyId) {
   const company = state.companies.find(item => item.id === companyId);
   if (!company) return;
-  if (company.googleRegulationDocumentId) { openGoogleDocument(company.googleRegulationDocumentId); return; }
-  editingCompanyId = company.id;
-  activeCompanyRegulationDocumentId = null;
-  document.getElementById('companyRegulationCompanyName').textContent = company.name;
-  document.getElementById('companyRegulationSubtitle').textContent = 'Documento unico dell’azienda';
-  setGoogleSpecialEditorState({ titleId: 'companyRegulationGoogleTitle', statusId: 'companyRegulationGoogleStatus', buttonId: 'openCompanyRegulationGoogleButton', documentId: '', label: 'Regolamento', title: `Regolamento - ${company.name}`, create: () => createGoogleDocument(`Regolamento - ${company.name}`), setActive: id => { activeCompanyRegulationDocumentId = id; } });
-  showEditorScreen('companyRegulationEditor');
+  const docUrl = company.googleUrl || company.regulationUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(company.googleRegulationDocumentId)}/edit` : null);
+  if (docUrl) {
+    openGoogleDocument(docUrl);
+    return;
+  }
+  if (!remoteMode || !googleConnection.connected) {
+    showToast('Collega prima un account Google dalle impostazioni per creare il regolamento.');
+    return;
+  }
+  try {
+    showToast('Creazione regolamento su Google Documenti in corso...');
+    const result = await createGoogleDocument(`Regolamento - ${company.name}`, 'companies');
+    const docId = result.id;
+    const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
+    company.googleRegulationDocumentId = docId;
+    company.googleUrl = url;
+    company.regulationUrl = url;
+    company.regulation = company.regulation || 'Regolamento Google collegato';
+    company.updatedAt = new Date().toISOString();
+    writeStorage(STORAGE_KEYS.companies, state.companies);
+    renderCompanies();
+    if (editingCompanyId === company.id) openCompanyEditor(company.id);
+    showToast('Regolamento creato con successo!');
+    openGoogleDocument(url);
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Errore nella creazione del regolamento.');
+  }
 }
 
 function closeCompanyRegulationEditor() {
@@ -1631,8 +1936,11 @@ async function saveCompanyRegulation(event) {
   event.preventDefault();
   const company = state.companies.find(item => item.id === editingCompanyId);
   if (!company) return;
-  const googleRegulationDocumentId = company.googleRegulationDocumentId || activeCompanyRegulationDocumentId || (await createGoogleDocument(`Regolamento - ${company.name}`)).id;
+  const googleRegulationDocumentId = company.googleRegulationDocumentId || activeCompanyRegulationDocumentId || (await createGoogleDocument(`Regolamento - ${company.name}`, 'companies')).id;
   company.googleRegulationDocumentId = googleRegulationDocumentId;
+  company.googleUrl = company.googleUrl || `https://docs.google.com/document/d/${encodeURIComponent(googleRegulationDocumentId)}/edit`;
+  company.regulationUrl = company.googleUrl;
+  company.regulation = company.regulation || 'Regolamento Google collegato';
   company.updatedAt = new Date().toISOString();
   writeStorage(STORAGE_KEYS.companies, state.companies);
   closeCompanyRegulationEditor();
@@ -1648,7 +1956,7 @@ function openCompanyHistory(companyId, historyIndex) {
   const hasStoredVersions = entry.previousStatute !== undefined && entry.nextStatute !== undefined;
   const diff = hasStoredVersions ? diffStatuteText(plainText(entry.previousStatute), plainText(entry.nextStatute)) : { previous: '<span class="text-secondary">Versione precedente non disponibile.</span>', next: escapeHtml(plainText(company.regulation || '')) || '<span class="text-secondary">Nessun contenuto</span>' };
   document.getElementById('statuteHistoryTitle').textContent = `${company.name} · Regolamento`;
-  document.getElementById('statuteHistoryDate').textContent = `Versione salvata il ${formatDate(entry.at.slice(0, 10))}`;
+  document.getElementById('statuteHistoryDate').textContent = `Versione salvata il ${formatDate(entry.at ? entry.at.slice(0, 10) : '')}`;
   document.getElementById('statutePreviousVersion').innerHTML = diff.previous;
   document.getElementById('statuteNextVersion').innerHTML = diff.next;
   const showComparison = () => bootstrap.Modal.getOrCreateInstance(document.getElementById('statuteHistoryModal')).show();
@@ -1666,15 +1974,27 @@ function saveCompany(event) {
   const existingCompany = state.companies.find(item => item.id === editingCompanyId);
   const history = existingCompany?.history ? [...existingCompany.history] : [];
   if (existingCompany && existingCompany.name !== name) history.push({ label: 'Nome', from: existingCompany.name, to: name, at: new Date().toISOString() });
-  const record = { id: editingCompanyId || crypto.randomUUID(), name, regulation: existingCompany?.regulation || '', history, createdAt: existingCompany?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const record = {
+    id: editingCompanyId || crypto.randomUUID(),
+    name,
+    regulation: existingCompany?.regulation || '',
+    googleRegulationDocumentId: existingCompany?.googleRegulationDocumentId || null,
+    googleLatestText: existingCompany?.googleLatestText || '',
+    googleUrl: existingCompany?.googleUrl || null,
+    regulationUrl: existingCompany?.regulationUrl || existingCompany?.googleUrl || null,
+    googleModifiedTime: existingCompany?.googleModifiedTime || null,
+    googleModifiedBy: existingCompany?.googleModifiedBy || null,
+    history,
+    createdAt: existingCompany?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
   if (existingCompany) state.companies[state.companies.indexOf(existingCompany)] = record;
   else state.companies.unshift(record);
   writeStorage(STORAGE_KEYS.companies, state.companies);
   bootstrap.Modal.getOrCreateInstance(document.getElementById('companyModal')).hide();
   editingCompanyId = null;
   renderCompanies();
-  if (!existingCompany) openCompanyRegulationEditor(record.id);
-  else showToast('Azienda aggiornata.');
+  showToast(existingCompany ? 'Azienda aggiornata.' : 'Azienda salvata.');
 }
 
 function closePartyStatuteEditor() {
@@ -1687,8 +2007,11 @@ async function savePartyStatute(event) {
   event.preventDefault();
   const party = state.parties.find(item => item.id === editingPartyId);
   if (!party) return;
-  const googleStatuteDocumentId = party.googleStatuteDocumentId || activePartyStatuteDocumentId || (await createGoogleDocument(`Statuto - ${party.name}`)).id;
+  const googleStatuteDocumentId = party.googleStatuteDocumentId || activePartyStatuteDocumentId || (await createGoogleDocument(`Statuto - ${party.name}`, 'parties')).id;
   party.googleStatuteDocumentId = googleStatuteDocumentId;
+  party.googleUrl = party.googleUrl || `https://docs.google.com/document/d/${encodeURIComponent(googleStatuteDocumentId)}/edit`;
+  party.statuteUrl = party.googleUrl;
+  party.statute = party.statute || 'Statuto Google collegato';
   party.updatedAt = new Date().toISOString();
   writeStorage(STORAGE_KEYS.parties, state.parties);
   closePartyStatuteEditor();
@@ -1710,15 +2033,95 @@ function saveParty(event) {
     state.partyFields.forEach(field => { const from = existingParty.fields?.[field.id] || ''; const to = fields[field.id] || ''; if (from !== to) history.push({ label: field.name, from, to, at: new Date().toISOString() }); });
     if (existingParty.status !== status) history.push({ label: 'Status', from: statusLabel(existingParty.status), to: statusLabel(status), at: new Date().toISOString() });
   }
-  const record = { id: editingPartyId || crypto.randomUUID(), name, status, fields, statute: existingParty?.statute || '', history, createdAt: existingParty?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const record = {
+    id: editingPartyId || crypto.randomUUID(),
+    name,
+    status,
+    fields,
+    statute: existingParty?.statute || '',
+    googleStatuteDocumentId: existingParty?.googleStatuteDocumentId || null,
+    googleLatestText: existingParty?.googleLatestText || '',
+    googleUrl: existingParty?.googleUrl || null,
+    statuteUrl: existingParty?.statuteUrl || existingParty?.googleUrl || null,
+    googleModifiedTime: existingParty?.googleModifiedTime || null,
+    googleModifiedBy: existingParty?.googleModifiedBy || null,
+    history,
+    createdAt: existingParty?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
   if (existingParty) state.parties[state.parties.indexOf(existingParty)] = record;
   else state.parties.unshift(record);
   writeStorage(STORAGE_KEYS.parties, state.parties);
   bootstrap.Modal.getOrCreateInstance(document.getElementById('partyModal')).hide();
   editingPartyId = null;
   renderParties();
-  if (!existingParty) openPartyStatuteEditor(record.id);
-  else showToast('Partito aggiornato.');
+  showToast(existingParty ? 'Partito aggiornato.' : 'Partito salvato.');
+}
+function renderCoalitionParties(coalition = null) {
+  const container = document.getElementById('coalitionPartiesList');
+  if (!container) return;
+  const parties = state.parties.filter(p => p.status !== 'cancellato').sort((a, b) => a.name.localeCompare(b.name));
+  if (parties.length === 0) {
+    container.innerHTML = '<p class="small text-secondary mb-0">Nessun partito disponibile.</p>';
+    return;
+  }
+  const selectedIds = coalition?.parties || [];
+  container.innerHTML = `<div class="d-flex flex-column gap-2">${parties.map(p => `
+    <div class="form-check">
+      <input class="form-check-input coalition-party-checkbox" type="checkbox" value="${p.id}" id="coalitionParty-${p.id}" ${selectedIds.includes(p.id) ? 'checked' : ''}>
+      <label class="form-check-label" for="coalitionParty-${p.id}">${escapeHtml(p.name)}</label>
+    </div>
+  `).join('')}</div>`;
+}
+
+function openCoalitionEditor(coalitionId = '') {
+  const coalition = state.coalitions.find(item => item.id === coalitionId);
+  editingCoalitionId = coalition?.id || null;
+  document.getElementById('coalitionForm').reset();
+  document.getElementById('coalitionName').value = coalition?.name || '';
+  document.getElementById('coalitionStatus').value = coalition?.status || 'attiva';
+  renderCoalitionFields(coalition);
+  renderCoalitionParties(coalition);
+  renderCoalitionHistory(coalition);
+  document.querySelector('#coalitionModal .modal-title').textContent = coalition ? 'Modifica coalizione' : 'Nuova coalizione';
+  document.querySelector('#coalitionModal button[type="submit"]').textContent = coalition ? 'Salva modifiche' : 'Salva coalizione';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('coalitionModal')).show();
+}
+
+function saveCoalition(event) {
+  event.preventDefault();
+  const name = document.getElementById('coalitionName').value.trim();
+  if (!name) { showToast('Inserisci il nome della coalizione.'); return; }
+  const fields = Object.fromEntries([...document.querySelectorAll('.coalition-field-input')].map(input => [input.dataset.fieldId, input.value.trim()]));
+  if (Object.values(fields).some(value => !value)) { showToast('Compila tutte le informazioni minime configurate.'); return; }
+  const status = document.getElementById('coalitionStatus').value;
+  const selectedParties = [...document.querySelectorAll('.coalition-party-checkbox:checked')].map(cb => cb.value);
+  const existingCoalition = state.coalitions.find(item => item.id === editingCoalitionId);
+  const history = existingCoalition?.history ? [...existingCoalition.history] : [];
+  if (existingCoalition) {
+    state.coalitionFields.forEach(field => { const from = existingCoalition.fields?.[field.id] || ''; const to = fields[field.id] || ''; if (from !== to) history.push({ label: field.name, from, to, at: new Date().toISOString() }); });
+    if (existingCoalition.status !== status) history.push({ label: 'Status', from: statusLabel(existingCoalition.status), to: statusLabel(status), at: new Date().toISOString() });
+
+    const oldParties = existingCoalition.parties || [];
+    const added = selectedParties.filter(id => !oldParties.includes(id));
+    const removed = oldParties.filter(id => !selectedParties.includes(id));
+    if (added.length > 0) {
+      const addedNames = added.map(id => state.parties.find(p => p.id === id)?.name).filter(Boolean);
+      if (addedNames.length > 0) history.push({ label: 'Partiti aggiunti', from: '', to: addedNames.join(', '), at: new Date().toISOString() });
+    }
+    if (removed.length > 0) {
+      const removedNames = removed.map(id => state.parties.find(p => p.id === id)?.name).filter(Boolean);
+      if (removedNames.length > 0) history.push({ label: 'Partiti rimossi', from: removedNames.join(', '), to: '', at: new Date().toISOString() });
+    }
+  }
+  const record = { id: editingCoalitionId || crypto.randomUUID(), name, status, fields, parties: selectedParties, history, createdAt: existingCoalition?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  if (existingCoalition) state.coalitions[state.coalitions.indexOf(existingCoalition)] = record;
+  else state.coalitions.unshift(record);
+  writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('coalitionModal')).hide();
+  editingCoalitionId = null;
+  renderCoalitions();
+  showToast(existingCoalition ? 'Coalizione aggiornata.' : 'Coalizione salvata.');
 }
 
 function openDocumentModal(templateId = '', forcedCategory = '') {
@@ -1874,7 +2277,7 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
   const source = document.createElement('article');
   source.className = 'pdf-export-source';
   source.style.cssText = [
-    `width: ${printableWidthMm}mm`, 
+    `width: ${printableWidthMm}mm`,
     'box-sizing: border-box',
     'position: relative',
     'background: #fff',
@@ -1908,7 +2311,7 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
   content.querySelectorAll('button, .btn, a, input[type="button"], input[type="submit"], [data-print-document], [data-download-pdf], .print-button').forEach(item => item.remove());
 
   // Gestione immagine/intestazione
-  if (image && !body.includes(image)) { 
+  if (image && !body.includes(image)) {
     const docImage = document.createElement('img');
     docImage.className = 'pdf-export-background';
     docImage.src = image;
@@ -1926,7 +2329,7 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
   content.querySelectorAll('img').forEach(img => {
     img.style.boxSizing = 'border-box';
     if (!img.style.maxWidth) img.style.maxWidth = '100%';
-    
+
     if (img.hasAttribute('width') && !img.style.width) {
       img.style.width = img.getAttribute('width') + 'px';
     }
@@ -1940,13 +2343,13 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
     el.style.boxSizing = 'border-box';
     el.style.overflowWrap = 'break-word';
     el.style.wordBreak = 'normal'; // Evita che le lettere vengano tagliate singolarmente
-    
+
     // Se un elemento nidificato ha una larghezza fissa in pixel ereditata dall'editor 
     // che supera lo spazio del foglio, la limitiamo al 100% per farlo andare a capo
     if (el.style.width && el.style.width.includes('px')) {
       el.style.maxWidth = '100%';
     }
-    
+
     // REGOLA SALVAVITA PER IL TESTO ALLINEATO A DESTRA:
     // Aggiungiamo un micro-padding destro solo agli elementi di testo allineati a destra o giustificati.
     // Questo sposta le firme leggermente verso l'interno di qualche pixel, salvandole dal taglio della canvas.
@@ -1977,18 +2380,18 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
     // 3. APPLICAZIONE DEI MARGINI E COMPENSAZIONE LATERALE
     await window.googleDocsExport().set({
       // Aggiungiamo +2mm di sicurezza ai margini del PDF per compensare la riduzione di printableWidthMm
-      margin: [margins.top, Number(margins.left) + 2, margins.bottom, Number(margins.right) + 2], 
+      margin: [margins.top, Number(margins.left) + 2, margins.bottom, Number(margins.right) + 2],
       filename: String(filename || 'documento.pdf').replace(/[\\/:*?"<>|]+/g, '-'),
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { 
-        scale: 2, 
-        useCORS: true, 
-        backgroundColor: '#ffffff', 
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
         logging: false
       },
-      pagebreak: { 
-        mode: ['css', 'legacy'], 
-        before: ['.page-break'], 
+      pagebreak: {
+        mode: ['css', 'legacy'],
+        before: ['.page-break'],
         avoid: ['table', 'blockquote', 'tr', 'img', 'p'] // Esteso anche ai paragrafi <p> per evitare tagli orizzontali
       },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -1999,7 +2402,7 @@ async function downloadRichPdf({ body = '', filename = 'documento.pdf', image = 
     showToast('Impossibile generare il PDF.');
     console.error(error);
   } finally {
-    source.remove(); 
+    source.remove();
   }
 }
 
@@ -2017,14 +2420,16 @@ function downloadTemplatePdf(id) {
 
 function downloadPartyStatutePdf(id) {
   const party = state.parties.find(item => item.id === id);
-  if (!party?.googleStatuteDocumentId) return;
-  return downloadGooglePdf(party.googleStatuteDocumentId, `statuto-${party.name}.pdf`);
+  const docId = party?.googleStatuteDocumentId || (party?.googleUrl ? extractGoogleDocId(party.googleUrl) : null) || (party?.statuteUrl ? extractGoogleDocId(party.statuteUrl) : null);
+  if (!docId) { showToast('Nessun documento Google collegato allo statuto.'); return; }
+  return downloadGooglePdf(docId, `statuto-${party.name}.pdf`);
 }
 
 function downloadCompanyRegulationPdf(id) {
   const company = state.companies.find(item => item.id === id);
-  if (!company?.googleRegulationDocumentId) return;
-  return downloadGooglePdf(company.googleRegulationDocumentId, `regolamento-${company.name}.pdf`);
+  const docId = company?.googleRegulationDocumentId || (company?.googleUrl ? extractGoogleDocId(company.googleUrl) : null) || (company?.regulationUrl ? extractGoogleDocId(company.regulationUrl) : null);
+  if (!docId) { showToast('Nessun documento Google collegato al regolamento.'); return; }
+  return downloadGooglePdf(docId, `regolamento-${company.name}.pdf`);
 }
 
 
@@ -2097,7 +2502,21 @@ async function initialize() {
     const restoreTrash = event.target.closest('[data-restore-trash]');
     if (restoreTrash) { event.stopImmediatePropagation(); restoreTrashItem(restoreTrash.dataset.restoreTrash); return; }
     const purgeTrash = event.target.closest('[data-purge-trash]');
-    if (purgeTrash) { event.stopImmediatePropagation(); permanentlyDeleteTrashItem(purgeTrash.dataset.purgeTrash); }
+    if (purgeTrash) { event.stopImmediatePropagation(); permanentlyDeleteTrashItem(purgeTrash.dataset.purgeTrash); return; }
+    const toggleOdgStatus = event.target.closest('[data-toggle-odg-status]');
+    if (toggleOdgStatus) {
+      event.stopImmediatePropagation();
+      const documentRecord = state.documents.find(item => item.id === toggleOdgStatus.dataset.toggleOdgStatus);
+      if (documentRecord) {
+        documentRecord.status = documentRecord.status === 'valutato' ? 'da valutare' : 'valutato';
+        documentRecord.updatedAt = new Date().toISOString();
+        writeStorage(STORAGE_KEYS.documents, state.documents);
+        renderOdg();
+        renderDocuments();
+        showToast('Stato ODG aggiornato.');
+      }
+      return;
+    }
   });
   document.querySelectorAll('[data-view-link]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); setView(link.dataset.viewLink); }));
   document.getElementById('newOdgButton').addEventListener('click', () => openDocumentModal('', 'ODG'));
@@ -2109,28 +2528,49 @@ async function initialize() {
   document.getElementById('interpretationFieldList').addEventListener('click', event => { const button = event.target.closest('[data-remove-interpretation-field]'); if (!button) return; state.interpretationSettings.fields = state.interpretationSettings.fields.filter(field => field.id !== button.dataset.removeInterpretationField); writeStorage(STORAGE_KEYS.interpretationSettings, state.interpretationSettings); renderInterpretationSettings(); showToast('Valore base rimosso.'); });
   document.addEventListener('click', event => { const button = event.target.closest('[data-open-interpretation]'); if (button) { event.stopPropagation(); openInterpretationEditor(button.dataset.openInterpretation); } });
   document.getElementById('documentSearch').addEventListener('input', renderDocuments);
-  document.addEventListener('input', event => { const search = event.target.closest('[data-archive-search]'); if (!search) return; const view = search.dataset.archiveSearch; if (view === 'templatesView') renderTemplates(); if (view === 'partiesView') renderParties(); if (view === 'companiesView') renderCompanies(); if (view === 'parliamentView') renderParliaments(); if (view === 'odgView') renderOdg(); if (view === 'interpretationsView') renderInterpretations(); if (view === 'governmentView') renderInstitution('government'); if (view === 'compositionView') renderInstitution('composition'); if (view === 'trashView') renderTrash(); });
+  document.addEventListener('input', event => { const search = event.target.closest('[data-archive-search]'); if (!search) return; const view = search.dataset.archiveSearch; if (view === 'templatesView') renderTemplates(); if (view === 'partiesView') renderParties(); if (view === 'coalitionsView') renderCoalitions(); if (view === 'companiesView') renderCompanies(); if (view === 'parliamentView') renderParliaments(); if (view === 'odgView') renderOdg(); if (view === 'interpretationsView') renderInterpretations(); if (view === 'governmentView') renderInstitution('government'); if (view === 'compositionView') renderInstitution('composition'); if (view === 'trashView') renderTrash(); });
   document.addEventListener('input', event => { const search = event.target.closest('[data-member-search]'); if (!search) return; if (search.id === 'parliamentMemberSearch') { const mandate = state.parliaments.find(item => item.id === editingParliamentId); if (mandate) renderParliamentMembers(mandate); } if (search.id === 'governmentMemberSearch') { const record = state.governments.find(item => item.id === window.editinggovernmentId); if (record) renderInstitutionMembers('government', record); } if (search.id === 'compositionMemberSearch') { const record = state.courtCompositions.find(item => item.id === window.editingcompositionId); if (record) renderInstitutionMembers('composition', record); } });
   document.getElementById('documentForm').addEventListener('submit', saveDocument);
   document.getElementById('templateForm').addEventListener('submit', saveTemplate);
   document.getElementById('partyForm').addEventListener('submit', saveParty);
+  document.getElementById('coalitionForm').addEventListener('submit', saveCoalition);
   document.getElementById('companyForm').addEventListener('submit', saveCompany);
   document.getElementById('parliamentForm').addEventListener('submit', saveParliament);
   document.getElementById('memberForm').addEventListener('submit', saveMember);
   document.getElementById('partyStatuteForm').addEventListener('submit', savePartyStatute);
   document.getElementById('companyRegulationForm').addEventListener('submit', saveCompanyRegulation);
   document.getElementById('closePartyStatuteEditor').addEventListener('click', closePartyStatuteEditor);
-  document.getElementById('cancelPartyStatuteEditor').addEventListener('click', closePartyStatuteEditor);
+  document.getElementById('cancelPartyStatuteEditor')?.addEventListener('click', closePartyStatuteEditor);
   document.getElementById('newPartyButton').addEventListener('click', () => openPartyEditor());
+  document.getElementById('newCoalitionButton').addEventListener('click', () => openCoalitionEditor());
   document.getElementById('newCompanyButton').addEventListener('click', () => openCompanyEditor());
   document.getElementById('newParliamentButton').addEventListener('click', openNewParliament);
   document.getElementById('addMemberButton').addEventListener('click', () => openMemberEditor());
+  document.getElementById('cancelParliamentEditor').addEventListener('click', closeParliamentEditor);
   document.getElementById('closeCompanyRegulationEditor').addEventListener('click', closeCompanyRegulationEditor);
-  document.getElementById('cancelCompanyRegulationEditor').addEventListener('click', closeCompanyRegulationEditor);
+  document.getElementById('cancelCompanyRegulationEditor')?.addEventListener('click', closeCompanyRegulationEditor);
   document.getElementById('categoryForm').addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('categoryName').value.trim(); if (!name) return; if (categoryNames().some(category => category.toLowerCase() === name.toLowerCase())) { showToast('Questa categoria esiste già.'); return; } state.categories.push({ name }); state.counters[name] = 1; writeStorage(STORAGE_KEYS.categories, state.categories); writeStorage(STORAGE_KEYS.counters, state.counters); document.getElementById('categoryForm').reset(); refreshCategoryOptions(); renderSettings(); showToast('Categoria creata.'); });
   document.getElementById('categoryList').addEventListener('click', event => { const button = event.target.closest('[data-delete-category]'); if (!button) return; event.stopPropagation(); deleteCategory(button.dataset.deleteCategory); });
+  document.addEventListener('click', event => { const coalitionBtn = event.target.closest('[data-open-coalition]'); if (coalitionBtn) { event.stopPropagation(); openCoalitionEditor(coalitionBtn.dataset.openCoalition); } });
+  document.getElementById('partyFieldForm').addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('partyFieldName').value.trim(); if (!name) return; if (state.partyFields.some(field => field.name.toLowerCase() === name.toLowerCase())) { showToast('Questo campo esiste già.'); return; } state.partyFields.push({ id: crypto.randomUUID(), name }); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); document.getElementById('partyFieldForm').reset(); renderSettings(); renderParties(); showToast('Informazione minima aggiunta.'); });
+  document.getElementById('partyFieldList').addEventListener('click', event => { const button = event.target.closest('[data-remove-party-field]'); if (!button) return; const fieldId = button.dataset.removePartyField; state.partyFields = state.partyFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); renderSettings(); renderParties(); showToast('Informazione minima rimossa.'); });
+  const coalitionFieldForm = document.getElementById('coalitionFieldForm');
+  if (coalitionFieldForm) coalitionFieldForm.addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('coalitionFieldName').value.trim(); if (!name) return; if (state.coalitionFields.some(field => field.name.toLowerCase() === name.toLowerCase())) { showToast('Questo campo esiste già.'); return; } state.coalitionFields.push({ id: crypto.randomUUID(), name }); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); coalitionFieldForm.reset(); renderSettings(); renderCoalitions(); showToast('Informazione minima aggiunta.'); });
+  const coalitionFieldList = document.getElementById('coalitionFieldList');
+  if (coalitionFieldList) coalitionFieldList.addEventListener('click', event => { const button = event.target.closest('[data-remove-coalition-field]'); if (!button) return; const fieldId = button.dataset.removeCoalitionField; state.coalitionFields = state.coalitionFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); renderSettings(); renderCoalitions(); showToast('Informazione minima rimossa.'); });
   document.getElementById('numberingForm').addEventListener('submit', event => { event.preventDefault(); const inputs = [...document.querySelectorAll('.counter-input')]; if (inputs.some(input => !/^\d+$/.test(input.value.trim()) || numericValue(input.value) < 1)) { showToast('Inserisci solo numeri positivi, ad esempio 01 o 00001.'); return; } inputs.forEach(input => { state.counters[input.dataset.category] = input.value.trim(); }); writeStorage(STORAGE_KEYS.counters, state.counters); renderSettings(); showToast('Numerazione aggiornata.'); });
-  document.getElementById('pageMarginsForm').addEventListener('submit', event => { event.preventDefault(); const margins = Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`).value])); state.pageMargins = normalizePageMargins(margins); writeStorage(STORAGE_KEYS.pageMargins, state.pageMargins); applyPageMargins(); renderSettings(); showToast('Margini pagina aggiornati.'); });
+  const pageMarginsForm = document.getElementById('pageMarginsForm');
+  if (pageMarginsForm) {
+    pageMarginsForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const margins = Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side, document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`).value]));
+      state.pageMargins = normalizePageMargins(margins);
+      writeStorage(STORAGE_KEYS.pageMargins, state.pageMargins);
+      applyPageMargins();
+      renderSettings();
+      showToast('Margini pagina aggiornati.');
+    });
+  }
   document.getElementById('partyFieldForm').addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('partyFieldName').value.trim(); if (!name) return; if (state.partyFields.some(field => field.name.toLowerCase() === name.toLowerCase())) { showToast('Questo campo esiste già.'); return; } state.partyFields.push({ id: crypto.randomUUID(), name }); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); document.getElementById('partyFieldForm').reset(); renderSettings(); renderParties(); showToast('Informazione minima aggiunta.'); });
   document.getElementById('partyFieldList').addEventListener('click', event => { const button = event.target.closest('[data-remove-party-field]'); if (!button) return; const fieldId = button.dataset.removePartyField; state.partyFields = state.partyFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.partyFields, state.partyFields); renderSettings(); renderParties(); showToast('Informazione minima rimossa.'); });
   document.getElementById('parliamentSettingsForm').addEventListener('submit', event => { event.preventDefault(); const roles = [...document.querySelectorAll('.parliament-role-setting')].map(row => ({ id: row.dataset.roleId, name: row.querySelector('.parliament-role-name').value.trim(), limit: Math.max(0, Number.parseInt(row.querySelector('.parliament-role-limit').value, 10) || 0) })).filter(role => role.name); if (!roles.length || new Set(roles.map(role => role.name.toLowerCase())).size !== roles.length) { showToast('Inserisci nomi di ruolo univoci.'); return; } state.parliamentSettings.roles = roles; writeStorage(STORAGE_KEYS.parliamentSettings, state.parliamentSettings); renderSettings(); renderParliaments(); showToast('Configurazione Parlamento salvata.'); });
@@ -2153,8 +2593,6 @@ async function initialize() {
   document.addEventListener('keydown', event => { const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
   document.getElementById('documentDate').value = today();
   document.querySelectorAll('#documentModal, #templateModal, #parliamentModal').forEach(element => { element.classList.remove('modal', 'fade'); element.classList.add('editor-page', 'd-none'); });
-  document.getElementById('parliamentModal').querySelector('[data-bs-dismiss="modal"]').removeAttribute('data-bs-dismiss');
-  document.getElementById('parliamentModal').querySelector('[data-bs-dismiss="modal"]').addEventListener('click', closeParliamentEditor);
   organizeDocumentEditor();
   organizeTemplateEditor();
   refreshCategoryOptions();

@@ -201,6 +201,31 @@ CREATE TABLE `google_connections` (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+SET foreign_key_checks = 0;
+
+
+-- --------------------------------------------------------
+
+--
+-- Struttura della tabella `users`
+--
+
+CREATE TABLE `users` (
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `username` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `display_name` varchar(160) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `role` enum('admin','editor','reader') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'reader',
+  `role_id` bigint UNSIGNED DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `is_primary_admin` tinyint(1) NOT NULL DEFAULT '0',
+  `must_change_credentials` tinyint(1) NOT NULL DEFAULT '0',
+  `deleted_at` datetime DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE `google_watch_channels` (
   `channel_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
   `resource_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -214,27 +239,7 @@ CREATE TABLE `google_watch_channels` (
   CONSTRAINT `fk_google_watch_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- --------------------------------------------------------
-
---
--- Struttura della tabella `users`
---
-
-CREATE TABLE `users` (
-  `id` bigint UNSIGNED NOT NULL,
-  `username` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `display_name` varchar(160) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `role` enum('admin','editor','reader') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'reader',
-  `role_id` bigint UNSIGNED DEFAULT NULL,
-  `is_active` tinyint(1) NOT NULL DEFAULT '1',
-  `is_primary_admin` tinyint(1) NOT NULL DEFAULT '0',
-  `must_change_credentials` tinyint(1) NOT NULL DEFAULT '0',
-  `deleted_at` datetime DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
+SET foreign_key_checks = 1;
 --
 -- Dump dei dati per la tabella `users`
 --
@@ -302,9 +307,7 @@ ALTER TABLE `site_state`
 --
 -- Indici per le tabelle `users`
 --
-ALTER TABLE `users`
-  ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uq_users_username` (`username`);
+-- Primary key and unique username index already defined in CREATE TABLE; skipped
 
 --
 -- Indici per la tabella `google_connections`

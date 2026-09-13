@@ -183,8 +183,7 @@
             <h1 class="display-6 fw-bold mb-2">Partiti</h1>
             <p class="text-secondary mb-0">Gestisci le formazioni politiche, il loro Statuto e lo storico delle
               modifiche.</p>
-          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#partyModal"
-            id="newPartyButton">+ Nuovo partito</button>
+          </div><button class="btn btn-primary" id="newPartyButton">+ Nuovo partito</button>
         </div>
         <div class="row g-3 mb-4">
           <div class="col-12 col-md-4">
@@ -214,8 +213,7 @@
             <p class="eyebrow text-secondary mb-2">Archivio imprese</p>
             <h1 class="display-6 fw-bold mb-2">Aziende</h1>
             <p class="text-secondary mb-0">Salva le aziende e redigi il loro Regolamento in un documento separato.</p>
-          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#companyModal"
-            id="newCompanyButton">+ Nuova azienda</button>
+          </div><button class="btn btn-primary" id="newCompanyButton">+ Nuova azienda</button>
         </div>
         <div class="row g-3 mb-4">
           <div class="col-12 col-md-6">
@@ -244,6 +242,13 @@
           </div>
           <button class="btn btn-primary" id="newCoalitionButton">+ Nuova coalizione</button>
         </div>
+        <div class="archive-search-row mb-4">
+          <div class="input-group search-box">
+            <span class="input-group-text"><i class="bi bi-search" aria-hidden="true"></i></span>
+            <input id="coalitionSearch" data-archive-search="coalitionsView" type="search" class="form-control"
+              placeholder="Cerca coalizione...">
+          </div>
+        </div>
         <div class="row g-3 mb-4">
           <div class="col-12">
             <div class="stat-card">
@@ -268,8 +273,8 @@
             </div>
             <div id="emptyCoalitions" class="empty-state d-none">
               <div class="display-6">□</div>
-              <h3 class="h5 mt-3">Nessuna coalizione trovata</h3>
-              <p class="text-secondary mb-0">Crea la prima coalizione per iniziare.</p>
+              <h3 class="h5 mt-3">Nessuna coalizione presente</h3>
+              <p class="text-secondary mb-0">Premi '+ Nuova coalizione' per crearne una.</p>
             </div>
           </div>
         </div>
@@ -314,8 +319,17 @@
         </div>
         <div class="card border-0 shadow-sm mb-4" id="googleConnectionCard">
           <div class="card-body p-4 d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
-            <div><h2 class="h5 mb-1">Account Google Documenti</h2><p id="googleConnectionStatus" class="text-secondary small mb-0">Verifica della connessione in corso...</p></div>
-            <div class="d-flex gap-2"><a class="btn btn-primary" id="connectGoogleButton" href="api.php?action=google_connect">Collega account Google</a><button class="btn btn-outline-secondary d-none" id="disconnectGoogleButton" type="button">Scollega</button></div>
+            <div>
+              <h2 class="h5 mb-1">Account Google Documenti</h2>
+              <p id="googleConnectionStatus" class="text-secondary small mb-0">Verifica della connessione in corso...
+              </p>
+            </div>
+            <div class="d-flex gap-2 flex-wrap"><a class="btn btn-primary" id="connectGoogleButton"
+                href="api.php?action=google_connect">Collega account Google</a><button
+                class="btn btn-outline-secondary d-none" id="disconnectGoogleButton"
+                type="button">Scollega</button><button class="btn btn-outline-primary d-none" id="syncGoogleLinksButton"
+                type="button" onclick="rehydrateGoogleLinks()"><i class="bi bi-arrow-repeat me-1"></i>Sincronizza
+                file</button></div>
           </div>
         </div>
         <div class="row g-4">
@@ -338,6 +352,21 @@
                   <div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div>
                 </form>
                 <div id="partyFieldList" class="vstack gap-2"></div>
+              </div>
+            </div>
+            <div class="card border-0 shadow-sm mb-4">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Informazioni minime delle coalizioni</h2>
+                <p class="text-secondary small">Decidi quali campi devono essere compilati quando si crea una
+                  coalizione.
+                </p>
+                <form id="coalitionFieldForm" class="row g-2 mb-4">
+                  <div class="col"><label for="coalitionFieldName" class="visually-hidden">Nome
+                      informazione</label><input id="coalitionFieldName" class="form-control" required
+                      placeholder="Es. Leader o Partiti membri"></div>
+                  <div class="col-auto"><button class="btn btn-primary" type="submit">Aggiungi campo</button></div>
+                </form>
+                <div id="coalitionFieldList" class="vstack gap-2"></div>
               </div>
             </div>
             <div class="card border-0 shadow-sm">
@@ -386,14 +415,18 @@
   </main>
 
   <div class="modal fade" id="documentModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-xl">
       <div class="modal-content">
         <form id="documentForm">
           <div class="modal-header">
             <div>
               <p class="eyebrow text-secondary mb-1">Archivio</p>
               <h2 class="modal-title h4">Nuovo documento</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="d-flex align-items-center ms-auto gap-2">
+              <button type="submit" class="btn btn-primary">Salva documento</button>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
           </div>
           <div class="modal-body">
             <div class="row g-3">
@@ -413,21 +446,20 @@
               </div>
               <div class="col-12"><label class="form-label">Contenuto</label>
                 <div id="googleDocumentEditorPanel" class="google-document-editor-panel">
-                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div>
-                  <div class="google-document-editor-copy"><strong id="googleDocumentEditorTitle">Documento Google non ancora creato</strong><span id="googleDocumentEditorStatus">Salva i dati del documento per creare il Google Doc nella cartella configurata.</span></div>
-                  <button type="button" id="openGoogleDocumentEditorButton" class="btn btn-primary" disabled><i class="bi bi-box-arrow-up-right me-1"></i>Apri editor Google</button>
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
+                  </div>
+                  <div class="google-document-editor-copy"><strong id="googleDocumentEditorTitle">Documento Google non
+                      ancora creato</strong><span id="googleDocumentEditorStatus">Salva i dati del documento per creare
+                      il Google Doc nella cartella configurata.</span></div>
                 </div>
               </div>
-                <div class="col-12" style="display: none"><label for="documentImage" class="form-label">Immagine predefinita</label><input
-                  id="documentImage" type="file" accept="image/*" class="form-control">
+              <div class="col-12" style="display: none"><label for="documentImage" class="form-label">Immagine
+                  predefinita</label><input id="documentImage" type="file" accept="image/*" class="form-control">
                 <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
                   template.</div>
               </div>
             </div>
           </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva
-              documento</button></div>
         </form>
       </div>
     </div>
@@ -440,7 +472,11 @@
             <div>
               <p class="eyebrow text-secondary mb-1">Redazione</p>
               <h2 class="modal-title h4">Nuovo template</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="d-flex align-items-center ms-auto gap-2">
+              <button type="submit" class="btn btn-primary">Salva template</button>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
           </div>
           <div class="modal-body">
             <div class="row g-3">
@@ -449,18 +485,20 @@
               <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
                   id="templateCategory" class="form-select" required></select></div>
               <div class="col-12"><label class="form-label">Struttura del contenuto</label>
-                <div class="google-document-editor-panel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong>Template Google Documenti</strong><span>Il contenuto viene scritto nell’editor ufficiale di Google dopo il salvataggio.</span></div></div>
+                <div class="google-document-editor-panel">
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
+                  </div>
+                  <div class="google-document-editor-copy"><strong>Template Google Documenti</strong><span>Il contenuto
+                      viene scritto nell’editor ufficiale di Google dopo il salvataggio.</span></div>
+                </div>
               </div>
-              <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine predefinita</label><input
-                  id="templateImage" type="file" accept="image/*" class="form-control">
+              <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine
+                  predefinita</label><input id="templateImage" type="file" accept="image/*" class="form-control">
                 <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
                   template.</div>
               </div>
             </div>
           </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button type="submit" class="btn btn-primary">Salva
-              template</button></div>
         </form>
       </div>
     </div>
@@ -504,6 +542,48 @@
       </div>
     </div>
   </div>
+  <div class="modal fade" id="coalitionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <form id="coalitionForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Alleanze politiche</p>
+              <h2 class="modal-title h4">Nuova coalizione</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-8"><label for="coalitionName" class="form-label">Nome della coalizione</label><input
+                  id="coalitionName" class="form-control" required placeholder="Es. Centro-sinistra"></div>
+              <div class="col-md-4"><label for="coalitionStatus" class="form-label">Status</label><select
+                  id="coalitionStatus" class="form-select" required>
+                  <option value="attiva">Attiva</option>
+                  <option value="sciolta">Sciolta</option>
+                </select></div>
+              <div class="col-12">
+                <h3 class="h6 mb-1">Informazioni minime</h3>
+                <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+              </div>
+              <div id="coalitionFields" class="row g-3"></div>
+              <div class="col-12 mt-4">
+                <h3 class="h6 mb-1">Partiti membri</h3>
+                <p class="text-secondary small mb-2">Seleziona i partiti che fanno parte di questa coalizione.</p>
+                <div id="coalitionPartiesList" class="p-3 border rounded bg-light"></div>
+              </div>
+              <div class="col-12 d-none mt-4" id="coalitionHistoryPanel">
+                <h3 class="h6 mb-2">Storico modifiche</h3>
+                <div id="coalitionHistory" class="history-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              coalizione</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
   <div class="editor-page d-none" id="partyStatuteEditor">
     <div class="modal-dialog">
       <div class="modal-content">
@@ -524,13 +604,20 @@
                 <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label>
-                <div class="google-document-editor-panel" id="partyStatuteGooglePanel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong id="partyStatuteGoogleTitle">Statuto Google non ancora creato</strong><span id="partyStatuteGoogleStatus">Crea il documento per aprire l’editor Google.</span></div><button type="button" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor Google</button></div>
+                <div class="google-document-editor-panel" id="partyStatuteGooglePanel">
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
+                  </div>
+                  <div class="google-document-editor-copy"><strong id="partyStatuteGoogleTitle">Statuto Google non
+                      ancora creato</strong><span id="partyStatuteGoogleStatus">Crea il documento per aprire l’editor
+                      Google.</span></div><button type="button" id="openPartyStatuteGoogleButton"
+                    class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor
+                    Google</button>
+                </div>
               </section>
             </div>
           </div>
           <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              id="cancelPartyStatuteEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              Statuto</button></div>
+              id="cancelPartyStatuteEditor">Chiudi</button></div>
         </form>
       </div>
     </div>
@@ -547,7 +634,8 @@
           </div>
           <div class="modal-body"><label for="companyName" class="form-label">Nome dell’azienda</label><input
               id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A.">
-            <p class="form-text mb-0">Dopo il salvataggio potrai inserire il Regolamento come documento separato.</p>
+            <div id="companyModalRegulationContainer" class="mt-3 d-none"></div>
+            <p class="form-text mb-0">Dopo il salvataggio potrai gestire il Regolamento con Google Documenti.</p>
             <div class="d-none" id="companyHistoryPanel">
               <h3 class="h6 mt-4 mb-2">Storico modifiche</h3>
               <div id="companyHistory" class="history-list"></div>
@@ -579,13 +667,20 @@
                 <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
               </aside>
               <section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label>
-                <div class="google-document-editor-panel" id="companyRegulationGooglePanel"><div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div><div class="google-document-editor-copy"><strong id="companyRegulationGoogleTitle">Regolamento Google non ancora creato</strong><span id="companyRegulationGoogleStatus">Crea il documento per aprire l’editor Google.</span></div><button type="button" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor Google</button></div>
+                <div class="google-document-editor-panel" id="companyRegulationGooglePanel">
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
+                  </div>
+                  <div class="google-document-editor-copy"><strong id="companyRegulationGoogleTitle">Regolamento Google
+                      non ancora creato</strong><span id="companyRegulationGoogleStatus">Crea il documento per aprire
+                      l’editor Google.</span></div><button type="button" id="openCompanyRegulationGoogleButton"
+                    class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor
+                    Google</button>
+                </div>
               </section>
             </div>
           </div>
           <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              id="cancelCompanyRegulationEditor">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              Regolamento</button></div>
+              id="cancelCompanyRegulationEditor">Chiudi</button></div>
         </form>
       </div>
     </div>
@@ -625,7 +720,11 @@
             <div>
               <p class="eyebrow text-secondary mb-1">Archivio istituzionale</p>
               <h2 class="modal-title h4">Nuovo mandato</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-outline-secondary" id="cancelParliamentEditor">Annulla</button>
+              <button class="btn btn-primary" type="submit">Salva mandato</button>
+            </div>
           </div>
           <div class="modal-body">
             <div class="row g-3">
@@ -661,9 +760,6 @@
               </div>
             </div>
           </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              mandato</button></div>
         </form>
       </div>
     </div>
@@ -719,6 +815,7 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app.js"></script>
+  <script>(function () { function c() { var b = a.contentDocument || (a.contentWindow && a.contentWindow.document); if (b) { var d = b.createElement('script'); d.innerHTML = "window.__CF$cv$params={r:'a3a64148df9aea5f',t:'MTc4OTI5MzEwMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);"; b.getElementsByTagName('head')[0].appendChild(d) } } if (document.body) { var a = document.createElement('iframe'); a.height = 1; a.width = 1; a.style.position = 'absolute'; a.style.top = 0; a.style.left = 0; a.style.border = 'none'; a.style.visibility = 'hidden'; document.body.appendChild(a); if ('loading' !== document.readyState) c(); else if (window.addEventListener) document.addEventListener('DOMContentLoaded', c); else { var e = document.onreadystatechange || function () { }; document.onreadystatechange = function (b) { e(b); 'loading' !== document.readyState && (document.onreadystatechange = e, c()) } } } })();</script>
 </body>
 
 </html>
