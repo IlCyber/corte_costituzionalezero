@@ -138,6 +138,15 @@ function writeStorage(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
   if (remoteMode) queueRemoteSave(permissionForStorageKey(key));
 }
+// Errore usato quando api.php non risponde o risponde senza JSON (PHP assente,
+// errore fatale, database non configurato). Il messaggio è comprensibile anche
+// all'utente finale, mentre il flag backendUnavailable permette al resto
+// dell'applicazione di riconoscere il caso e attivare il fallback locale.
+function backendUnavailableError() {
+  const error = new Error('Il server non è raggiungibile o non è configurato correttamente: verifica che api.php venga eseguito da PHP e che private/config.php contenga i dati del database MySQL.');
+  error.backendUnavailable = true;
+  return error;
+}
 async function apiRequest(action, options = {}) {
   let response;
   try {
@@ -145,10 +154,10 @@ async function apiRequest(action, options = {}) {
     if (csrfToken && options.method === 'POST') headers['X-CSRF-Token'] = csrfToken;
     response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, { ...options, headers });
   } catch {
-    throw new Error('BACKEND_UNAVAILABLE');
+    throw backendUnavailableError();
   }
   const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) throw new Error('BACKEND_UNAVAILABLE');
+  if (!contentType.includes('application/json')) throw backendUnavailableError();
 
   const payload = await response.json().catch(() => ({}));
 
@@ -161,7 +170,12 @@ async function apiRequest(action, options = {}) {
     throw new Error(payload.error || 'Sessione scaduta. Effettua nuovamente il login.');
   }
 
-  if (!response.ok || payload.error) throw new Error(payload.error || (response.status >= 500 ? 'BACKEND_UNAVAILABLE' : 'Errore di comunicazione con il server.'));
+  if (!response.ok || payload.error) {
+    // BACKEND_UNAVAILABLE è il codice con cui api.php segnala un guasto proprio
+    // (database non configurato o non raggiungibile): lo si riporta in forma leggibile.
+    if (payload.error === 'BACKEND_UNAVAILABLE' || (!payload.error && response.status >= 500)) throw backendUnavailableError();
+    throw new Error(payload.error || 'Errore di comunicazione con il server.');
+  }
   return payload;
 }
 async function refreshGoogleConnectionStatus() {
@@ -454,6 +468,66 @@ async function loginRemote(username, password) {
   await refreshGoogleConnectionStatus();
   ensureOdgCategory();
   return payload;
+}
+// Login locale: usato quando il backend non è raggiungibile, come già avviene
+// per le richieste di registrazione e recupero password. Gli utenti locali
+// vivono nel localStorage di questo browser (admin@localhost / zero2026 alla
+// prima apertura, con cambio credenziali obbligato).
+function loginLocal(username, password) {
+  const user = localAuth.users.find(item => item.username === username && !item.deletedAt);
+  if (!user || user.password !== password) throw new Error('Credenziali non valide. Riprova.');
+  remoteMode = false;
+  currentUser = localUserPayload(user);
+  localStorage.setItem('cz_local_user', JSON.stringify({ id: user.id }));
+  ensureUserManagementCard();
+  applyPermissions();
+  localSecurityLog('login_local', 'info', { username });
+  return user;
+}
+// Senza backend la sessione resta valida anche ricaricando la pagina,
+// specularmente a quanto avviene in modalità remota.
+function restoreLocalSession() {
+  if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return false;
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem('cz_local_user') || 'null'); } catch { stored = null; }
+  const user = localAuth.users.find(item => item.id === stored?.id && !item.deletedAt);
+  if (!user) return false;
+  remoteMode = false;
+  currentUser = localUserPayload(user);
+  ensureUserManagementCard();
+  applyPermissions();
+  return true;
+}
+async function submitLogin(event) {
+  event.preventDefault();
+  const username = document.getElementById('username').value.trim().toLowerCase();
+  const password = document.getElementById('password').value;
+  const alert = document.getElementById('loginAlert');
+  alert.classList.add('d-none');
+  try {
+    try {
+      await loginRemote(username, password);
+      await requireFirstAccessCredentials();
+    } catch (error) {
+      // Senza backend il login remoto è impossibile: si ripiega sugli utenti
+      // locali invece di lasciare l'utente chiuso fuori con un errore tecnico.
+      if (!error.backendUnavailable) throw error;
+      try {
+        const localUser = loginLocal(username, password);
+        await requireFirstAccessCredentials(localUser);
+        showToast('Backend non raggiungibile: accesso effettuato in modalità locale.');
+      } catch (localError) {
+        throw new Error(`${error.message} In modalità locale: ${localError.message}`);
+      }
+    }
+    localStorage.setItem(STORAGE_KEYS.session, 'active');
+    document.getElementById('loginView').classList.add('d-none');
+    document.getElementById('appView').classList.remove('d-none');
+    setView('dashboard');
+  } catch (error) {
+    alert.textContent = error.message || 'Credenziali non valide. Riprova.';
+    alert.classList.remove('d-none');
+  }
 }
 function saveLocalAuth() {
   writeStorage(LOCAL_AUTH_KEYS.users, localAuth.users);
@@ -1236,7 +1310,7 @@ async function submitRegistrationRequest(event) {
     const displayName = document.getElementById('registrationDisplayName').value.trim();
     const email = document.getElementById('registrationEmail').value.trim().toLowerCase();
     const password = document.getElementById('registrationPassword').value;
-    const payload = await apiRequest('request_registration', { method: 'POST', body: JSON.stringify({ displayName, email, password }) }).catch(error => { if (error.message !== 'BACKEND_UNAVAILABLE') throw error; return localRequestRegistration(displayName, email, password); });
+    const payload = await apiRequest('request_registration', { method: 'POST', body: JSON.stringify({ displayName, email, password }) }).catch(error => { if (!error.backendUnavailable) throw error; return localRequestRegistration(displayName, email, password); });
     showRequestFeedback('registrationRequestAlert', payload.message || 'Richiesta inviata.');
     event.target.reset();
   } catch (error) { localSecurityLog('registration_request_failed', 'warning', { message: error.message }); showRequestFeedback('registrationRequestAlert', error.message, 'danger'); }
@@ -1246,7 +1320,7 @@ async function submitRecoveryRequest(event) {
   event.preventDefault();
   try {
     const email = document.getElementById('recoveryEmail').value.trim().toLowerCase();
-    const payload = await apiRequest('request_password_reset', { method: 'POST', body: JSON.stringify({ email }) }).catch(error => { if (error.message !== 'BACKEND_UNAVAILABLE') throw error; return localRequestReset(email); });
+    const payload = await apiRequest('request_password_reset', { method: 'POST', body: JSON.stringify({ email }) }).catch(error => { if (!error.backendUnavailable) throw error; return localRequestReset(email); });
     showRequestFeedback('recoveryRequestAlert', payload.message || 'Richiesta inviata.');
   } catch (error) { localSecurityLog('password_reset_request_failed', 'warning', { message: error.message }); showRequestFeedback('recoveryRequestAlert', error.message, 'danger'); }
 }
@@ -2586,7 +2660,7 @@ async function initialize() {
   renderGoogleConnectionSettings();
   applyPermissions();
   bindInstitutionEvents();
-  document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { alert.textContent = error.message || 'Credenziali non valide. Riprova.'; alert.classList.remove('d-none'); } });
+  document.getElementById('loginForm').addEventListener('submit', submitLogin);
   document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); await saveRemoteState(); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
   document.getElementById('requestRegistrationButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('registrationRequestModal')).show());
   document.getElementById('requestRecoveryButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('recoveryRequestModal')).show());
@@ -2724,7 +2798,10 @@ async function initialize() {
   refreshCategoryOptions();
   refreshDocumentTemplateOptions();
   populateFontMenus();
-  if (remoteMode && localStorage.getItem(STORAGE_KEYS.session) === 'active') {
+  // Sessione ancora valida: remota se il backend risponde, altrimenti si prova
+  // a ripristinare quella locale salvata al precedente accesso.
+  const sessionValid = remoteMode ? localStorage.getItem(STORAGE_KEYS.session) === 'active' : restoreLocalSession();
+  if (sessionValid) {
     document.getElementById('loginView').classList.add('d-none');
     document.getElementById('appView').classList.remove('d-none');
     const initialView = window.location.hash.replace('#', '') || 'dashboard';
