@@ -2520,7 +2520,11 @@ async function initialize() {
   renderGoogleConnectionSettings();
   if (remoteMode && googleConnection.connected) {
     await syncGoogleDocumentNames();
-    window.setInterval(() => syncGoogleDocumentNames(false), 10000);
+    if (!window.googleNameSyncTimer) window.googleNameSyncTimer = window.setInterval(() => syncGoogleDocumentNames(false), 10000);
+    window.addEventListener('focus', () => syncGoogleDocumentNames(false));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncGoogleDocumentNames(false);
+    });
   }
   applyPermissions();
   bindInstitutionEvents();
