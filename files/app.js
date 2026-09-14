@@ -1705,8 +1705,14 @@ function openMemberEditor(memberId = '', role = 'titolare') {
   document.getElementById('memberRole').value = member?.role || role;
   document.getElementById('oathDate').value = member?.oathDate || today();
   document.getElementById('resignationDate').value = member?.resignationDate || '';
-  document.getElementById('memberParty').value = member?.memberParty || '';
-  document.getElementById('memberCoalition').value = member?.memberCoalition || '';
+  const partySelect = document.getElementById('memberParty');
+  const coalitionSelect = document.getElementById('memberCoalition');
+  const partyOptions = [...state.parties].filter(party => party.status !== 'cancellato').sort((a, b) => a.name.localeCompare(b.name));
+  const coalitionOptions = [...state.coalitions].filter(coalition => coalition.status !== 'cancellata').sort((a, b) => a.name.localeCompare(b.name));
+  partySelect.innerHTML = '<option value="">Nessun partito</option>' + partyOptions.map(party => `<option value="${escapeHtml(party.name)}">${escapeHtml(party.name)}</option>`).join('');
+  coalitionSelect.innerHTML = '<option value="">Nessuna coalizione</option>' + coalitionOptions.map(coalition => `<option value="${escapeHtml(coalition.name)}">${escapeHtml(coalition.name)}</option>`).join('');
+  partySelect.value = member?.memberParty || '';
+  coalitionSelect.value = member?.memberCoalition || '';
   document.getElementById('memberAnnotations').value = member?.annotations || '';
   renderMemberExtraFields(member);
   bootstrap.Modal.getOrCreateInstance(document.getElementById('memberModal')).show();
