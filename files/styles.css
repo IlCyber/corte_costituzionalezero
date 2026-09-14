@@ -319,40 +319,8 @@ img {
 
 .parliament-member-list {
   display: grid;
-  gap: 0;
+  gap: .85rem;
 }
-
-.member-sequence-item {
-  position: relative;
-  padding: .45rem 0 .45rem 1.4rem;
-}
-
-.member-sequence-item::before {
-  content: '';
-  position: absolute;
-  left: .35rem;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: rgba(166, 64, 45, .3);
-}
-
-.member-sequence-item::after {
-  content: '';
-  position: absolute;
-  left: .18rem;
-  top: 1.35rem;
-  width: .38rem;
-  height: .38rem;
-  border-radius: 50%;
-  background: var(--accent, #a6402d);
-  box-shadow: 0 0 0 3px #fffdfb;
-}
-
-.member-sequence-item:first-child::before { top: 1.35rem; }
-.member-sequence-item:last-child::before { bottom: 1.35rem; }
-.member-sequence-item .parliament-member { position: relative; }
-.member-sequence-item .parliament-member.is-resigned { transform: scale(.98); transform-origin: left center; opacity: .82; }
 
 .parliament-member {
   display: flex;
