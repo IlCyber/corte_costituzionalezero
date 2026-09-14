@@ -427,8 +427,8 @@ function googleStructuralText(array $elements): string
 
 function googleDocumentSnapshot(PDO $pdo, int $userId, string $documentId): string
 {
-    $document = googleRequest($pdo, $userId, 'GET', 'https://docs.googleapis.com/v1/documents/' . rawurlencode($documentId));
-    return googleStructuralText($document['body']['content'] ?? []);
+    $document = googleRequest($pdo, $userId, 'GET', 'https://docs.googleapis.com/v1/documents/' . rawurlencode($documentId), null, false, true);
+    return is_array($document) ? googleStructuralText($document['body']['content'] ?? []) : '';
 }
 
 function googleIdsFromStateItem(array $data): array
@@ -477,12 +477,28 @@ function googleWatchDocument(PDO $pdo, int $userId, string $documentId): void
 
 function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): void
 {
-    $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,modifiedTime,lastModifyingUser(displayName,emailAddress),webViewLink']));
-    $snapshot = googleDocumentSnapshot($pdo, $userId, $documentId);
+    $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,modifiedTime,lastModifyingUser(displayName,emailAddress),webViewLink']), null, false, true);
+    if (!is_array($file) || empty($file['id'])) return;
+    // Il nome è disponibile tramite Drive anche quando l'API Docs non è
+    // autorizzata o il file non contiene ancora testo. Il cambio titolo deve
+    // quindi funzionare indipendentemente dalla sincronizzazione del contenuto.
+    $snapshot = '';
+    try {
+        $snapshot = googleDocumentSnapshot($pdo, $userId, $documentId);
+    } catch (Throwable $error) {
+        error_log('Google Docs snapshot non disponibile per ' . $documentId . ': ' . $error->getMessage());
+    }
     $state = rawSiteState($pdo) ?: [];
     $changed = false;
     foreach (['documents', 'templates'] as $key) foreach (($state[$key] ?? []) as &$item) {
         if (($item['googleDocumentId'] ?? '') !== $documentId) continue;
+        // Il nome ufficiale vive su Drive: non conserviamo più il titolo locale
+        // quando Google restituisce un nome valido.
+        if (isset($file['name']) && trim((string) $file['name']) !== '') {
+            if ($key === 'documents') $item['title'] = (string) $file['name'];
+            if ($key === 'templates') $item['name'] = (string) $file['name'];
+            $item['googleDocumentName'] = (string) $file['name'];
+        }
         $item['googleModifiedTime'] = $file['modifiedTime'] ?? null;
         $item['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
         $item['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
@@ -491,6 +507,7 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     foreach (($state['parties'] ?? []) as &$party) {
         if (($party['googleStatuteDocumentId'] ?? '') !== $documentId) continue;
         $modifiedTime = $file['modifiedTime'] ?? null;
+        if (isset($file['name']) && trim((string) $file['name']) !== '') $party['googleDocumentName'] = (string) $file['name'];
         $previousSnapshot = (string) ($party['googleLatestText'] ?? '');
         if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
             $party['history'] ??= [];
@@ -505,6 +522,7 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     foreach (($state['companies'] ?? []) as &$company) {
         if (($company['googleRegulationDocumentId'] ?? '') !== $documentId) continue;
         $modifiedTime = $file['modifiedTime'] ?? null;
+        if (isset($file['name']) && trim((string) $file['name']) !== '') $company['googleDocumentName'] = (string) $file['name'];
         $previousSnapshot = (string) ($company['googleLatestText'] ?? '');
         if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
             $company['history'] ??= [];
@@ -629,6 +647,22 @@ if ($action === 'google_document_pdf' && $method === 'GET') {
     header('Content-Disposition: attachment; filename="documento-google.pdf"');
     echo $pdf;
     exit;
+}
+
+if ($action === 'google_document_sync' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $ids = requestBody()['ids'] ?? [];
+    if (!is_array($ids)) respond(['error' => 'Parametro ids non valido.'], 422);
+    $synced = 0;
+    foreach ($ids as $rawId) {
+        $documentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $rawId);
+        if ($documentId === '') continue;
+        syncGoogleDocumentMetadata($pdo, $userId, $documentId);
+        $synced++;
+    }
+    respond(['ok' => true, 'synced' => $synced, 'state' => stateForUser($pdo, $userId)]);
 }
 
 if ($action === 'google_document_check' && $method === 'POST') {

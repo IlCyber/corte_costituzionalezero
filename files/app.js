@@ -179,8 +179,33 @@ function renderGoogleConnectionSettings() {
 async function disconnectGoogleAccount() {
   try { await apiRequest('google_disconnect', { method: 'POST', body: '{}' }); await refreshGoogleConnectionStatus(); showToast('Account Google scollegato.'); } catch (error) { showToast(error.message); }
 }
+async function syncGoogleDocumentNames(showFeedback = false) {
+  if (!remoteMode || !googleConnection.connected) return;
+  const ids = [];
+  const add = item => {
+    ['googleDocumentId', 'googleStatuteDocumentId', 'googleRegulationDocumentId'].forEach(field => {
+      if (item?.[field] && !ids.includes(item[field])) ids.push(item[field]);
+    });
+  };
+  [...(state.documents || []), ...(state.templates || []), ...(state.parties || []), ...(state.companies || [])].forEach(add);
+  if (!ids.length) return;
+  try {
+    const payload = await apiRequest('google_document_sync', { method: 'POST', body: JSON.stringify({ ids }) });
+    if (payload.state) {
+      applyRemoteState(payload.state);
+      // Il webhook aggiorna il server; qui aggiorniamo subito tutte le viste aperte.
+      renderDocuments(); renderTemplates(); renderParties(); renderCompanies();
+      if (showFeedback) showToast('Nomi dei documenti Google sincronizzati.');
+    }
+  } catch (error) {
+    if (showFeedback) showToast('Sincronizzazione nomi non riuscita: ' + error.message);
+  }
+}
+
 async function rehydrateGoogleLinks() {
   if (!remoteMode) { showToast('La sincronizzazione Google richiede la modalità remota.'); return; }
+  if (!googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
+  await syncGoogleDocumentNames();
   if (!googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
   const syncBtn = document.getElementById('syncGoogleLinksButton');
   if (syncBtn) { syncBtn.disabled = true; syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Sincronizzazione...'; }
@@ -399,6 +424,10 @@ async function loginRemote(username, password) {
   ensureUserManagementCard();
   applyRemoteState(payload.state);
   await refreshGoogleConnectionStatus();
+  if (googleConnection.connected) {
+    await syncGoogleDocumentNames();
+    if (!window.googleNameSyncTimer) window.googleNameSyncTimer = window.setInterval(() => syncGoogleDocumentNames(false), 10000);
+  }
   ensureOdgCategory();
   return payload;
 }
@@ -698,7 +727,17 @@ function sanitizeRichHtml(value = '') {
 function plainText(value = '') { const container = document.createElement('div'); container.innerHTML = value; return container.textContent || ''; }
 function nextNumber(category) { const value = String(state.counters[category] ?? '1'); return /^\d+$/.test(value) && Number(value) > 0 ? value : '1'; }
 function numericValue(value) { const parsed = Number.parseInt(String(value), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
-function advanceCounter(category, usedNumber) { const current = nextNumber(category); const nextValue = Math.max(numericValue(current), numericValue(usedNumber) + 1); const width = Math.max(current.length, String(nextValue).length); state.counters[category] = String(nextValue).padStart(width, '0'); }
+function advanceCounter(category, usedNumber) {
+  const current = String(state.counters[category] ?? '1').trim();
+  const used = String(usedNumber ?? '').trim();
+  const currentValue = numericValue(current);
+  const usedValue = numericValue(used);
+  const nextValue = Math.max(currentValue, usedValue + 1);
+  // La larghezza scelta dall'utente viene mantenuta: 00001 diventa 00002,
+  // senza perdere gli zeri iniziali durante i salvataggi successivi.
+  const width = Math.max(current.length, used.length, String(nextValue).length);
+  state.counters[category] = String(nextValue).padStart(width, '0');
+}
 function documentCode(document) { return `${document.category} ${String(document.number)}/${document.year}`; }
 function statusLabel(status) { return { attivo: 'Attivo', eliminato: 'Eliminato', confluito: 'Confluito', cancellato: 'Cancellato' }[status] || 'Attivo'; }
 function statusClass(status) { return { attivo: 'text-bg-success', eliminato: 'text-bg-danger', confluito: 'text-bg-warning', cancellato: 'text-bg-secondary' }[status] || 'text-bg-success'; }
@@ -1351,7 +1390,7 @@ function renderParties() {
   grid.innerHTML = parties.map(party => {
     const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
     const dateFormatted = formatDate((party.updatedAt || party.createdAt || '').slice(0, 10));
-    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${hasStatute ? `Statuto registrato · Aggiornato il ${dateFormatted}` : 'Statuto da creare'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(party.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${hasStatute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}">${hasStatute ? 'Vedi statuto' : 'Crea statuto'}</button></span></div></article></div>`;
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${hasStatute ? `Statuto: ${escapeHtml(party.googleDocumentName || 'documento Google')} · Aggiornato il ${dateFormatted}` : 'Statuto da creare'}</p><dl class="party-facts mb-0">${state.partyFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(party.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${hasStatute && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}">${hasStatute ? 'Vedi statuto' : 'Crea statuto'}</button></span></div></article></div>`;
   }).join('');
   document.getElementById('emptyParties').classList.toggle('d-none', parties.length > 0);
   document.getElementById('partyCount').textContent = parties.length;
@@ -1395,7 +1434,7 @@ function renderCompanies() {
   grid.innerHTML = companies.map(company => {
     const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
     const dateFormatted = formatDate((company.updatedAt || company.createdAt || '').slice(0, 10));
-    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${hasRegulation ? `Regolamento registrato · Aggiornato il ${dateFormatted}` : 'Regolamento da creare'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(company.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${hasRegulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}">${hasRegulation ? 'Vedi regolamento' : 'Crea regolamento'}</button></span></div></article></div>`;
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${hasRegulation ? `Regolamento: ${escapeHtml(company.googleDocumentName || 'documento Google')} · Aggiornato il ${dateFormatted}` : 'Regolamento da creare'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(company.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('companies', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${hasRegulation && can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}">${hasRegulation ? 'Vedi regolamento' : 'Crea regolamento'}</button></span></div></article></div>`;
   }).join('');
   document.getElementById('emptyCompanies').classList.toggle('d-none', companies.length > 0);
   document.getElementById('companyCount').textContent = companies.length;
@@ -1856,6 +1895,7 @@ async function openPartyStatuteEditor(partyId) {
     const docId = result.id;
     const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
     party.googleStatuteDocumentId = docId;
+    party.googleDocumentName = party.googleDocumentName || `Statuto - ${party.name}`;
     party.googleUrl = url;
     party.statuteUrl = url;
     party.statute = party.statute || 'Statuto Google collegato';
@@ -1911,6 +1951,7 @@ async function openCompanyRegulationEditor(companyId) {
     const docId = result.id;
     const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
     company.googleRegulationDocumentId = docId;
+    company.googleDocumentName = company.googleDocumentName || `Regolamento - ${company.name}`;
     company.googleUrl = url;
     company.regulationUrl = url;
     company.regulation = company.regulation || 'Regolamento Google collegato';
@@ -2178,7 +2219,7 @@ async function saveDocument(event) {
   if (!title) { showToast('Inserisci il titolo del documento.'); return; }
   const sourceTemplateDocumentId = template?.googleDocumentId || '';
   const googleDocumentId = existingDocument?.googleDocumentId || activeGoogleDocumentId || (await createGoogleDocument(title, 'documents', sourceTemplateDocumentId)).id;
-  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
+  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: existingDocument?.googleDocumentName || title, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
   if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
   else state.documents.unshift(documentRecord);
   advanceCounter(category, number);
@@ -2200,7 +2241,7 @@ async function saveTemplate(event) {
   const name = document.getElementById('templateName').value.trim();
   if (!name || !category) { showToast('Inserisci nome e categoria del template.'); return; }
   const googleDocumentId = existingTemplate?.googleDocumentId || (await createGoogleDocument(name, 'templates')).id;
-  const template = { id: editingTemplateId || crypto.randomUUID(), name, category, body: '', image: '', googleDocumentId };
+  const template = { id: editingTemplateId || crypto.randomUUID(), name, category, body: '', image: '', googleDocumentId, googleDocumentName: existingTemplate?.googleDocumentName || name };
   if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
   else state.templates.push(template);
   writeStorage(STORAGE_KEYS.templates, state.templates);
@@ -2477,6 +2518,10 @@ async function initialize() {
   ensureArchiveSearch('governmentView', 'governmentSearch', 'Cerca periodi o componenti del Governo', 'governmentGrid');
   ensureArchiveSearch('compositionView', 'compositionSearch', 'Cerca periodi o componenti della Corte', 'compositionGrid');
   renderGoogleConnectionSettings();
+  if (remoteMode && googleConnection.connected) {
+    await syncGoogleDocumentNames();
+    window.setInterval(() => syncGoogleDocumentNames(false), 10000);
+  }
   applyPermissions();
   bindInstitutionEvents();
   document.getElementById('loginForm').addEventListener('submit', async event => { event.preventDefault(); const username = document.getElementById('username').value.trim().toLowerCase(); const password = document.getElementById('password').value; const alert = document.getElementById('loginAlert'); alert.classList.add('d-none'); try { await loginRemote(username, password); await requireFirstAccessCredentials(); localStorage.setItem(STORAGE_KEYS.session, 'active'); document.getElementById('loginView').classList.add('d-none'); document.getElementById('appView').classList.remove('d-none'); setView('dashboard'); } catch (error) { alert.textContent = error.message || 'Credenziali non valide. Riprova.'; alert.classList.remove('d-none'); } });
