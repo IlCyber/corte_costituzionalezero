@@ -1,5 +1,7 @@
-const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
-const defaultCounters = { Sentenze: 1, Ordinanze: 1, Decreti: 1, 'Documenti generali': 1 };
+const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', numberPadding: 'cz_number_padding', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
+// Cifre dei progressivi: 5 produce 00001, 00002, ... ed è configurabile dalle impostazioni.
+const DEFAULT_NUMBER_PADDING = 5;
+const defaultCounters = { Sentenze: '00001', Ordinanze: '00001', Decreti: '00001', 'Documenti generali': '00001' };
 const defaultPageMargins = { top: 25, right: 25, bottom: 25, left: 25 };
 const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentare', limit: 10 }, { id: 'sostituto', name: 'Sostituto', limit: 5 }], fields: [] };
 const API_URL = 'api.php';
@@ -30,6 +32,12 @@ let csrfToken = '';
 let googleConnection = { connected: false, configured: false, email: null };
 let activePartyStatuteDocumentId = null;
 let activeCompanyRegulationDocumentId = null;
+// Riallineamento periodico dei nomi con Google Drive.
+const GOOGLE_NAME_REFRESH_MS = 60000;
+const GOOGLE_NAME_MIN_INTERVAL_MS = 15000;
+let googleNameWatcher = null;
+let googleNameSyncInFlight = null;
+let googleNameSyncedAt = 0;
 
 function normalizeParliamentSettings(settings = {}) {
   const safeSettings = settings && typeof settings === 'object' ? settings : {};
@@ -54,6 +62,7 @@ const state = {
   counters: readStorage(STORAGE_KEYS.counters, defaultCounters),
   categories: readStorage(STORAGE_KEYS.categories, Object.keys(defaultCounters).map(name => ({ name }))),
   pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
+  numberPadding: readStorage(STORAGE_KEYS.numberPadding, DEFAULT_NUMBER_PADDING),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
   coalitions: readStorage(STORAGE_KEYS.coalitions, []),
@@ -91,7 +100,8 @@ if (localAdminRole?.permissions?.['*'] && (!localAdminRole.permissions['*'].rest
 
 function ensureOdgCategory() {
   if (!state.categories.some(category => category.name === 'ODG')) state.categories.push({ name: 'ODG' });
-  if (!Object.prototype.hasOwnProperty.call(state.counters, 'ODG')) state.counters.ODG = 1;
+  if (!Object.prototype.hasOwnProperty.call(state.counters, 'ODG')) state.counters.ODG = padNumber('1');
+  normalizeStoredNumbers();
   writeStorage(STORAGE_KEYS.categories, state.categories);
   writeStorage(STORAGE_KEYS.counters, state.counters);
 }
@@ -161,7 +171,8 @@ async function refreshGoogleConnectionStatus() {
   renderGoogleConnectionSettings();
   applyPermissions();
   if (googleConnection.connected && !wasConnected) {
-    rehydrateGoogleLinks();
+    // Primo collegamento: si allineano i nomi senza disturbare con notifiche.
+    rehydrateGoogleLinks({ silent: true });
   }
 }
 function renderGoogleConnectionSettings() {
@@ -179,53 +190,89 @@ function renderGoogleConnectionSettings() {
 async function disconnectGoogleAccount() {
   try { await apiRequest('google_disconnect', { method: 'POST', body: '{}' }); await refreshGoogleConnectionStatus(); showToast('Account Google scollegato.'); } catch (error) { showToast(error.message); }
 }
-async function rehydrateGoogleLinks() {
-  if (!remoteMode) { showToast('La sincronizzazione Google richiede la modalità remota.'); return; }
-  if (!googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
+function googleLinkedDocumentCount() {
+  const ids = new Set();
+  const addId = id => { if (typeof id === 'string' && /^[a-zA-Z0-9_-]{5,}$/.test(id)) ids.add(id); };
+  (state.documents || []).forEach(item => addId(item?.googleDocumentId));
+  (state.templates || []).forEach(item => addId(item?.googleDocumentId));
+  (state.parties || []).forEach(item => addId(item?.googleStatuteDocumentId));
+  (state.companies || []).forEach(item => addId(item?.googleRegulationDocumentId));
+  return ids.size;
+}
+
+/**
+ * Riallinea i nomi con Google Drive. Il rename fatto dentro Google Documenti
+ * diventa il nome mostrato dal sito, così non resta mai il titolo vecchio.
+ * Il confronto lo esegue il backend, che è l'unico a poter parlare con Drive.
+ */
+async function rehydrateGoogleLinks({ silent = false } = {}) {
+  if (!remoteMode) { if (!silent) showToast('La sincronizzazione Google richiede la modalità remota.'); return; }
+  if (!googleConnection.connected) { if (!silent) showToast('Collega prima un account Google dalle impostazioni.'); return; }
+  if (googleLinkedDocumentCount() === 0) { if (!silent) showToast('Nessun file Google collegato trovato nell’archivio.'); return; }
+  // Una sola sincronizzazione alla volta; quelle automatiche rispettano anche
+  // un intervallo minimo, mentre il pulsante manuale parte sempre.
+  if (googleNameSyncInFlight) return googleNameSyncInFlight;
+  if (silent && Date.now() - googleNameSyncedAt < GOOGLE_NAME_MIN_INTERVAL_MS) return;
+  googleNameSyncedAt = Date.now();
+  googleNameSyncInFlight = runGoogleNameSync(silent).finally(() => { googleNameSyncInFlight = null; googleNameSyncedAt = Date.now(); });
+  return googleNameSyncInFlight;
+}
+
+async function runGoogleNameSync(silent) {
   const syncBtn = document.getElementById('syncGoogleLinksButton');
-  if (syncBtn) { syncBtn.disabled = true; syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Sincronizzazione...'; }
+  const previousLabel = syncBtn?.innerHTML;
+  if (syncBtn && !silent) { syncBtn.disabled = true; syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Sincronizzazione...'; }
   try {
-    // Collect all googleDocumentId-like fields from every entity in state
-    const idMap = new Map(); // googleId -> [{ key, index, field }]
-    const addId = (id, ref) => {
-      if (!id || typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) return;
-      if (!idMap.has(id)) idMap.set(id, []);
-      idMap.get(id).push(ref);
-    };
-    const fields = ['googleDocumentId', 'googleStatuteDocumentId', 'googleRegulationDocumentId'];
-    [['documents', state.documents], ['templates', state.templates], ['parties', state.parties], ['companies', state.companies]]
-      .forEach(([key, collection]) => {
-        (collection || []).forEach((item, index) => {
-          fields.forEach(field => { if (item[field]) addId(item[field], { key, index, field }); });
-        });
-      });
-    if (idMap.size === 0) { showToast('Nessun file Google collegato trovato nell\'archivio.'); return; }
-    let results;
-    try {
-      const payload = await apiRequest('google_document_check', { method: 'POST', body: JSON.stringify({ ids: [...idMap.keys()] }) });
-      results = payload.results || {};
-    } catch (error) {
-      showToast('Errore durante la verifica dei file Google: ' + error.message); return;
-    }
-    let staleCount = 0;
-    idMap.forEach((refs, id) => {
-      if (!results[id]) {
-        refs.forEach(({ key, index, field }) => {
-          if (state[key]?.[index]) { delete state[key][index][field]; staleCount++; }
-        });
-      }
-    });
-    if (staleCount > 0) {
-      writeStorage(STORAGE_KEYS.documents, state.documents);
-      writeStorage(STORAGE_KEYS.templates, state.templates);
-      writeStorage(STORAGE_KEYS.parties, state.parties);
-      writeStorage(STORAGE_KEYS.companies, state.companies);
-      showToast(`Sincronizzazione completata. ${staleCount} collegament${staleCount === 1 ? 'o rimosso' : 'i rimossi'} (file non trovati su Drive).`);
-    } else {
-      showToast(`Sincronizzazione completata. Tutti i ${idMap.size} file Google sono raggiungibili.`);
-    }
+    // Le modifiche locali in coda partono prima, altrimenti il salvataggio
+    // ritardato sovrascriverebbe i nomi appena letti da Drive.
+    clearTimeout(remoteSaveTimer);
+    const payload = await apiRequest('google_sync_names', { method: 'POST', body: '{}' });
+    applyRemoteState(payload.state);
+    refreshCurrentView();
+    if (silent) return;
+    const renamed = Array.isArray(payload.renamed) ? payload.renamed.length : 0;
+    const missing = Array.isArray(payload.missing) ? payload.missing.length : 0;
+    const parts = [];
+    if (renamed > 0) parts.push(`${renamed} ${renamed === 1 ? 'nome aggiornato' : 'nomi aggiornati'} da Google`);
+    if (missing > 0) parts.push(`${missing} file non ${missing === 1 ? 'trovato' : 'trovati'} su Drive`);
+    showToast(parts.length ? `Sincronizzazione completata: ${parts.join(' · ')}.` : `Sincronizzazione completata. Tutti i ${payload.checked || googleLinkedDocumentCount()} file Google sono già allineati.`);
+  } catch (error) {
+    if (!silent) showToast('Errore durante la sincronizzazione dei file Google: ' + error.message);
   } finally {
-    if (syncBtn) { syncBtn.disabled = false; syncBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizza file'; }
+    if (syncBtn && !silent) { syncBtn.disabled = false; syncBtn.innerHTML = previousLabel || '<i class="bi bi-arrow-repeat me-1"></i>Sincronizza nomi'; }
+  }
+}
+
+/**
+ * Ridisegna la schermata aperta dopo un aggiornamento dei dati arrivato dal server.
+ */
+function refreshCurrentView() {
+  const view = window.location.hash.replace('#', '').split('?')[0] || 'dashboard';
+  const renderers = {
+    dashboard: renderDocuments,
+    templates: renderTemplates,
+    parties: renderParties,
+    coalitions: renderCoalitions,
+    companies: renderCompanies,
+    odg: renderOdg,
+    trash: renderTrash,
+    settings: renderSettings,
+  };
+  try { (renderers[view] || renderDocuments)(); } catch (error) { console.error(error); }
+}
+
+/**
+ * Propaga al file su Drive il titolo cambiato dal sito: senza questo passaggio
+ * la sincronizzazione successiva riporterebbe indietro il nome precedente.
+ */
+async function renameGoogleDocument(documentId, title, permission = 'documents') {
+  if (!remoteMode || !googleConnection.connected || !documentId || !title) return null;
+  try {
+    const payload = await apiRequest('google_document_rename', { method: 'POST', body: JSON.stringify({ documentId, title, permission }) });
+    return payload?.name || null;
+  } catch (error) {
+    showToast('Il titolo è stato salvato nel sito, ma Google non ha accettato la rinomina: ' + error.message);
+    return null;
   }
 }
 
@@ -280,11 +327,12 @@ function setGoogleDocumentEditorState(documentId = '', title = '') {
 function persistCreatedGoogleDocument(googleDocumentId, title) {
   const category = document.getElementById('documentCategory')?.value.trim() || categoryNames()[0];
   const date = document.getElementById('documentDate')?.value || today();
-  const number = document.getElementById('documentNumber')?.value.trim() || nextNumber(category);
+  const rawNumber = document.getElementById('documentNumber')?.value.trim() || nextNumber(category);
   const template = state.templates.find(item => item.id === document.getElementById('documentTemplate')?.value);
   const status = category === 'ODG' ? (document.getElementById('odgStatus')?.value || 'da valutare') : '';
-  if (!/^\d+$/.test(number) || numericValue(number) < 1) { showToast('Il documento Google è stato creato, ma inserisci un numero progressivo valido per archiviarlo.'); return; }
-  const record = { id: crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, status, createdAt: new Date().toISOString() };
+  if (!/^\d+$/.test(rawNumber) || numericValue(rawNumber) < 1) { showToast('Il documento Google è stato creato, ma inserisci un numero progressivo valido per archiviarlo.'); return; }
+  const number = padNumber(rawNumber);
+  const record = { id: crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: title, status, createdAt: new Date().toISOString() };
   state.documents.unshift(record);
   advanceCounter(category, number);
   writeStorage(STORAGE_KEYS.documents, state.documents);
@@ -342,6 +390,7 @@ function applyRemoteState(remoteState) {
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
   state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
   state.pageMargins = normalizePageMargins(state.pageMargins);
+  normalizeStoredNumbers();
   state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
   state.governmentSettings = normalizeInstitutionSettings(state.governmentSettings, [{ id: 'presidente', name: 'Presidente del Consiglio', limit: 1 }, { id: 'ministro', name: 'Ministro', limit: 10 }]);
   state.compositionSettings = normalizeInstitutionSettings(state.compositionSettings, [{ id: 'presidente', name: 'Presidente della Corte', limit: 1 }, { id: 'giudice', name: 'Giudice costituzionale', limit: 15 }]);
@@ -357,6 +406,9 @@ function applyRemoteState(remoteState) {
       party.statuteUrl = party.googleUrl;
     }
   });
+  // I nomi arrivano già allineati dal backend: qui si tiene solo la copia usata
+  // per mostrare il titolo reale del file accanto allo statuto/regolamento.
+  (state.parties || []).forEach(party => { if (!party.googleStatuteName && party.googleDocumentName) party.googleStatuteName = party.googleDocumentName; });
   (state.companies || []).forEach(company => {
     if (!company.googleRegulationDocumentId && (company.googleUrl || company.regulationUrl)) {
       company.googleRegulationDocumentId = extractGoogleDocId(company.googleUrl || company.regulationUrl) || null;
@@ -368,6 +420,7 @@ function applyRemoteState(remoteState) {
       company.regulationUrl = company.googleUrl;
     }
   });
+  (state.companies || []).forEach(company => { if (!company.googleRegulationName && company.googleDocumentName) company.googleRegulationName = company.googleDocumentName; });
 }
 async function saveRemoteState(permission = 'documents') {
   await apiRequest('save_state', { method: 'POST', body: JSON.stringify(remoteStatePayload(permission)) });
@@ -433,6 +486,7 @@ function permissionForStorageKey(key) {
     counters: 'settings',
     categories: 'settings',
     pageMargins: 'settings',
+    numberPadding: 'settings',
     parties: 'parties',
     partyFields: 'parties',
     coalitions: 'parties',
@@ -452,6 +506,7 @@ function permissionForStorageKey(key) {
     cz_counters: 'settings',
     cz_categories: 'settings',
     cz_page_margins: 'settings',
+    cz_number_padding: 'settings',
     cz_parties: 'parties',
     cz_party_fields: 'parties',
     cz_coalitions: 'parties',
@@ -696,10 +751,30 @@ function sanitizeRichHtml(value = '') {
   return container.innerHTML;
 }
 function plainText(value = '') { const container = document.createElement('div'); container.innerHTML = value; return container.textContent || ''; }
-function nextNumber(category) { const value = String(state.counters[category] ?? '1'); return /^\d+$/.test(value) && Number(value) > 0 ? value : '1'; }
-function numericValue(value) { const parsed = Number.parseInt(String(value), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
-function advanceCounter(category, usedNumber) { const current = nextNumber(category); const nextValue = Math.max(numericValue(current), numericValue(usedNumber) + 1); const width = Math.max(current.length, String(nextValue).length); state.counters[category] = String(nextValue).padStart(width, '0'); }
-function documentCode(document) { return `${document.category} ${String(document.number)}/${document.year}`; }
+// I progressivi sono testo con zeri iniziali (00001, 00002, ...): mantenerli come
+// stringhe evita che "00012" diventi 12 e fa restare l'archivio ordinato.
+function numberPadding() {
+  const configured = Number.parseInt(state.numberPadding, 10);
+  return Number.isFinite(configured) && configured >= 1 && configured <= 12 ? configured : DEFAULT_NUMBER_PADDING;
+}
+function padNumber(value, padding = numberPadding()) {
+  const digits = String(value ?? '').replace(/\D+/g, '');
+  if (!digits) return '';
+  const trimmed = digits.replace(/^0+(?=\d)/, '');
+  return trimmed.padStart(padding, '0');
+}
+function formatNumber(value) { return padNumber(value) || String(value ?? ''); }
+function nextNumber(category) { const value = padNumber(state.counters[category]); return value && numericValue(value) > 0 ? value : padNumber('1'); }
+function numericValue(value) { const parsed = Number.parseInt(String(value ?? '').replace(/\D+/g, ''), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
+function advanceCounter(category, usedNumber) { const nextValue = Math.max(numericValue(nextNumber(category)), numericValue(usedNumber) + 1); state.counters[category] = padNumber(String(nextValue)); }
+function normalizeStoredNumbers() {
+  // Riallinea i dati storici salvati prima dell'introduzione degli zeri iniziali.
+  let changed = false;
+  (state.documents || []).forEach(item => { const padded = padNumber(item?.number); if (padded && padded !== item.number) { item.number = padded; changed = true; } });
+  Object.entries(state.counters || {}).forEach(([category, value]) => { const padded = padNumber(value); if (padded && padded !== value) { state.counters[category] = padded; changed = true; } });
+  return changed;
+}
+function documentCode(document) { return `${document.category} ${formatNumber(document.number)}/${document.year}`; }
 function statusLabel(status) { return { attivo: 'Attivo', eliminato: 'Eliminato', confluito: 'Confluito', cancellato: 'Cancellato' }[status] || 'Attivo'; }
 function statusClass(status) { return { attivo: 'text-bg-success', eliminato: 'text-bg-danger', confluito: 'text-bg-warning', cancellato: 'text-bg-secondary' }[status] || 'text-bg-success'; }
 function mandateStatusLabel(status) { return status === 'in corso' ? 'In corso' : 'Concluso'; }
@@ -1754,7 +1829,11 @@ function refreshDocumentTemplateOptions(category = '') {
 function renderSettings() {
   const categories = categoryNames();
   ['top', 'right', 'bottom', 'left'].forEach(side => { const input = document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`); if (input) input.value = state.pageMargins[side]; });
-  document.getElementById('numberingForm').innerHTML = categories.map(category => `<div class="row align-items-center g-2 mb-3"><div class="col"><label class="form-label mb-0" for="counter-${encodeURIComponent(category)}">${escapeHtml(category)}</label><div class="form-text">Formato: ${escapeHtml(category)} numero/anno</div></div><div class="col-auto"><input class="form-control counter-input" id="counter-${encodeURIComponent(category)}" data-category="${escapeHtml(category)}" type="text" inputmode="numeric" pattern="[0-9]+" value="${nextNumber(category)}"></div></div>`).join('') + '<button class="btn btn-primary mt-2" type="submit">Salva numerazione</button>';
+  const padding = numberPadding();
+  const paddingExample = `${padNumber('1', padding)}, ${padNumber('2', padding)}`;
+  document.getElementById('numberingForm').innerHTML = `<div class="row align-items-center g-2 mb-3 pb-3 border-bottom"><div class="col"><label class="form-label mb-0" for="numberPaddingInput">Cifre del progressivo</label><div class="form-text">Gli zeri iniziali sono aggiunti in automatico: ${escapeHtml(paddingExample)}…</div></div><div class="col-auto"><input class="form-control" id="numberPaddingInput" type="number" min="1" max="12" value="${padding}" style="width:6.5rem"></div></div>`
+    + categories.map(category => `<div class="row align-items-center g-2 mb-3"><div class="col"><label class="form-label mb-0" for="counter-${encodeURIComponent(category)}">${escapeHtml(category)}</label><div class="form-text">Formato: ${escapeHtml(category)} ${escapeHtml(padNumber('1', padding))}/anno</div></div><div class="col-auto"><input class="form-control counter-input" id="counter-${encodeURIComponent(category)}" data-category="${escapeHtml(category)}" type="text" inputmode="numeric" pattern="[0-9]+" value="${escapeHtml(nextNumber(category))}"></div></div>`).join('')
+    + '<button class="btn btn-primary mt-2" type="submit">Salva numerazione</button>';
   document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between align-items-center gap-2 border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template${state.documents.some(document => document.category === category) ? ` · ${state.documents.filter(document => document.category === category).length} documenti` : ''}</small></span><span class="d-flex align-items-center gap-2"><strong>${nextNumber(category)}</strong><button type="button" class="btn btn-sm btn-outline-danger" data-delete-category="${escapeHtml(category)}" title="Elimina categoria">Elimina</button></span></span>`).join('');
   document.getElementById('partyFieldList').innerHTML = state.partyFields.length ? state.partyFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nei nuovi partiti</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-party-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome, lo status e lo Statuto sono sempre disponibili.</p>';
   const coalitionFieldList = document.getElementById('coalitionFieldList');
@@ -1856,6 +1935,7 @@ async function openPartyStatuteEditor(partyId) {
     const docId = result.id;
     const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
     party.googleStatuteDocumentId = docId;
+    party.googleStatuteName = result.name || `Statuto - ${party.name}`;
     party.googleUrl = url;
     party.statuteUrl = url;
     party.statute = party.statute || 'Statuto Google collegato';
@@ -1911,6 +1991,7 @@ async function openCompanyRegulationEditor(companyId) {
     const docId = result.id;
     const url = result.url || `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit`;
     company.googleRegulationDocumentId = docId;
+    company.googleRegulationName = result.name || `Regolamento - ${company.name}`;
     company.googleUrl = url;
     company.regulationUrl = url;
     company.regulation = company.regulation || 'Regolamento Google collegato';
@@ -1938,6 +2019,7 @@ async function saveCompanyRegulation(event) {
   if (!company) return;
   const googleRegulationDocumentId = company.googleRegulationDocumentId || activeCompanyRegulationDocumentId || (await createGoogleDocument(`Regolamento - ${company.name}`, 'companies')).id;
   company.googleRegulationDocumentId = googleRegulationDocumentId;
+  company.googleRegulationName = company.googleRegulationName || `Regolamento - ${company.name}`;
   company.googleUrl = company.googleUrl || `https://docs.google.com/document/d/${encodeURIComponent(googleRegulationDocumentId)}/edit`;
   company.regulationUrl = company.googleUrl;
   company.regulation = company.regulation || 'Regolamento Google collegato';
@@ -1967,18 +2049,24 @@ function openCompanyHistory(companyId, historyIndex) {
   } else showComparison();
 }
 
-function saveCompany(event) {
+async function saveCompany(event) {
   event.preventDefault();
   const name = document.getElementById('companyName').value.trim();
   if (!name) { showToast('Inserisci il nome dell’azienda.'); return; }
   const existingCompany = state.companies.find(item => item.id === editingCompanyId);
   const history = existingCompany?.history ? [...existingCompany.history] : [];
   if (existingCompany && existingCompany.name !== name) history.push({ label: 'Nome', from: existingCompany.name, to: name, at: new Date().toISOString() });
+  // Il regolamento su Drive prende il nome dell'azienda: si rinomina insieme.
+  let regulationName = existingCompany?.googleRegulationName || '';
+  if (existingCompany?.googleRegulationDocumentId && existingCompany.name !== name) {
+    regulationName = (await renameGoogleDocument(existingCompany.googleRegulationDocumentId, `Regolamento - ${name}`, 'companies')) || regulationName;
+  }
   const record = {
     id: editingCompanyId || crypto.randomUUID(),
     name,
     regulation: existingCompany?.regulation || '',
     googleRegulationDocumentId: existingCompany?.googleRegulationDocumentId || null,
+    googleRegulationName: regulationName || null,
     googleLatestText: existingCompany?.googleLatestText || '',
     googleUrl: existingCompany?.googleUrl || null,
     regulationUrl: existingCompany?.regulationUrl || existingCompany?.googleUrl || null,
@@ -2009,6 +2097,7 @@ async function savePartyStatute(event) {
   if (!party) return;
   const googleStatuteDocumentId = party.googleStatuteDocumentId || activePartyStatuteDocumentId || (await createGoogleDocument(`Statuto - ${party.name}`, 'parties')).id;
   party.googleStatuteDocumentId = googleStatuteDocumentId;
+  party.googleStatuteName = party.googleStatuteName || `Statuto - ${party.name}`;
   party.googleUrl = party.googleUrl || `https://docs.google.com/document/d/${encodeURIComponent(googleStatuteDocumentId)}/edit`;
   party.statuteUrl = party.googleUrl;
   party.statute = party.statute || 'Statuto Google collegato';
@@ -2020,7 +2109,7 @@ async function savePartyStatute(event) {
   showToast('Statuto salvato.');
 }
 
-function saveParty(event) {
+async function saveParty(event) {
   event.preventDefault();
   const name = document.getElementById('partyName').value.trim();
   if (!name) { showToast('Inserisci il nome del partito.'); return; }
@@ -2029,6 +2118,11 @@ function saveParty(event) {
   const status = document.getElementById('partyStatus').value;
   const existingParty = state.parties.find(item => item.id === editingPartyId);
   const history = existingParty?.history ? [...existingParty.history] : [];
+  // Lo statuto su Drive prende il nome del partito: si rinomina insieme.
+  let statuteName = existingParty?.googleStatuteName || '';
+  if (existingParty?.googleStatuteDocumentId && existingParty.name !== name) {
+    statuteName = (await renameGoogleDocument(existingParty.googleStatuteDocumentId, `Statuto - ${name}`, 'parties')) || statuteName;
+  }
   if (existingParty) {
     state.partyFields.forEach(field => { const from = existingParty.fields?.[field.id] || ''; const to = fields[field.id] || ''; if (from !== to) history.push({ label: field.name, from, to, at: new Date().toISOString() }); });
     if (existingParty.status !== status) history.push({ label: 'Status', from: statusLabel(existingParty.status), to: statusLabel(status), at: new Date().toISOString() });
@@ -2040,6 +2134,7 @@ function saveParty(event) {
     fields,
     statute: existingParty?.statute || '',
     googleStatuteDocumentId: existingParty?.googleStatuteDocumentId || null,
+    googleStatuteName: statuteName || null,
     googleLatestText: existingParty?.googleLatestText || '',
     googleUrl: existingParty?.googleUrl || null,
     statuteUrl: existingParty?.statuteUrl || existingParty?.googleUrl || null,
@@ -2171,14 +2266,21 @@ async function saveDocument(event) {
   const category = document.getElementById('documentCategory').value.trim();
   const template = state.templates.find(item => item.id === document.getElementById('documentTemplate').value);
   const date = document.getElementById('documentDate').value;
-  const number = document.getElementById('documentNumber').value.trim();
-  if (!/^\d+$/.test(number) || numericValue(number) < 1) { showToast('Il numero deve contenere solo cifre.'); return; }
+  const rawNumber = document.getElementById('documentNumber').value.trim();
+  if (!/^\d+$/.test(rawNumber) || numericValue(rawNumber) < 1) { showToast('Il numero deve contenere solo cifre.'); return; }
+  const number = padNumber(rawNumber);
   const existingDocument = state.documents.find(item => item.id === editingDocumentId);
   const title = document.getElementById('documentTitle').value.trim();
   if (!title) { showToast('Inserisci il titolo del documento.'); return; }
   const sourceTemplateDocumentId = template?.googleDocumentId || '';
   const googleDocumentId = existingDocument?.googleDocumentId || activeGoogleDocumentId || (await createGoogleDocument(title, 'documents', sourceTemplateDocumentId)).id;
-  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
+  // Titolo cambiato dal sito: va riportato anche su Drive, altrimenti il
+  // riallineamento successivo rimetterebbe il nome vecchio.
+  let effectiveTitle = title;
+  if (existingDocument?.googleDocumentId && existingDocument.title !== title) {
+    effectiveTitle = (await renameGoogleDocument(googleDocumentId, title, 'documents')) || title;
+  }
+  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: effectiveTitle, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: effectiveTitle, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
   if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
   else state.documents.unshift(documentRecord);
   advanceCounter(category, number);
@@ -2188,7 +2290,7 @@ async function saveDocument(event) {
   closeEditorScreen();
   renderDocuments();
   if (category === 'ODG') renderOdg();
-  setGoogleDocumentEditorState(googleDocumentId, title);
+  setGoogleDocumentEditorState(googleDocumentId, effectiveTitle);
   openGoogleDocument(googleDocumentId);
   showToast('Documento salvato nell’archivio.');
 }
@@ -2200,7 +2302,12 @@ async function saveTemplate(event) {
   const name = document.getElementById('templateName').value.trim();
   if (!name || !category) { showToast('Inserisci nome e categoria del template.'); return; }
   const googleDocumentId = existingTemplate?.googleDocumentId || (await createGoogleDocument(name, 'templates')).id;
-  const template = { id: editingTemplateId || crypto.randomUUID(), name, category, body: '', image: '', googleDocumentId };
+  // Anche i template seguono il nome del file: rinominare qui aggiorna Drive.
+  let effectiveName = name;
+  if (existingTemplate?.googleDocumentId && existingTemplate.name !== name) {
+    effectiveName = (await renameGoogleDocument(googleDocumentId, name, 'templates')) || name;
+  }
+  const template = { id: editingTemplateId || crypto.randomUUID(), name: effectiveName, category, body: '', image: '', googleDocumentId, googleDocumentName: effectiveName };
   if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
   else state.templates.push(template);
   writeStorage(STORAGE_KEYS.templates, state.templates);
@@ -2488,6 +2595,8 @@ async function initialize() {
   document.getElementById('credentialChangeForm').addEventListener('submit', saveFirstAccessCredentials);
   document.getElementById('refreshUsersButton')?.addEventListener('click', refreshUserManagement);
   document.getElementById('disconnectGoogleButton')?.addEventListener('click', disconnectGoogleAccount);
+  // Legato qui e non con onclick: la CSP del sito vieta gli handler inline.
+  document.getElementById('syncGoogleLinksButton')?.addEventListener('click', () => rehydrateGoogleLinks());
   document.addEventListener('change', event => { const roleSelect = event.target.closest('.user-role-select'); if (roleSelect) userManagementAction('change_user_role', { userId: roleSelect.dataset.userId, roleId: roleSelect.value }, 'Ruolo aggiornato.'); });
   document.addEventListener('click', event => { const deleteUser = event.target.closest('.delete-user-button'); if (deleteUser) { event.stopImmediatePropagation(); if (confirm('Spostare questo utente nel cestino? Potrà essere ripristinato o eliminato definitivamente dalla sezione Utenti e permessi.')) userManagementAction('delete_user', { userId: deleteUser.dataset.userId }, 'Utente spostato nel cestino.'); } });
   document.addEventListener('click', event => { const createRoleButton = event.target.closest('#createRoleButton'); if (createRoleButton) userManagementAction('create_role', { name: document.getElementById('newRoleName').value }, 'Ruolo creato.'); const savePermissionsButton = event.target.closest('.save-role-permissions'); if (savePermissionsButton) { const permissions = {}; document.querySelectorAll(`.role-permission[data-role-id="${savePermissionsButton.dataset.roleId}"]`).forEach(input => { permissions[input.dataset.permission] ||= {}; permissions[input.dataset.permission][input.dataset.action] = input.checked; }); userManagementAction('save_role_permissions', { roleId: savePermissionsButton.dataset.roleId, permissions }, 'Permessi salvati.'); } });
@@ -2558,7 +2667,24 @@ async function initialize() {
   if (coalitionFieldForm) coalitionFieldForm.addEventListener('submit', event => { event.preventDefault(); const name = document.getElementById('coalitionFieldName').value.trim(); if (!name) return; if (state.coalitionFields.some(field => field.name.toLowerCase() === name.toLowerCase())) { showToast('Questo campo esiste già.'); return; } state.coalitionFields.push({ id: crypto.randomUUID(), name }); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); coalitionFieldForm.reset(); renderSettings(); renderCoalitions(); showToast('Informazione minima aggiunta.'); });
   const coalitionFieldList = document.getElementById('coalitionFieldList');
   if (coalitionFieldList) coalitionFieldList.addEventListener('click', event => { const button = event.target.closest('[data-remove-coalition-field]'); if (!button) return; const fieldId = button.dataset.removeCoalitionField; state.coalitionFields = state.coalitionFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); renderSettings(); renderCoalitions(); showToast('Informazione minima rimossa.'); });
-  document.getElementById('numberingForm').addEventListener('submit', event => { event.preventDefault(); const inputs = [...document.querySelectorAll('.counter-input')]; if (inputs.some(input => !/^\d+$/.test(input.value.trim()) || numericValue(input.value) < 1)) { showToast('Inserisci solo numeri positivi, ad esempio 01 o 00001.'); return; } inputs.forEach(input => { state.counters[input.dataset.category] = input.value.trim(); }); writeStorage(STORAGE_KEYS.counters, state.counters); renderSettings(); showToast('Numerazione aggiornata.'); });
+  document.getElementById('numberingForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const inputs = [...document.querySelectorAll('.counter-input')];
+    if (inputs.some(input => !/^\d+$/.test(input.value.trim()) || numericValue(input.value) < 1)) { showToast('Inserisci solo numeri positivi, ad esempio 1 o 00001.'); return; }
+    const paddingInput = document.getElementById('numberPaddingInput');
+    const requestedPadding = Number.parseInt(paddingInput?.value, 10);
+    if (paddingInput && (!Number.isFinite(requestedPadding) || requestedPadding < 1 || requestedPadding > 12)) { showToast('Le cifre del progressivo devono essere un numero da 1 a 12.'); return; }
+    if (paddingInput) { state.numberPadding = requestedPadding; writeStorage(STORAGE_KEYS.numberPadding, state.numberPadding); }
+    // Con le nuove cifre si riformattano anche i contatori e i documenti già archiviati.
+    inputs.forEach(input => { state.counters[input.dataset.category] = padNumber(input.value.trim()); });
+    const documentsChanged = normalizeStoredNumbers();
+    writeStorage(STORAGE_KEYS.counters, state.counters);
+    if (documentsChanged) writeStorage(STORAGE_KEYS.documents, state.documents);
+    renderSettings();
+    renderDocuments();
+    renderOdg();
+    showToast('Numerazione aggiornata.');
+  });
   const pageMarginsForm = document.getElementById('pageMarginsForm');
   if (pageMarginsForm) {
     pageMarginsForm.addEventListener('submit', event => {
@@ -2610,12 +2736,35 @@ async function initialize() {
   const loader = document.getElementById('loadingOverlay');
   if (loader) loader.classList.add('d-none');
 
+  startGoogleNameWatcher();
+
   window.addEventListener('popstate', (event) => {
     if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return;
     const view = event.state?.view || window.location.hash.replace('#', '') || 'dashboard';
     setView(view, false);
     document.querySelectorAll('.editor-page').forEach(el => el.classList.add('d-none'));
   });
+}
+
+/**
+ * Tiene i nomi allineati mentre il sito resta aperto: chi rinomina un Google Doc
+ * in un'altra scheda ritrova il titolo nuovo senza dover ricaricare la pagina.
+ * Si controlla solo a scheda visibile, per non sprecare quota API in sottofondo.
+ */
+function startGoogleNameWatcher() {
+  if (googleNameWatcher) return;
+  const tick = () => {
+    if (document.hidden) return;
+    if (!remoteMode || !googleConnection.connected) return;
+    if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return;
+    if (document.querySelector('.editor-page:not(.d-none)')) return; // Non si interrompe una modifica in corso.
+    rehydrateGoogleLinks({ silent: true });
+  };
+  googleNameWatcher = setInterval(tick, GOOGLE_NAME_REFRESH_MS);
+  // Tornando sulla scheda si verifica subito: è il momento in cui l'utente
+  // rientra dopo aver rinominato il file dentro Google Documenti.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+  window.addEventListener('focus', tick);
 }
 
 document.addEventListener('DOMContentLoaded', initialize);

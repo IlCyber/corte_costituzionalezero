@@ -323,13 +323,15 @@
               <h2 class="h5 mb-1">Account Google Documenti</h2>
               <p id="googleConnectionStatus" class="text-secondary small mb-0">Verifica della connessione in corso...
               </p>
+              <p class="text-secondary small mb-0 mt-1">I nomi dei documenti seguono sempre il titolo del file su
+                Google Drive: se rinomini un Google Doc, il sito si aggiorna da solo.</p>
             </div>
             <div class="d-flex gap-2 flex-wrap"><a class="btn btn-primary" id="connectGoogleButton"
                 href="api.php?action=google_connect">Collega account Google</a><button
                 class="btn btn-outline-secondary d-none" id="disconnectGoogleButton"
                 type="button">Scollega</button><button class="btn btn-outline-primary d-none" id="syncGoogleLinksButton"
-                type="button" onclick="rehydrateGoogleLinks()"><i class="bi bi-arrow-repeat me-1"></i>Sincronizza
-                file</button></div>
+                type="button"><i class="bi bi-arrow-repeat me-1"></i>Sincronizza
+                nomi</button></div>
           </div>
         </div>
         <div class="row g-4">

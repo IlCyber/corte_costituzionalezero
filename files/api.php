@@ -135,10 +135,32 @@ function sanitizeRichHtml(string $html): string
 
 function sanitizeState(array $state): array
 {
-    foreach ($state['documents'] ?? [] as &$document) if (isset($document['body'])) $document['body'] = sanitizeRichHtml((string) $document['body']);
+    // Le cifre scelte nelle impostazioni del sito hanno la precedenza sul valore
+    // di config.php, così il backend non riformatta contro la scelta dell'utente.
+    $padding = isset($state['numberPadding']) ? (int) $state['numberPadding'] : documentNumberPadding();
+    $padding = max(1, min(12, $padding));
+    if (isset($state['numberPadding'])) $state['numberPadding'] = $padding;
+
+    foreach ($state['documents'] ?? [] as &$document) {
+        if (isset($document['body'])) $document['body'] = sanitizeRichHtml((string) $document['body']);
+        // I progressivi sono salvati già con gli zeri iniziali, così l'archivio
+        // resta ordinato anche se un vecchio record era stato scritto come "7".
+        if (isset($document['number'])) {
+            $padded = formatDocumentNumber($document['number'], $padding);
+            if ($padded !== '') $document['number'] = $padded;
+        }
+    }
+    unset($document);
     foreach ($state['templates'] ?? [] as &$template) if (isset($template['body'])) $template['body'] = sanitizeRichHtml((string) $template['body']);
+    unset($template);
     foreach ($state['parties'] ?? [] as &$party) if (isset($party['statute'])) $party['statute'] = sanitizeRichHtml((string) $party['statute']);
+    unset($party);
     foreach ($state['companies'] ?? [] as &$company) if (isset($company['regulation'])) $company['regulation'] = sanitizeRichHtml((string) $company['regulation']);
+    unset($company);
+    foreach ($state['counters'] ?? [] as $category => $counter) {
+        $padded = formatDocumentNumber($counter, $padding);
+        if ($padded !== '') $state['counters'][$category] = $padded;
+    }
     return $state;
 }
 
@@ -241,6 +263,7 @@ function statePermissionMap(): array
         'counters' => 'settings',
         'categories' => 'settings',
         'pageMargins' => 'settings',
+        'numberPadding' => 'settings',
         'parties' => 'parties',
         'partyFields' => 'parties',
         'coalitions' => 'parties',
@@ -367,29 +390,106 @@ function googleConfigured(): bool
     return GOOGLE_DRIVE_FOLDER_ID !== 'INSERISCI_ID_CARTELLA_DRIVE' && !str_contains(GOOGLE_CLIENT_ID, 'INSERISCI_') && !str_contains(GOOGLE_CLIENT_SECRET, 'INSERISCI_') && !str_contains(GOOGLE_REDIRECT_URI, 'INSERISCI_');
 }
 
+/**
+ * Le costanti sotto sono opzionali: gli impianti già installati non hanno un
+ * config.php aggiornato, quindi si usano valori predefiniti sensati.
+ */
+function googleSyncMaxLookups(): int
+{
+    $value = defined('GOOGLE_SYNC_MAX_LOOKUPS') ? (int) constant('GOOGLE_SYNC_MAX_LOOKUPS') : 40;
+    return $value > 0 ? $value : 40;
+}
+
+function googleNameSyncInterval(): int
+{
+    return defined('GOOGLE_NAME_SYNC_INTERVAL') ? max(0, (int) constant('GOOGLE_NAME_SYNC_INTERVAL')) : 120;
+}
+
+function documentNumberPadding(): int
+{
+    $value = defined('DOCUMENT_NUMBER_PADDING') ? (int) constant('DOCUMENT_NUMBER_PADDING') : 5;
+    return max(1, min(12, $value));
+}
+
+/**
+ * Normalizza un progressivo aggiungendo gli zeri iniziali (es. 1 -> 00001).
+ */
+function formatDocumentNumber(mixed $value, ?int $padding = null): string
+{
+    $digits = preg_replace('/\D+/', '', (string) $value) ?? '';
+    if ($digits === '') return '';
+    $numeric = ltrim($digits, '0');
+    if ($numeric === '') $numeric = '0';
+    return str_pad($numeric, $padding ?? documentNumberPadding(), '0', STR_PAD_LEFT);
+}
+
 function base64UrlEncode(string $value): string
 {
     return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
 }
 
+/**
+ * Restituisce un access token valido, oppure null se non è ottenibile.
+ * Il token viene riusato per tutta la durata della richiesta PHP: le
+ * sincronizzazioni leggono molti file e un refresh per chiamata sprecherebbe quota.
+ */
+function googleAccessTokenOrNull(PDO $pdo, int $userId): ?string
+{
+    static $tokenCache = [];
+    if (isset($tokenCache[$userId])) return $tokenCache[$userId];
+    if (!googleConfigured()) return null;
+    try {
+        $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
+        $query->execute([$userId]);
+        $refreshToken = (string) $query->fetchColumn();
+    } catch (Throwable $error) {
+        return null;
+    }
+    if ($refreshToken === '') return null;
+    $post = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'refresh_token' => $refreshToken, 'grant_type' => 'refresh_token']);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
+    $response = @file_get_contents('https://oauth2.googleapis.com/token', false, $context);
+    $payload = json_decode((string) $response, true);
+    if (!is_array($payload) || empty($payload['access_token'])) return null;
+    $tokenCache[$userId] = (string) $payload['access_token'];
+    return $tokenCache[$userId];
+}
+
 function googleAccessToken(PDO $pdo, int $userId): string
 {
+    $token = googleAccessTokenOrNull($pdo, $userId);
+    if ($token !== null) return $token;
     if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
     $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
     $query->execute([$userId]);
-    $refreshToken = (string) $query->fetchColumn();
-    if ($refreshToken === '') respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
-    $post = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'refresh_token' => $refreshToken, 'grant_type' => 'refresh_token']);
-    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
-    $response = file_get_contents('https://oauth2.googleapis.com/token', false, $context);
-    $payload = json_decode((string) $response, true);
-    if (!is_array($payload) || empty($payload['access_token'])) respond(['error' => 'La connessione Google è scaduta. Ricollega l’account dalle impostazioni.'], 409);
-    return (string) $payload['access_token'];
+    if ((string) $query->fetchColumn() === '') respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
+    respond(['error' => 'La connessione Google è scaduta. Ricollega l’account dalle impostazioni.'], 409);
+}
+
+function googleConnectionExists(PDO $pdo, int $userId): bool
+{
+    try {
+        if (!googleConfigured()) return false;
+        $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
+        $query->execute([$userId]);
+        return (string) $query->fetchColumn() !== '';
+    } catch (Throwable $error) {
+        return false;
+    }
+}
+
+function googleWebhookConfigured(): bool
+{
+    return str_starts_with(GOOGLE_WEBHOOK_URI, 'https://') && !str_contains(GOOGLE_WEBHOOK_URI, 'INSERISCI_');
 }
 
 function googleRequest(PDO $pdo, int $userId, string $method, string $url, ?array $body = null, bool $binary = false, bool $allowFailure = false): mixed
 {
-    $headers = ['Authorization: Bearer ' . googleAccessToken($pdo, $userId), 'Accept: application/json'];
+    // Con allowFailure le sincronizzazioni di sfondo non devono interrompere la
+    // risposta al browser: se il token manca si rinuncia in silenzio.
+    $token = $allowFailure ? googleAccessTokenOrNull($pdo, $userId) : googleAccessToken($pdo, $userId);
+    if ($token === null) return null;
+    $headers = ['Authorization: Bearer ' . $token, 'Accept: application/json'];
     if ($body !== null) $headers[] = 'Content-Type: application/json';
     $curl = curl_init($url);
     curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $headers, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => GOOGLE_API_TIMEOUT, CURLOPT_POSTFIELDS => $body === null ? null : json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
@@ -440,6 +540,200 @@ function googleIdsFromStateItem(array $data): array
     ], static fn (mixed $id): bool => is_string($id) && preg_match('/^[a-zA-Z0-9_-]+$/', $id) === 1)));
 }
 
+function validGoogleId(mixed $id): string
+{
+    return is_string($id) && preg_match('/^[a-zA-Z0-9_-]{5,}$/', $id) === 1 ? $id : '';
+}
+
+/**
+ * Elenca ogni file Google collegato allo stato, indicando dove il nome va riportato.
+ *
+ * @return array<string, array<int, array{key: string, index: int, field: string}>>
+ */
+function googleLinkedDocuments(array $state): array
+{
+    $map = [];
+    $collections = [
+        ['documents', 'googleDocumentId', 'title'],
+        ['templates', 'googleDocumentId', 'name'],
+        ['parties', 'googleStatuteDocumentId', 'googleStatuteName'],
+        ['companies', 'googleRegulationDocumentId', 'googleRegulationName'],
+    ];
+    foreach ($collections as [$key, $idField, $nameField]) {
+        foreach (($state[$key] ?? []) as $index => $item) {
+            if (!is_array($item)) continue;
+            $documentId = validGoogleId($item[$idField] ?? null);
+            if ($documentId === '') continue;
+            $map[$documentId][] = ['key' => $key, 'index' => $index, 'field' => $nameField];
+        }
+    }
+    return $map;
+}
+
+/**
+ * Recupera in blocco i metadati dei file richiesti: prima con un elenco della
+ * cartella configurata (poche chiamate), poi con richieste puntuali per i file
+ * spostati altrove. Così la sincronizzazione resta veloce anche con molti documenti.
+ *
+ * @param array<int, string> $ids
+ * @return array<string, array{name: string, trashed: bool, modifiedTime: ?string, webViewLink: ?string, missing: bool}>
+ */
+function googleFileMetadata(PDO $pdo, int $userId, array $ids, ?int $maxLookups = null): array
+{
+    $maxLookups ??= googleSyncMaxLookups();
+    $wanted = array_values(array_unique(array_filter(array_map(static fn (mixed $id): string => validGoogleId($id), $ids), static fn (string $id): bool => $id !== '')));
+    if (empty($wanted)) return [];
+
+    $found = [];
+    $pageToken = '';
+    $pages = 0;
+    do {
+        $parameters = [
+            'q' => "'" . str_replace("'", "\\'", GOOGLE_DRIVE_FOLDER_ID) . "' in parents",
+            'fields' => 'nextPageToken,files(id,name,trashed,modifiedTime,webViewLink)',
+            'pageSize' => 1000,
+            'supportsAllDrives' => 'true',
+            'includeItemsFromAllDrives' => 'true',
+        ];
+        if ($pageToken !== '') $parameters['pageToken'] = $pageToken;
+        $listing = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files?' . http_build_query($parameters), null, false, true);
+        if (!is_array($listing)) break;
+        foreach (($listing['files'] ?? []) as $file) {
+            $fileId = validGoogleId($file['id'] ?? null);
+            if ($fileId === '') continue;
+            $found[$fileId] = [
+                'name' => trim((string) ($file['name'] ?? '')),
+                'trashed' => (bool) ($file['trashed'] ?? false),
+                'modifiedTime' => $file['modifiedTime'] ?? null,
+                'webViewLink' => $file['webViewLink'] ?? null,
+                'missing' => false,
+            ];
+        }
+        $pageToken = (string) ($listing['nextPageToken'] ?? '');
+        $pages++;
+    } while ($pageToken !== '' && $pages < 10);
+
+    $metadata = [];
+    $lookups = 0;
+    foreach ($wanted as $documentId) {
+        if (isset($found[$documentId])) { $metadata[$documentId] = $found[$documentId]; continue; }
+        if ($lookups >= $maxLookups) continue;
+        $lookups++;
+        $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,trashed,modifiedTime,webViewLink', 'supportsAllDrives' => 'true']), null, false, true);
+        if (!is_array($file) || !isset($file['id'])) { $metadata[$documentId] = ['name' => '', 'trashed' => false, 'modifiedTime' => null, 'webViewLink' => null, 'missing' => true]; continue; }
+        $metadata[$documentId] = [
+            'name' => trim((string) ($file['name'] ?? '')),
+            'trashed' => (bool) ($file['trashed'] ?? false),
+            'modifiedTime' => $file['modifiedTime'] ?? null,
+            'webViewLink' => $file['webViewLink'] ?? null,
+            'missing' => false,
+        ];
+    }
+    return $metadata;
+}
+
+/**
+ * Riporta nello stato i nomi correnti dei file Google: il sito mostra sempre il
+ * titolo aggiornato su Drive e non conserva più quello vecchio.
+ *
+ * @param array<string, array{name: string, trashed: bool, modifiedTime: ?string, webViewLink: ?string, missing: bool}> $metadata
+ * @return array{changed: bool, renamed: array<int, array{type: string, id: string, from: string, to: string}>, missing: array<int, string>, trashed: array<int, string>}
+ */
+function applyGoogleNamesToState(array &$state, array $metadata): array
+{
+    $renamed = [];
+    $missing = [];
+    $trashed = [];
+    $changed = false;
+    foreach (googleLinkedDocuments($state) as $documentId => $references) {
+        $file = $metadata[$documentId] ?? null;
+        if (!is_array($file)) continue;
+        if (!empty($file['missing'])) { $missing[] = $documentId; continue; }
+        if (!empty($file['trashed'])) $trashed[] = $documentId;
+        $name = (string) $file['name'];
+        foreach ($references as $reference) {
+            $item = $state[$reference['key']][$reference['index']] ?? null;
+            if (!is_array($item)) continue;
+            $previous = (string) ($item[$reference['field']] ?? '');
+            if ($name !== '' && $name !== $previous) {
+                $item[$reference['field']] = $name;
+                $renamed[] = ['type' => $reference['key'], 'id' => (string) ($item['id'] ?? ''), 'from' => $previous, 'to' => $name];
+                $changed = true;
+            }
+            if ($name !== '' && ($item['googleDocumentName'] ?? null) !== $name) { $item['googleDocumentName'] = $name; $changed = true; }
+            $link = $file['webViewLink'] ?: ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
+            if (($item['googleUrl'] ?? null) !== $link) { $item['googleUrl'] = $link; $changed = true; }
+            if ($reference['key'] === 'parties' && ($item['statuteUrl'] ?? null) !== $link) { $item['statuteUrl'] = $link; $changed = true; }
+            if ($reference['key'] === 'companies' && ($item['regulationUrl'] ?? null) !== $link) { $item['regulationUrl'] = $link; $changed = true; }
+            if (!empty($file['modifiedTime']) && ($item['googleModifiedTime'] ?? null) !== $file['modifiedTime']) { $item['googleModifiedTime'] = $file['modifiedTime']; $changed = true; }
+            $state[$reference['key']][$reference['index']] = $item;
+        }
+    }
+    return ['changed' => $changed, 'renamed' => $renamed, 'missing' => array_values(array_unique($missing)), 'trashed' => array_values(array_unique($trashed))];
+}
+
+function saveSiteState(PDO $pdo, array $state): void
+{
+    $encoded = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) return;
+    $query = $pdo->prepare('INSERT INTO site_state (id, state_json, updated_at) VALUES (1, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
+    $query->execute([$encoded]);
+}
+
+/**
+ * Allinea i nomi di tutti i documenti collegati e restituisce il riepilogo.
+ */
+function syncGoogleDocumentNames(PDO $pdo, int $userId): array
+{
+    $state = rawSiteState($pdo) ?: [];
+    $links = googleLinkedDocuments($state);
+    if (empty($links)) return ['checked' => 0, 'renamed' => [], 'missing' => [], 'trashed' => []];
+    $metadata = googleFileMetadata($pdo, $userId, array_keys($links));
+    $result = applyGoogleNamesToState($state, $metadata);
+    if ($result['changed']) {
+        $state['googleNamesSyncedAt'] = gmdate('c');
+        saveSiteState($pdo, $state);
+        if (!empty($result['renamed'])) auditLog($pdo, 'google_documents_renamed', 'info', $userId, ['count' => count($result['renamed']), 'renamed' => array_slice($result['renamed'], 0, 20)]);
+    }
+    return ['checked' => count($links), 'renamed' => $result['renamed'], 'missing' => $result['missing'], 'trashed' => $result['trashed']];
+}
+
+/**
+ * Riallinea i nomi all'apertura del sito, ma non a ogni richiesta: senza il
+ * webhook Drive questa è l'unica occasione di accorgersi di un rename, con il
+ * webhook resta solo una rete di sicurezza. L'intervallo evita di rallentare
+ * la navigazione e di consumare quota API inutilmente.
+ */
+function maybeAutoSyncGoogleNames(PDO $pdo, int $userId): void
+{
+    $interval = googleNameSyncInterval();
+    if ($interval <= 0) return;
+    if (!googleConnectionExists($pdo, $userId)) return;
+    $last = (int) ($_SESSION['google_names_synced_at'] ?? 0);
+    if ($last > 0 && (time() - $last) < $interval) return;
+    // Segnata prima del lavoro: se Drive è lento o fallisce non si riprova a ogni caricamento.
+    $_SESSION['google_names_synced_at'] = time();
+    try {
+        syncGoogleDocumentNames($pdo, $userId);
+    } catch (Throwable $error) {
+        error_log('Sincronizzazione automatica dei nomi Google non riuscita: ' . $error->getMessage());
+    }
+}
+
+/**
+ * Rinomina il file su Drive quando il titolo cambia dal sito, così le due
+ * anagrafiche non si sovrascrivono a vicenda alla sincronizzazione successiva.
+ */
+function renameGoogleDocument(PDO $pdo, int $userId, string $documentId, string $title): ?string
+{
+    $documentId = validGoogleId($documentId);
+    $title = googleDocumentTitle($title);
+    if ($documentId === '' || $title === '') return null;
+    if (!googleConnectionExists($pdo, $userId)) return null;
+    $file = googleRequest($pdo, $userId, 'PATCH', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name', 'supportsAllDrives' => 'true']), ['name' => $title], false, true);
+    return is_array($file) && isset($file['name']) ? (string) $file['name'] : null;
+}
+
 function updateGoogleTrashState(PDO $pdo, int $userId, array $data, bool $trashed, bool $permanent = false): void
 {
     $ids = googleIdsFromStateItem($data);
@@ -465,6 +759,9 @@ function updateGoogleTrashState(PDO $pdo, int $userId, array $data, bool $trashe
 
 function googleWatchDocument(PDO $pdo, int $userId, string $documentId): void
 {
+    // Senza un endpoint pubblico in HTTPS Drive rifiuta il canale: in quel caso
+    // l'allineamento dei nomi resta affidato alla sincronizzazione periodica.
+    if (!googleWebhookConfigured()) return;
     $channelId = bin2hex(random_bytes(24));
     $payload = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '/watch', ['id' => $channelId, 'type' => 'web_hook', 'address' => GOOGLE_WEBHOOK_URI, 'token' => hash_hmac('sha256', $channelId, SESSION_NAME)], false, true);
     if (!is_array($payload)) { error_log('Google Drive webhook non attivato per il documento ' . $documentId); return; }
@@ -481,8 +778,17 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     $snapshot = googleDocumentSnapshot($pdo, $userId, $documentId);
     $state = rawSiteState($pdo) ?: [];
     $changed = false;
+    // Il nome su Drive è la fonte di verità: il rename fatto in Google Documenti
+    // deve comparire subito nel sito, senza lasciare in giro il titolo vecchio.
+    $googleName = trim((string) ($file['name'] ?? ''));
     foreach (['documents', 'templates'] as $key) foreach (($state[$key] ?? []) as &$item) {
         if (($item['googleDocumentId'] ?? '') !== $documentId) continue;
+        $titleField = $key === 'documents' ? 'title' : 'name';
+        if ($googleName !== '' && (string) ($item[$titleField] ?? '') !== $googleName) {
+            auditLog($pdo, 'google_document_renamed', 'info', $userId, ['document_id' => $documentId, 'from' => (string) ($item[$titleField] ?? ''), 'to' => $googleName]);
+            $item[$titleField] = $googleName;
+        }
+        if ($googleName !== '') $item['googleDocumentName'] = $googleName;
         $item['googleModifiedTime'] = $file['modifiedTime'] ?? null;
         $item['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
         $item['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
@@ -490,6 +796,7 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     }
     foreach (($state['parties'] ?? []) as &$party) {
         if (($party['googleStatuteDocumentId'] ?? '') !== $documentId) continue;
+        if ($googleName !== '') { $party['googleStatuteName'] = $googleName; $party['googleDocumentName'] = $googleName; }
         $modifiedTime = $file['modifiedTime'] ?? null;
         $previousSnapshot = (string) ($party['googleLatestText'] ?? '');
         if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
@@ -504,6 +811,7 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     }
     foreach (($state['companies'] ?? []) as &$company) {
         if (($company['googleRegulationDocumentId'] ?? '') !== $documentId) continue;
+        if ($googleName !== '') { $company['googleRegulationName'] = $googleName; $company['googleDocumentName'] = $googleName; }
         $modifiedTime = $file['modifiedTime'] ?? null;
         $previousSnapshot = (string) ($company['googleLatestText'] ?? '');
         if ($snapshot !== '' && $previousSnapshot !== '' && $snapshot !== $previousSnapshot) {
@@ -615,7 +923,39 @@ if ($action === 'google_document_create' && $method === 'POST') {
     if ($documentId === '') respond(['error' => 'Google non ha restituito il documento creato.'], 502);
     googleWatchDocument($pdo, $userId, $documentId);
     auditLog($pdo, 'google_document_created', 'info', $userId, ['document_id' => $documentId, 'title' => $title]);
-    respond(['id' => $documentId, 'url' => 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit']);
+    respond(['id' => $documentId, 'name' => (string) ($created['name'] ?? $title), 'url' => (string) ($created['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit'))]);
+}
+
+if ($action === 'google_document_rename' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $body = requestBody();
+    $permission = (string) ($body['permission'] ?? 'documents');
+    if (!in_array($permission, ['documents', 'templates', 'parties', 'companies'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di rinominare questo documento Google.'], 403);
+    $documentId = validGoogleId((string) ($body['documentId'] ?? ''));
+    $title = googleDocumentTitle((string) ($body['title'] ?? ''));
+    if ($documentId === '' || $title === '') respond(['error' => 'Documento Google o titolo non valido.'], 422);
+    $name = renameGoogleDocument($pdo, $userId, $documentId, $title);
+    if ($name === null) respond(['error' => 'Google non ha accettato la rinomina del documento.'], 502);
+    auditLog($pdo, 'google_document_renamed', 'info', $userId, ['document_id' => $documentId, 'to' => $name]);
+    respond(['id' => $documentId, 'name' => $name]);
+}
+
+if ($action === 'google_sync_names' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    if (!googleConnectionExists($pdo, $userId)) respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
+    $summary = syncGoogleDocumentNames($pdo, $userId);
+    respond([
+        'ok' => true,
+        'checked' => $summary['checked'],
+        'renamed' => $summary['renamed'],
+        'missing' => $summary['missing'],
+        'trashed' => $summary['trashed'],
+        'state' => stateForUser($pdo, $userId),
+    ]);
 }
 
 if ($action === 'google_document_pdf' && $method === 'GET') {
@@ -743,6 +1083,7 @@ if ($action === 'state' && $method === 'GET') {
     $query = $pdo->prepare('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.must_change_credentials, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1');
     $query->execute([$userId]);
     $user = $query->fetch();
+    maybeAutoSyncGoogleNames($pdo, $userId);
     respond(['user' => userPayload($user, $pdo), 'state' => stateForUser($pdo, $userId)]);
 }
 
