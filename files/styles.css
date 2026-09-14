@@ -350,23 +350,6 @@ img {
   color: #9a6b6b;
 }
 
-/* Le nomine restano nell'ordine cronologico: il successore viene sotto il precedente. */
-.parliament-member + .parliament-member {
-  position: relative;
-  margin-top: .9rem;
-}
-
-.parliament-member + .parliament-member::before {
-  content: '↓';
-  position: absolute;
-  top: -.95rem;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #a6402d;
-  font-weight: 700;
-  line-height: 1;
-}
-
 #parliamentModal .modal-dialog {
   max-width: 1000px;
 }
