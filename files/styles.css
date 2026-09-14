@@ -335,6 +335,19 @@ img {
 .parliament-member.is-resigned {
   background: #f3eeee;
   color: #6f5252;
+  font-size: .9rem;
+  padding: .7rem .85rem;
+  border-style: dashed;
+  opacity: .78;
+}
+
+.parliament-member.is-resigned strong::after {
+  content: ' · cessato';
+  font-size: .72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #9a6b6b;
 }
 
 #parliamentModal .modal-dialog {
