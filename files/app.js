@@ -28,13 +28,6 @@ let remoteSaveTimer = null;
 let currentUser = null;
 let csrfToken = '';
 let googleConnection = { connected: false, configured: false, email: null };
-let editLock = null;
-function renderEditLock(lock = editLock) {
-  let banner = document.getElementById('editLockBanner');
-  if (!banner) { banner = document.createElement('div'); banner.id = 'editLockBanner'; banner.className = 'alert alert-warning position-fixed top-0 start-50 translate-middle-x mt-2 shadow-sm'; banner.style.zIndex = '1080'; document.body.appendChild(banner); }
-  if (!lock || lock.isMine) { banner.classList.add('d-none'); return; }
-  banner.classList.remove('d-none'); banner.textContent = `Modifiche bloccate: ${lock.displayName || lock.username} sta modificando il sito. Puoi visualizzare i dati, ma non modificarli.`;
-}
 let activePartyStatuteDocumentId = null;
 let activeCompanyRegulationDocumentId = null;
 
@@ -391,8 +384,6 @@ async function loadRemoteState() {
     remoteMode = true;
     currentUser = payload.user || null;
     csrfToken = currentUser?.csrfToken || '';
-    editLock = payload.editLock || null;
-    renderEditLock();
     applyRemoteState(payload.state);
     await refreshGoogleConnectionStatus();
     return true;
@@ -404,10 +395,8 @@ async function loginRemote(username, password) {
   const payload = await apiRequest('login', { method: 'POST', body: JSON.stringify({ username, password }) });
   remoteMode = true;
   currentUser = payload.user || null;
-csrfToken = currentUser?.csrfToken || '';
-    editLock = payload.editLock || null;
-    renderEditLock();
-    ensureUserManagementCard();
+  csrfToken = currentUser?.csrfToken || '';
+  ensureUserManagementCard();
   applyRemoteState(payload.state);
   await refreshGoogleConnectionStatus();
   ensureOdgCategory();
