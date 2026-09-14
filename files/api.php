@@ -155,6 +155,50 @@ function ensureTrashPermissionColumns(PDO $pdo): void
     }
 }
 
+function ensureEditLockTable(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS site_edit_lock (id TINYINT UNSIGNED NOT NULL PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, username VARCHAR(190) NOT NULL, display_name VARCHAR(160) NOT NULL, expires_at DATETIME NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT fk_edit_lock_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+}
+
+function acquireEditLock(PDO $pdo, int $userId, string $username, string $displayName): bool
+{
+    $pdo->beginTransaction();
+    try {
+        $pdo->exec('DELETE FROM site_edit_lock WHERE expires_at <= UTC_TIMESTAMP()');
+        $query = $pdo->prepare('SELECT user_id FROM site_edit_lock WHERE id = 1 FOR UPDATE');
+        $query->execute();
+        $owner = $query->fetchColumn();
+        if ($owner !== false && (int) $owner !== $userId) { $pdo->rollBack(); return false; }
+        $save = $pdo->prepare('INSERT INTO site_edit_lock (id, user_id, username, display_name, expires_at) VALUES (1, ?, ?, ?, UTC_TIMESTAMP() + INTERVAL 30 MINUTE) ON DUPLICATE KEY UPDATE username = VALUES(username), display_name = VALUES(display_name), expires_at = UTC_TIMESTAMP() + INTERVAL 30 MINUTE');
+        $save->execute([$userId, $username, $displayName]);
+        $pdo->commit();
+        return true;
+    } catch (Throwable $error) { if ($pdo->inTransaction()) $pdo->rollBack(); return false; }
+}
+
+function releaseEditLock(PDO $pdo, int $userId): void
+{
+    $query = $pdo->prepare('DELETE FROM site_edit_lock WHERE id = 1 AND user_id = ?');
+    $query->execute([$userId]);
+}
+
+function editLockPayload(PDO $pdo, int $userId): ?array
+{
+    $query = $pdo->query('SELECT user_id, username, display_name, expires_at FROM site_edit_lock WHERE id = 1 AND expires_at > UTC_TIMESTAMP() LIMIT 1');
+    $lock = $query->fetch();
+    if (!$lock) return null;
+    return ['userId' => (int) $lock['user_id'], 'username' => $lock['username'], 'displayName' => $lock['display_name'], 'isMine' => (int) $lock['user_id'] === $userId, 'expiresAt' => $lock['expires_at']];
+}
+
+function requireEditLock(PDO $pdo, int $userId): void
+{
+    $query = $pdo->prepare('SELECT user_id FROM site_edit_lock WHERE id = 1 AND expires_at > UTC_TIMESTAMP() LIMIT 1');
+    $query->execute();
+    $owner = $query->fetchColumn();
+    if ($owner === false || (int) $owner !== $userId) respond(['error' => 'Modifiche bloccate: è già collegato ' . ((string) ($owner ?: 'un altro utente')) . '. Attendi che termini la sessione o accordati con l’utente.'], 423);
+    $pdo->prepare('UPDATE site_edit_lock SET expires_at = UTC_TIMESTAMP() + INTERVAL 30 MINUTE WHERE id = 1 AND user_id = ?')->execute([$userId]);
+}
+
 function ensureGoogleConnectionTable(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS google_connections (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, google_email VARCHAR(190) NOT NULL, refresh_token TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
@@ -195,6 +239,7 @@ function database(): PDO
         );
         ensureTrashPermissionColumns($pdo);
         ensureGoogleConnectionTable($pdo);
+        ensureEditLockTable($pdo);
         ensureUserLastLoginColumn($pdo);
         ensurePrimaryAdminFullPermissions($pdo);
         return $pdo;
@@ -669,11 +714,12 @@ if ($action === 'login' && $method === 'POST') {
     $_SESSION['client_ip'] = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
     $_SESSION['client_ua'] = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200);
     $_SESSION['last_activity'] = time();
+    if (!empty($_SESSION['is_primary_admin']) || hasPermission($pdo, (int) $user['id'], 'parties', 'edit')) acquireEditLock($pdo, (int) $user['id'], (string) $user['username'], (string) $user['display_name']);
     
     $updateQuery = $pdo->prepare('UPDATE users SET last_login = UTC_TIMESTAMP() WHERE id = ?');
     $updateQuery->execute([$user['id']]);
 
-    respond(['user' => userPayload($user, $pdo), 'state' => stateForUser($pdo, (int) $user['id'])]);
+    respond(['user' => userPayload($user, $pdo), 'state' => stateForUser($pdo, (int) $user['id']), 'editLock' => editLockPayload($pdo, (int) $user['id'])]);
 }
 
 if ($action === 'change_credentials' && $method === 'POST') {
@@ -727,6 +773,7 @@ if ($action === 'request_password_reset' && $method === 'POST') {
 }
 
 if ($action === 'logout' && $method === 'POST') {
+    if (!empty($_SESSION['user_id'])) { $logoutPdo = database(); releaseEditLock($logoutPdo, (int) $_SESSION['user_id']); }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
@@ -738,7 +785,7 @@ if ($action === 'logout' && $method === 'POST') {
 
 $userId = authenticatedUserId();
 $pdo = database();
-if ($method === 'POST') requireCsrf($pdo);
+if ($method === 'POST') { requireCsrf($pdo); requireEditLock($pdo, $userId); }
 
 if ($action === 'state' && $method === 'GET') {
     $query = $pdo->prepare('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.must_change_credentials, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1');
