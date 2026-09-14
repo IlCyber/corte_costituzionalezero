@@ -5,6 +5,7 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 ## Funzionalita
 
 - Login e logout con e-mail e sessione server.
+- Fallback locale al login: se `api.php` non è raggiungibile (PHP assente, errore fatale o database non configurato) l'accesso avviene con gli utenti salvati nel browser, a partire da `admin@localhost` / `zero2026` con cambio credenziali obbligato; l'errore mostrato è in italiano e indica cosa verificare sul server.
 - Cambio obbligatorio di e-mail e password personali al primo accesso.
 - Richieste di registrazione approvate dall'amministratore principale.
 - Recupero password sottoposto all'amministratore principale.
