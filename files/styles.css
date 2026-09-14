@@ -350,24 +350,6 @@ img {
   color: #9a6b6b;
 }
 
-#memberModal .modal-dialog,
-#governmentPersonModal .modal-dialog,
-#compositionPersonModal .modal-dialog {
-  max-width: 760px;
-}
-
-#memberForm .row,
-#governmentPersonForm .row,
-#compositionPersonForm .row {
-  align-items: start;
-}
-
-#memberReplaces,
-#governmentPersonReplaces,
-#compositionPersonReplaces {
-  min-height: 2.5rem;
-}
-
 #parliamentModal .modal-dialog {
   max-width: 1000px;
 }
