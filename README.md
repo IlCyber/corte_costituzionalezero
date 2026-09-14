@@ -14,6 +14,8 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - Permessi distinti per spostare nel cestino, ripristinare ed eliminare definitivamente, applicati sia nell’interfaccia sia nel backend.
 - Protezioni applicative con CSRF, rate limiting, CSP, sanificazione HTML, query PDO preparate e log di sicurezza.
 - Archivio documenti con categorie, progressivi, ricerca, editor ricco, immagini e stampa.
+- Nomi dei documenti sempre allineati a Google Drive: se un Google Doc viene rinominato, il sito aggiorna il titolo e non conserva quello vecchio.
+- Progressivi con zeri iniziali (00001, 00002, ...) e numero di cifre configurabile dalle impostazioni.
 - Template riutilizzabili.
 - ODG con stato Da valutare/Valutato.
 - Partiti con stato, campi configurabili, Statuto e storico versioni.
@@ -150,6 +152,19 @@ Creare una scheda con nome, data, testo e valori base configurabili, per esempio
 ### Impostazioni
 
 Da questa sezione si gestiscono categorie, progressivi, campi minimi dei partiti, ruoli parlamentari, ruoli di Governo, ruoli della Corte e valori base delle interpretazioni.
+
+Il campo **Cifre del progressivo** decide quanti zeri iniziali usare: con il valore 5 la numerazione diventa `00001`, `00002` e così via. Salvando la numerazione i documenti già archiviati e i contatori vengono riformattati con le cifre scelte, quindi l'archivio resta ordinato anche per i record creati in passato. Il progressivo resta un testo: `00042` non viene mai ridotto a `42`.
+
+### Nomi dei documenti e Google Drive
+
+Il nome del file su Google Drive è il riferimento per il titolo mostrato dal sito.
+
+- Se un documento viene rinominato dentro Google Documenti, il sito recepisce il nome nuovo e smette di mostrare quello vecchio. Vale per documenti, template, Statuti dei partiti e Regolamenti delle aziende.
+- L'allineamento avviene all'apertura del sito, quando si torna sulla scheda del browser, a intervalli regolari mentre la pagina resta aperta e subito tramite il webhook Drive, se configurato. Il pulsante **Sincronizza nomi** in Impostazioni forza il controllo in qualsiasi momento.
+- Se il titolo viene cambiato dal sito, la modifica viene riportata anche sul file in Drive, così le due parti non si sovrascrivono a vicenda.
+- Il controllo periodico si ferma mentre un editor del sito è aperto, per non interferire con una modifica in corso.
+
+Le costanti facoltative `DOCUMENT_NUMBER_PADDING`, `GOOGLE_NAME_SYNC_INTERVAL` e `GOOGLE_SYNC_MAX_LOOKUPS` in `private/config.php` regolano cifre predefinite, frequenza minima del riallineamento automatico lato server e numero massimo di file interrogati singolarmente fuori dalla cartella configurata. Se mancano, `api.php` usa valori predefiniti e le installazioni già attive continuano a funzionare.
 
 ## Installazione su Altervista
 
