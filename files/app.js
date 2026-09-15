@@ -1569,7 +1569,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-edit-document-number="${document.id}">Modifica numero</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''} <span class="badge ${document.publicationStatus === 'pubblicato' ? 'text-bg-success' : 'text-bg-secondary'}">${document.publicationStatus === 'pubblicato' ? 'Pubblicato' : 'Non pubblicato'}</span></td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm ${document.publicationStatus === 'pubblicato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-publication-status="${document.id}">${document.publicationStatus === 'pubblicato' ? 'Segna non pubblicato' : 'Segna pubblicato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-edit-document-number="${document.id}">Modifica numero</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -2560,7 +2560,7 @@ async function saveDocument(event) {
     if (existingDocument?.googleDocumentId && existingDocument.title !== title) {
       effectiveTitle = (await renameGoogleDocument(googleDocumentId, title, 'documents')) || title;
     }
-    const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: effectiveTitle, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: effectiveTitle, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
+    const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: effectiveTitle, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: effectiveTitle, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', publicationStatus: existingDocument?.publicationStatus || 'non pubblicato', createdAt: existingDocument?.createdAt || new Date().toISOString() };
     if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
     else state.documents.unshift(documentRecord);
     advanceCounter(category, number);
@@ -2909,6 +2909,20 @@ async function initialize() {
     if (restoreTrash) { event.stopImmediatePropagation(); restoreTrashItem(restoreTrash.dataset.restoreTrash); return; }
     const purgeTrash = event.target.closest('[data-purge-trash]');
     if (purgeTrash) { event.stopImmediatePropagation(); permanentlyDeleteTrashItem(purgeTrash.dataset.purgeTrash); return; }
+    const togglePublicationStatus = event.target.closest('[data-toggle-publication-status]');
+    if (togglePublicationStatus) {
+      event.stopImmediatePropagation();
+      const documentRecord = state.documents.find(item => item.id === togglePublicationStatus.dataset.togglePublicationStatus);
+      if (documentRecord && can('documents', 'edit')) {
+        documentRecord.publicationStatus = documentRecord.publicationStatus === 'pubblicato' ? 'non pubblicato' : 'pubblicato';
+        documentRecord.updatedAt = new Date().toISOString();
+        writeStorage(STORAGE_KEYS.documents, state.documents);
+        renderDocuments();
+        if (documentRecord.category === 'ODG') renderOdg();
+        showToast(`Documento ${documentRecord.publicationStatus}.`);
+      }
+      return;
+    }
     const toggleOdgStatus = event.target.closest('[data-toggle-odg-status]');
     if (toggleOdgStatus) {
       event.stopImmediatePropagation();
