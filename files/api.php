@@ -484,10 +484,8 @@ function syncGoogleDocumentMetadata(PDO $pdo, int $userId, string $documentId): 
     $changed = false;
     foreach (['documents', 'templates'] as $key) foreach (($state[$key] ?? []) as &$item) {
         if (($item['googleDocumentId'] ?? '') !== $documentId) continue;
-        if (!empty($file['name']) && trim((string) $file['name']) !== '') {
-            if ($key === 'documents') $item['title'] = trim((string) $file['name']);
-            if ($key === 'templates') $item['name'] = trim((string) $file['name']);
-        }
+        if ($key === 'documents' && !empty($file['name'])) $item['title'] = (string) $file['name'];
+        if ($key === 'templates' && !empty($file['name'])) $item['name'] = (string) $file['name'];
         $item['googleModifiedTime'] = $file['modifiedTime'] ?? null;
         $item['googleModifiedBy'] = $file['lastModifyingUser']['emailAddress'] ?? ($file['lastModifyingUser']['displayName'] ?? null);
         $item['googleUrl'] = $file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit');
