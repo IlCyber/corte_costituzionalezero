@@ -112,9 +112,6 @@ function ensureSchemaAndSeed(PDO $pdo): void
     // Ruoli di sistema
     $pdo->exec("
         INSERT IGNORE INTO roles (name, role_key, is_system) VALUES
-            ('Ospite',          'guest',  1),
-            ('Lettore',         'reader', 1),
-            ('Editor',          'editor', 1),
             ('Amministratore',  'admin',  1)
     ");
 

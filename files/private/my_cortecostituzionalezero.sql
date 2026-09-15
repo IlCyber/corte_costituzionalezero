@@ -104,9 +104,6 @@ CREATE TABLE `roles` (
 --
 
 INSERT INTO `roles` (`id`, `name`, `role_key`, `is_system`) VALUES
-(1, 'Ospite', 'guest', 1),
-(2, 'Lettore', 'reader', 1),
-(3, 'Editor', 'editor', 1),
 (4, 'Amministratore', 'admin', 1);
 
 -- --------------------------------------------------------
