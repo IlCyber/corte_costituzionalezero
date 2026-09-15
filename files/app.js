@@ -1902,6 +1902,15 @@ function saveParliament(event) {
   openParliamentEditor(record.id);
 }
 
+function syncMemberCoalitionFromParty() {
+  const partyName = document.getElementById('memberParty')?.value || '';
+  const coalitionSelect = document.getElementById('memberCoalition');
+  if (!coalitionSelect) return;
+  const party = state.parties.find(item => item.name === partyName);
+  const coalition = party ? state.coalitions.find(item => Array.isArray(item.parties) && item.parties.includes(party.id) && item.status !== 'cancellata') : null;
+  coalitionSelect.value = coalition?.name || '';
+}
+
 function openMemberEditor(memberId = '', role = 'titolare') {
   const mandate = state.parliaments.find(item => item.id === editingParliamentId);
   const member = mandate?.members.find(item => item.id === memberId);
@@ -1916,8 +1925,15 @@ function openMemberEditor(memberId = '', role = 'titolare') {
   document.getElementById('memberRole').value = member?.role || role;
   document.getElementById('oathDate').value = member?.oathDate || today();
   document.getElementById('resignationDate').value = member?.resignationDate || '';
-  document.getElementById('memberParty').value = member?.memberParty || '';
-  document.getElementById('memberCoalition').value = member?.memberCoalition || '';
+  const partySelect = document.getElementById('memberParty');
+  const coalitionSelect = document.getElementById('memberCoalition');
+  const partyOptions = [...state.parties].filter(party => party.status !== 'cancellato').sort((a, b) => a.name.localeCompare(b.name));
+  const coalitionOptions = [...state.coalitions].filter(coalition => coalition.status !== 'cancellata').sort((a, b) => a.name.localeCompare(b.name));
+  partySelect.innerHTML = '<option value="">Nessun partito</option>' + partyOptions.map(party => `<option value="${escapeHtml(party.name)}">${escapeHtml(party.name)}</option>`).join('');
+  coalitionSelect.innerHTML = '<option value="">Nessuna coalizione</option>' + coalitionOptions.map(coalition => `<option value="${escapeHtml(coalition.name)}">${escapeHtml(coalition.name)}</option>`).join('');
+  partySelect.value = member?.memberParty || '';
+  coalitionSelect.value = member?.memberCoalition || '';
+  if (!member) syncMemberCoalitionFromParty();
   document.getElementById('memberAnnotations').value = member?.annotations || '';
   renderMemberExtraFields(member);
   bootstrap.Modal.getOrCreateInstance(document.getElementById('memberModal')).show();
@@ -2801,6 +2817,7 @@ async function initialize() {
   document.getElementById('companyForm').addEventListener('submit', saveCompany);
   document.getElementById('parliamentForm').addEventListener('submit', saveParliament);
   document.getElementById('memberForm').addEventListener('submit', saveMember);
+  document.getElementById('memberParty').addEventListener('change', syncMemberCoalitionFromParty);
   document.getElementById('partyStatuteForm').addEventListener('submit', savePartyStatute);
   document.getElementById('companyRegulationForm').addEventListener('submit', saveCompanyRegulation);
   document.getElementById('closePartyStatuteEditor').addEventListener('click', closePartyStatuteEditor);
