@@ -94,6 +94,7 @@
             <li class="nav-item"><a class="nav-link" href="#coalitions" data-view-link="coalitions">Coalizioni</a></li>
             <li class="nav-item"><a class="nav-link" href="#parliament" data-view-link="parliament">Parlamento</a></li>
             <li class="nav-item"><a class="nav-link" href="#templates" data-view-link="templates">Template</a></li>
+            <li class="nav-item"><a class="nav-link" href="#usefulLinks" data-view-link="usefulLinks">Link utili</a></li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
             <li class="nav-item ms-lg-3"><button class="btn btn-outline-secondary btn-sm" id="logoutButton"
                 type="button">Esci</button></li>
@@ -155,6 +156,27 @@
               <h3 class="h5 mt-3">Nessun documento trovato</h3>
               <p class="text-secondary mb-0">Crea il primo documento per iniziare l'archivio.</p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usefulLinksView" class="app-view d-none">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Risorse esterne</p>
+            <h1 class="display-6 fw-bold mb-2">Link utili</h1>
+            <p class="text-secondary mb-0">Raccogli e apri rapidamente i siti e le risorse usati più spesso.</p>
+          </div>
+          <button class="btn btn-primary" id="newUsefulLinkButton" type="button" data-bs-toggle="modal" data-bs-target="#usefulLinkModal">+ Nuovo link</button>
+        </div>
+        <div class="card border-0 shadow-sm">
+          <div class="card-body p-0">
+            <div class="p-4 border-bottom d-flex flex-column flex-md-row justify-content-between gap-3">
+              <h2 class="h5 mb-0">Collegamenti salvati</h2>
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="usefulLinkSearch" type="search" class="form-control" placeholder="Cerca per nome o indirizzo"></div>
+            </div>
+            <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Nome</th><th>Indirizzo</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="usefulLinksTableBody"></tbody></table></div>
+            <div id="emptyUsefulLinks" class="empty-state d-none"><div class="display-6">↗</div><h2 class="h5 mt-3">Nessun link salvato</h2><p class="text-secondary mb-0">Aggiungi il primo collegamento utile.</p></div>
           </div>
         </div>
       </section>
@@ -809,6 +831,16 @@
         </form>
       </div>
     </div>
+  </div>
+  <div class="modal fade" id="usefulLinkModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="usefulLinkForm">
+      <div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Link utili</p><h2 class="modal-title h4">Nuovo link</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div>
+      <div class="modal-body vstack gap-3">
+        <div><label for="usefulLinkName" class="form-label">Nome</label><input id="usefulLinkName" class="form-control" maxlength="160" required></div>
+        <div><label for="usefulLinkUrl" class="form-label">Link</label><input id="usefulLinkUrl" class="form-control" type="url" maxlength="2048" placeholder="https://…" required><div class="form-text">Sono accettati indirizzi HTTP e HTTPS.</div></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva link</button></div>
+    </form></div></div>
   </div>
   <div class="toast-container position-fixed bottom-0 end-0 p-3">
     <div id="appToast" class="toast" role="status">

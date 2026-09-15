@@ -20,6 +20,7 @@ const ALL_PERMISSIONS = [
     // [key, label, group]
     ['documents',      'Documenti',                    'contenuti'],
     ['templates',      'Modelli',                      'contenuti'],
+    ['useful_links',   'Link utili',                   'contenuti'],
     ['settings',       'Impostazioni & Categorie',     'configurazione'],
     ['parties',        'Parti & Campi parte',          'soggetti'],
     ['companies',      'Aziende',                      'soggetti'],

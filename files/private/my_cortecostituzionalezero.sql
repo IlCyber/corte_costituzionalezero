@@ -66,7 +66,8 @@ INSERT INTO `permissions` (`id`, `permission_key`, `label`, `permission_group`) 
 (9, 'interpretations', 'Interpretazioni', 'contenuti'),
 (10, 'users', 'Gestione utenti', 'amministrazione'),
 (11, 'roles', 'Gestione ruoli', 'amministrazione'),
-(12, 'logs', 'Log di sicurezza', 'amministrazione');
+(12, 'logs', 'Log di sicurezza', 'amministrazione'),
+(13, 'useful_links', 'Link utili', 'contenuti');
 
 -- --------------------------------------------------------
 
@@ -143,7 +144,8 @@ INSERT INTO `role_permissions` (`role_id`, `permission_id`, `can_view`, `can_cre
 (4, 9, 1, 1, 1, 1, 0, 0, 1, 1),
 (4, 10, 1, 1, 1, 1, 0, 0, 1, 1),
 (4, 11, 1, 1, 1, 1, 0, 0, 1, 1),
-(4, 12, 1, 1, 1, 1, 0, 0, 1, 1);
+(4, 12, 1, 1, 1, 1, 0, 0, 1, 1),
+(4, 13, 1, 1, 1, 1, 0, 0, 1, 1);
 
 UPDATE `role_permissions`
 SET `can_view` = 1, `can_create` = 1, `can_edit` = 1, `can_delete` = 1,
