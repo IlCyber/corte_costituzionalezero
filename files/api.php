@@ -1,6 +1,41 @@
 <?php
 declare(strict_types=1);
 
+/*
+ * Il backend risponde sempre in JSON: anche un errore fatale (costante mancante
+ * in private/config.php, parse error, timeout PHP, memoria esaurita) deve
+ * arrivare al browser come errore JSON leggibile. Senza questa rete di
+ * sicurezza il frontend riceve HTML o un corpo vuoto e può solo segnalare un
+ * generico "backend non raggiungibile", nascondendo la causa reale.
+ */
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+$GLOBALS['cz_fatal_error'] = null;
+set_error_handler(static function (int $type, string $message): bool {
+    // I fatale vanno ricordati appena si presentano: un semplice warning emesso
+    // dopo di loro non deve poterli sovrascrivere in error_get_last() prima
+    // che lo shutdown li riporti al browser in forma di JSON.
+    if (in_array($type, [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) $GLOBALS['cz_fatal_error'] = $message;
+    return false; // la gestione standard dell'errore prosegue invariata
+});
+set_exception_handler(static function (Throwable $error): void {
+    error_log('api.php errore non gestito: ' . $error->getMessage());
+    if (!headers_sent()) http_response_code(500);
+    echo json_encode(['error' => 'Errore interno del server: ' . $error->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+});
+register_shutdown_function(static function (): void {
+    $message = $GLOBALS['cz_fatal_error'];
+    if ($message === null) {
+        $error = error_get_last();
+        if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) $message = (string) $error['message'];
+    }
+    if ($message === null) return;
+    error_log('api.php errore fatale: ' . $message);
+    if (!headers_sent()) http_response_code(500);
+    echo json_encode(['error' => 'Errore interno del server: ' . $message], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+});
+
 require_once __DIR__ . '/private/config.php';
 
 session_name(SESSION_NAME);
@@ -374,7 +409,7 @@ function saveTrashMutationState(PDO $pdo, int $userId, array $state): void
 {
     $state = sanitizeState($state);
     $encoded = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($encoded) || strlen($encoded) > MAX_STATE_BYTES) respond(['error' => 'Stato del cestino non valido o troppo grande.'], 422);
+    if (!is_string($encoded) || strlen($encoded) > maxStateBytes()) respond(['error' => 'Stato del cestino non valido o troppo grande.'], 422);
     $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
     $query->execute([$userId, $encoded]);
 }
@@ -387,13 +422,32 @@ function trashEntryTitle(array $entry): string
 
 function googleConfigured(): bool
 {
-    return GOOGLE_DRIVE_FOLDER_ID !== 'INSERISCI_ID_CARTELLA_DRIVE' && !str_contains(GOOGLE_CLIENT_ID, 'INSERISCI_') && !str_contains(GOOGLE_CLIENT_SECRET, 'INSERISCI_') && !str_contains(GOOGLE_REDIRECT_URI, 'INSERISCI_');
+    return !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_CLIENT_ID') && !configPlaceholder('GOOGLE_CLIENT_SECRET') && !configPlaceholder('GOOGLE_REDIRECT_URI');
 }
 
 /**
  * Le costanti sotto sono opzionali: gli impianti già installati non hanno un
  * config.php aggiornato, quindi si usano valori predefiniti sensati.
  */
+function configPlaceholder(string $name): bool
+{
+    if (!defined($name)) return true;
+    $value = (string) constant($name);
+    return $value === '' || $value === 'BOH' || str_contains($value, 'INSERISCI_');
+}
+
+function googleApiTimeout(): int
+{
+    $value = defined('GOOGLE_API_TIMEOUT') ? (int) constant('GOOGLE_API_TIMEOUT') : 20;
+    return $value > 0 ? $value : 20;
+}
+
+function maxStateBytes(): int
+{
+    $value = defined('MAX_STATE_BYTES') ? (int) constant('MAX_STATE_BYTES') : 2097152;
+    return $value > 0 ? $value : 2097152;
+}
+
 function googleSyncMaxLookups(): int
 {
     $value = defined('GOOGLE_SYNC_MAX_LOOKUPS') ? (int) constant('GOOGLE_SYNC_MAX_LOOKUPS') : 40;
@@ -447,7 +501,7 @@ function googleAccessTokenOrNull(PDO $pdo, int $userId): ?string
     }
     if ($refreshToken === '') return null;
     $post = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'refresh_token' => $refreshToken, 'grant_type' => 'refresh_token']);
-    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => googleApiTimeout(), 'ignore_errors' => true]]);
     $response = @file_get_contents('https://oauth2.googleapis.com/token', false, $context);
     $payload = json_decode((string) $response, true);
     if (!is_array($payload) || empty($payload['access_token'])) return null;
@@ -480,7 +534,7 @@ function googleConnectionExists(PDO $pdo, int $userId): bool
 
 function googleWebhookConfigured(): bool
 {
-    return str_starts_with(GOOGLE_WEBHOOK_URI, 'https://') && !str_contains(GOOGLE_WEBHOOK_URI, 'INSERISCI_');
+    return !configPlaceholder('GOOGLE_WEBHOOK_URI') && str_starts_with((string) GOOGLE_WEBHOOK_URI, 'https://');
 }
 
 function googleRequest(PDO $pdo, int $userId, string $method, string $url, ?array $body = null, bool $binary = false, bool $allowFailure = false): mixed
@@ -492,7 +546,7 @@ function googleRequest(PDO $pdo, int $userId, string $method, string $url, ?arra
     $headers = ['Authorization: Bearer ' . $token, 'Accept: application/json'];
     if ($body !== null) $headers[] = 'Content-Type: application/json';
     $curl = curl_init($url);
-    curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $headers, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => GOOGLE_API_TIMEOUT, CURLOPT_POSTFIELDS => $body === null ? null : json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+    curl_setopt_array($curl, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_HTTPHEADER => $headers, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => googleApiTimeout(), CURLOPT_POSTFIELDS => $body === null ? null : json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
     $response = curl_exec($curl);
     $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
     $error = curl_error($curl);
@@ -672,12 +726,15 @@ function applyGoogleNamesToState(array &$state, array $metadata): array
     return ['changed' => $changed, 'renamed' => $renamed, 'missing' => array_values(array_unique($missing)), 'trashed' => array_values(array_unique($trashed))];
 }
 
-function saveSiteState(PDO $pdo, array $state): void
+function saveSiteState(PDO $pdo, int $userId, array $state): void
 {
     $encoded = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (!is_string($encoded)) return;
-    $query = $pdo->prepare('INSERT INTO site_state (id, state_json, updated_at) VALUES (1, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
-    $query->execute([$encoded]);
+    // owner_user_id è NOT NULL senza valore predefinito: va passato sempre,
+    // altrimenti il primo inserimento della riga id=1 fallisce con l'errore
+    // MySQL 1364 ("Field 'owner_user_id' doesn't have a default value").
+    $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
+    $query->execute([$userId, $encoded]);
 }
 
 /**
@@ -692,7 +749,7 @@ function syncGoogleDocumentNames(PDO $pdo, int $userId): array
     $result = applyGoogleNamesToState($state, $metadata);
     if ($result['changed']) {
         $state['googleNamesSyncedAt'] = gmdate('c');
-        saveSiteState($pdo, $state);
+        saveSiteState($pdo, $userId, $state);
         if (!empty($result['renamed'])) auditLog($pdo, 'google_documents_renamed', 'info', $userId, ['count' => count($result['renamed']), 'renamed' => array_slice($result['renamed'], 0, 20)]);
     }
     return ['checked' => count($links), 'renamed' => $result['renamed'], 'missing' => $result['missing'], 'trashed' => $result['trashed']];
@@ -861,12 +918,12 @@ if ($action === 'google_callback' && $method === 'GET') {
     $code = (string) ($_GET['code'] ?? '');
     if ($state === '' || !hash_equals((string) ($_SESSION['google_oauth_state'] ?? ''), $state) || $code === '') respond(['error' => 'Collegamento Google non valido.'], 400);
     $post = http_build_query(['code' => $code, 'client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'grant_type' => 'authorization_code']);
-    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => GOOGLE_API_TIMEOUT, 'ignore_errors' => true]]);
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => googleApiTimeout(), 'ignore_errors' => true]]);
     $tokenPayload = json_decode((string) file_get_contents('https://oauth2.googleapis.com/token', false, $context), true);
     if (!is_array($tokenPayload) || empty($tokenPayload['refresh_token'])) respond(['error' => 'Google non ha restituito un refresh token. Riprova autorizzando l’accesso.'], 502);
     $token = (string) $tokenPayload['access_token'];
     $curl = curl_init('https://openidconnect.googleapis.com/v1/userinfo');
-    curl_setopt_array($curl, [CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => GOOGLE_API_TIMEOUT]);
+    curl_setopt_array($curl, [CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => googleApiTimeout()]);
     $profile = json_decode((string) curl_exec($curl), true);
     curl_close($curl);
     $pdo = database();
@@ -898,6 +955,7 @@ if ($action === 'google_disconnect' && $method === 'POST') {
 if ($action === 'google_drive_files' && $method === 'GET') {
     $userId = authenticatedUserId();
     $pdo = database();
+    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
     if (!hasPermission($pdo, $userId, 'documents', 'view')) respond(['error' => 'Non hai il permesso di vedere i documenti.'], 403);
     $query = "'" . addslashes(GOOGLE_DRIVE_FOLDER_ID) . "' in parents and trashed = false and mimeType = 'application/vnd.google-apps.document'";
     $url = 'https://www.googleapis.com/drive/v3/files?' . http_build_query(['q' => $query, 'fields' => 'files(id,name,webViewLink,modifiedTime)', 'orderBy' => 'name', 'pageSize' => 100]);
@@ -1347,7 +1405,7 @@ if ($action === 'save_state' && $method === 'POST') {
     if (!hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di modificare questa area.'], 403);
     $encodedState = (string) ($body['state'] ?? '');
     $decodedState = json_decode($encodedState, true);
-    if (!is_array($decodedState) || strlen($encodedState) > MAX_STATE_BYTES) respond(['error' => 'Stato applicativo non valido.'], 422);
+    if (!is_array($decodedState) || strlen($encodedState) > maxStateBytes()) respond(['error' => 'Stato applicativo non valido.'], 422);
     $decodedState = sanitizeState($decodedState);
     $existingState = rawSiteState($pdo) ?: [];
     // Il cestino può essere modificato esclusivamente dalle azioni dedicate,

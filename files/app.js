@@ -38,6 +38,7 @@ const GOOGLE_NAME_MIN_INTERVAL_MS = 15000;
 let googleNameWatcher = null;
 let googleNameSyncInFlight = null;
 let googleNameSyncedAt = 0;
+let googleOpenListenerBound = false;
 
 function normalizeParliamentSettings(settings = {}) {
   const safeSettings = settings && typeof settings === 'object' ? settings : {};
@@ -80,6 +81,9 @@ const state = {
   demoSeeded: readStorage(STORAGE_KEYS.demoSeeded, false),
   testMandateSeeded: readStorage(STORAGE_KEYS.testMandateSeeded, false)
 };
+// I contatori devono essere un oggetto fin dall'avvio: il dato salvato può
+// essere un array (vedi normalizeCounters).
+normalizeCounters();
 const localAuth = {
   users: readStorage(LOCAL_AUTH_KEYS.users, [{ id: 'local-admin', username: 'admin@localhost', displayName: 'Amministratore locale', role: 'admin', isPrimaryAdmin: true, mustChangeCredentials: true, password: 'zero2026' }]),
   registrations: readStorage(LOCAL_AUTH_KEYS.registrations, []),
@@ -311,6 +315,36 @@ function openGoogleDocument(documentIdOrUrl) {
   }
   window.open(url, '_blank', 'noopener,noreferrer');
 }
+// Il selettore "Template della categoria" non deve ricostruire la scheda del
+// documento (sarebbe un reset di titolo, data e numero già inseriti): la scelta
+// aggiorna solo l'esito mostrato nel pannello Google. Il template viene
+// applicato alla salvataggio, copiando il Google Doc del template.
+function updateTemplateSelectionHints() {
+  const status = document.getElementById('googleDocumentEditorStatus');
+  if (!status) return;
+  const template = state.templates.find(item => item.id === (document.getElementById('documentTemplate')?.value || ''));
+  const googleDocEsistente = Boolean(activeGoogleDocumentId || state.documents.find(item => item.id === editingDocumentId)?.googleDocumentId);
+  if (!template) {
+    status.textContent = googleDocEsistente ? 'Il contenuto è gestito esclusivamente da Google Documenti.' : 'Salva i dati del documento per creare il Google Doc nella cartella configurata.';
+    return;
+  }
+  if (googleDocEsistente) {
+    status.textContent = `Il template «${template.name}» non è più applicabile: il documento Google esiste già e resta così com'è.`;
+    return;
+  }
+  if (!template.googleDocumentId) {
+    status.textContent = `Attenzione: il template «${template.name}» non ha un documento Google associato (risale a prima del collegamento a Google Documenti). Il documento verrà creato vuoto; apri il template dalla sezione Template per scriverne il contenuto su Google.`;
+    return;
+  }
+  status.textContent = `Alla salvataggio verrà creata una copia del template «${template.name}» nella cartella Google configurata.`;
+}
+function ensureGoogleOpenListener() {
+  // Registrato una sola volta: aprire l'editor più volte non deve accumulare
+  // copie del gestore click su "Apri Google Doc".
+  if (googleOpenListenerBound) return;
+  googleOpenListenerBound = true;
+  document.addEventListener('click', event => { const googleButton = event.target.closest('[data-open-google]'); if (googleButton) { event.stopImmediatePropagation(); openGoogleDocument(googleButton.dataset.openGoogle); } });
+}
 function setGoogleDocumentEditorState(documentId = '', title = '') {
   const editorTitle = document.getElementById('googleDocumentEditorTitle');
   const editorStatus = document.getElementById('googleDocumentEditorStatus');
@@ -328,6 +362,7 @@ function setGoogleDocumentEditorState(documentId = '', title = '') {
       if (!documentId) {
         if (!currentTitle) { popup.close(); showToast('Inserisci prima il titolo del documento.'); return; }
         const selectedTemplate = state.templates.find(template => template.id === document.getElementById('documentTemplate')?.value);
+        if (selectedTemplate && !selectedTemplate.googleDocumentId) showToast(`Il template «${selectedTemplate.name}» non ha un documento Google associato: il documento verrà creato vuoto.`);
         const created = await createGoogleDocument(currentTitle, 'documents', selectedTemplate?.googleDocumentId || '');
         activeGoogleDocumentId = created.id;
         persistCreatedGoogleDocument(created.id, currentTitle);
@@ -404,6 +439,7 @@ function applyRemoteState(remoteState) {
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
   state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
   state.pageMargins = normalizePageMargins(state.pageMargins);
+  normalizeCounters();
   normalizeStoredNumbers();
   state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
   state.governmentSettings = normalizeInstitutionSettings(state.governmentSettings, [{ id: 'presidente', name: 'Presidente del Consiglio', limit: 1 }, { id: 'ministro', name: 'Ministro', limit: 10 }]);
@@ -838,7 +874,33 @@ function padNumber(value, padding = numberPadding()) {
   return trimmed.padStart(padding, '0');
 }
 function formatNumber(value) { return padNumber(value) || String(value ?? ''); }
-function nextNumber(category) { const value = padNumber(state.counters[category]); return value && numericValue(value) > 0 ? value : padNumber('1'); }
+// I contatori progressivi per categoria vivono in un oggetto {Categoria: '00002'}.
+// Lo stato remoto storico però li ha salvati come array (PHP trasforma un
+// oggetto vuoto in []): assegnare proprietà testuali a un array funziona in
+// memoria, ma JSON.stringify le scarta, quindi la numerazione non avanzava mai
+// e ogni documento di ogni tipologia restava 00001. Qui si forza sempre la
+// forma a oggetto, scartando le chiavi numeriche derivate dagli array.
+function normalizeCounters() {
+  const source = state.counters;
+  const counters = {};
+  if (Array.isArray(source) || (source && typeof source === 'object')) {
+    Object.entries(source).forEach(([category, value]) => {
+      if (/^\d+$/.test(category)) return; // indici di array, non categorie
+      const padded = padNumber(value);
+      if (padded !== '') counters[category] = padded;
+    });
+  }
+  state.counters = counters;
+}
+function nextNumber(category) {
+  // Il contatore della categoria dice quale progressivo è libero; per
+  // robustezza si considera anche il massimo già usato dai documenti di quella
+  // tipologia: se il contatore si è perso (stato remoto vuoto) la numerazione
+  // non riparte da 00001 e non genera duplicati. Ogni categoria avanza da sola.
+  const fromCounter = numericValue(state.counters[category]);
+  const fromDocuments = (state.documents || []).reduce((max, item) => item.category === category ? Math.max(max, numericValue(item.number)) : max, 0) + 1;
+  return padNumber(String(Math.max(fromCounter, fromDocuments)));
+}
 function numericValue(value) { const parsed = Number.parseInt(String(value ?? '').replace(/\D+/g, ''), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
 function advanceCounter(category, usedNumber) { const nextValue = Math.max(numericValue(nextNumber(category)), numericValue(usedNumber) + 1); state.counters[category] = padNumber(String(nextValue)); }
 function normalizeStoredNumbers() {
@@ -2302,7 +2364,7 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
   document.getElementById('documentCategory').value = forcedCategory || template?.category || categoryNames()[0];
   setGoogleDocumentEditorState('', '');
   refreshDocumentTemplateOptions(document.getElementById('documentCategory').value);
-  document.addEventListener('click', event => { const googleButton = event.target.closest('[data-open-google]'); if (googleButton) { event.stopImmediatePropagation(); openGoogleDocument(googleButton.dataset.openGoogle); } });
+  ensureGoogleOpenListener();
   document.getElementById('documentDate').value = today();
   document.getElementById('documentTemplate').value = templateId;
   document.getElementById('documentNumber').value = nextNumber(template?.category || document.getElementById('documentCategory').value);
@@ -2312,6 +2374,7 @@ function openDocumentModal(templateId = '', forcedCategory = '') {
   document.querySelector('#documentModal .modal-title').textContent = 'Nuovo documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva documento';
   showEditorScreen('documentModal');
+  updateTemplateSelectionHints();
 }
 
 function openDocumentEditor(documentId) {
@@ -2333,62 +2396,77 @@ function openDocumentEditor(documentId) {
   document.querySelector('#documentModal .modal-title').textContent = 'Modifica documento';
   document.querySelector('#documentModal button[type="submit"]').textContent = 'Salva modifiche';
   showEditorScreen('documentModal');
+  updateTemplateSelectionHints();
 }
 
 async function saveDocument(event) {
   event.preventDefault();
-  const category = document.getElementById('documentCategory').value.trim();
-  const template = state.templates.find(item => item.id === document.getElementById('documentTemplate').value);
-  const date = document.getElementById('documentDate').value;
-  const rawNumber = document.getElementById('documentNumber').value.trim();
-  if (!/^\d+$/.test(rawNumber) || numericValue(rawNumber) < 1) { showToast('Il numero deve contenere solo cifre.'); return; }
-  const number = padNumber(rawNumber);
-  const existingDocument = state.documents.find(item => item.id === editingDocumentId);
-  const title = document.getElementById('documentTitle').value.trim();
-  if (!title) { showToast('Inserisci il titolo del documento.'); return; }
-  const sourceTemplateDocumentId = template?.googleDocumentId || '';
-  const googleDocumentId = existingDocument?.googleDocumentId || activeGoogleDocumentId || (await createGoogleDocument(title, 'documents', sourceTemplateDocumentId)).id;
-  // Titolo cambiato dal sito: va riportato anche su Drive, altrimenti il
-  // riallineamento successivo rimetterebbe il nome vecchio.
-  let effectiveTitle = title;
-  if (existingDocument?.googleDocumentId && existingDocument.title !== title) {
-    effectiveTitle = (await renameGoogleDocument(googleDocumentId, title, 'documents')) || title;
+  try {
+    const category = document.getElementById('documentCategory').value.trim();
+    const template = state.templates.find(item => item.id === document.getElementById('documentTemplate').value);
+    const date = document.getElementById('documentDate').value;
+    const rawNumber = document.getElementById('documentNumber').value.trim();
+    if (!/^\d+$/.test(rawNumber) || numericValue(rawNumber) < 1) { showToast('Il numero deve contenere solo cifre.'); return; }
+    const number = padNumber(rawNumber);
+    const existingDocument = state.documents.find(item => item.id === editingDocumentId);
+    const title = document.getElementById('documentTitle').value.trim();
+    if (!title) { showToast('Inserisci il titolo del documento.'); return; }
+    const googleDocGiaCreato = Boolean(existingDocument?.googleDocumentId || activeGoogleDocumentId);
+    const templateSenzaGoogleDoc = Boolean(template && !template.googleDocumentId);
+    const sourceTemplateDocumentId = template?.googleDocumentId || '';
+    const googleDocumentId = existingDocument?.googleDocumentId || activeGoogleDocumentId || (await createGoogleDocument(title, 'documents', sourceTemplateDocumentId)).id;
+    // Titolo cambiato dal sito: va riportato anche su Drive, altrimenti il
+    // riallineamento successivo rimetterebbe il nome vecchio.
+    let effectiveTitle = title;
+    if (existingDocument?.googleDocumentId && existingDocument.title !== title) {
+      effectiveTitle = (await renameGoogleDocument(googleDocumentId, title, 'documents')) || title;
+    }
+    const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: effectiveTitle, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: effectiveTitle, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
+    if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
+    else state.documents.unshift(documentRecord);
+    advanceCounter(category, number);
+    writeStorage(STORAGE_KEYS.documents, state.documents); writeStorage(STORAGE_KEYS.counters, state.counters);
+    editingDocumentId = null;
+    activeGoogleDocumentId = null;
+    closeEditorScreen();
+    renderDocuments();
+    if (category === 'ODG') renderOdg();
+    setGoogleDocumentEditorState(googleDocumentId, effectiveTitle);
+    openGoogleDocument(googleDocumentId);
+    // Il template va comunicato per quello che è realmente riuscito a fare:
+    // i casi in cui non è applicabile non devono più passare in silenzio.
+    if (templateSenzaGoogleDoc) showToast(`Documento salvato, ma il template «${template.name}» non ha un documento Google associato: il documento è stato creato vuoto. Aprilo dalla sezione Template per scriverne il contenuto.`);
+    else if (googleDocGiaCreato && template) showToast(`Documento salvato, ma il Google Doc era già stato creato prima della scelta del template: il template «${template.name}» non è stato applicato.`);
+    else showToast('Documento salvato nell’archivio.');
+  } catch (error) {
+    showToast('Salvataggio non riuscito: ' + error.message);
   }
-  const documentRecord = { id: editingDocumentId || crypto.randomUUID(), title: effectiveTitle, category, number, year: date.slice(0, 4), date, templateName: template?.name || '', googleDocumentId, googleDocumentName: effectiveTitle, status: category === 'ODG' ? document.getElementById('odgStatus').value : '', createdAt: existingDocument?.createdAt || new Date().toISOString() };
-  if (existingDocument) state.documents[state.documents.indexOf(existingDocument)] = documentRecord;
-  else state.documents.unshift(documentRecord);
-  advanceCounter(category, number);
-  writeStorage(STORAGE_KEYS.documents, state.documents); writeStorage(STORAGE_KEYS.counters, state.counters);
-  editingDocumentId = null;
-  activeGoogleDocumentId = null;
-  closeEditorScreen();
-  renderDocuments();
-  if (category === 'ODG') renderOdg();
-  setGoogleDocumentEditorState(googleDocumentId, effectiveTitle);
-  openGoogleDocument(googleDocumentId);
-  showToast('Documento salvato nell’archivio.');
 }
 
 async function saveTemplate(event) {
   event.preventDefault();
-  const existingTemplate = state.templates.find(item => item.id === editingTemplateId);
-  const category = document.getElementById('templateCategory').value.trim();
-  const name = document.getElementById('templateName').value.trim();
-  if (!name || !category) { showToast('Inserisci nome e categoria del template.'); return; }
-  const googleDocumentId = existingTemplate?.googleDocumentId || (await createGoogleDocument(name, 'templates')).id;
-  // Anche i template seguono il nome del file: rinominare qui aggiorna Drive.
-  let effectiveName = name;
-  if (existingTemplate?.googleDocumentId && existingTemplate.name !== name) {
-    effectiveName = (await renameGoogleDocument(googleDocumentId, name, 'templates')) || name;
+  try {
+    const existingTemplate = state.templates.find(item => item.id === editingTemplateId);
+    const category = document.getElementById('templateCategory').value.trim();
+    const name = document.getElementById('templateName').value.trim();
+    if (!name || !category) { showToast('Inserisci nome e categoria del template.'); return; }
+    const googleDocumentId = existingTemplate?.googleDocumentId || (await createGoogleDocument(name, 'templates')).id;
+    // Anche i template seguono il nome del file: rinominare qui aggiorna Drive.
+    let effectiveName = name;
+    if (existingTemplate?.googleDocumentId && existingTemplate.name !== name) {
+      effectiveName = (await renameGoogleDocument(googleDocumentId, name, 'templates')) || name;
+    }
+    const template = { id: editingTemplateId || crypto.randomUUID(), name: effectiveName, category, body: '', image: '', googleDocumentId, googleDocumentName: effectiveName };
+    if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
+    else state.templates.push(template);
+    writeStorage(STORAGE_KEYS.templates, state.templates);
+    editingTemplateId = null;
+    closeEditorScreen();
+    document.getElementById('templateForm').reset(); refreshCategoryOptions(); refreshDocumentTemplateOptions(); renderTemplates(); renderDocuments(); showToast(existingTemplate ? 'Template aggiornato.' : 'Template salvato.');
+    openGoogleDocument(googleDocumentId);
+  } catch (error) {
+    showToast('Salvataggio template non riuscito: ' + error.message);
   }
-  const template = { id: editingTemplateId || crypto.randomUUID(), name: effectiveName, category, body: '', image: '', googleDocumentId, googleDocumentName: effectiveName };
-  if (existingTemplate) state.templates[state.templates.indexOf(existingTemplate)] = template;
-  else state.templates.push(template);
-  writeStorage(STORAGE_KEYS.templates, state.templates);
-  editingTemplateId = null;
-  closeEditorScreen();
-  document.getElementById('templateForm').reset(); refreshCategoryOptions(); refreshDocumentTemplateOptions(); renderTemplates(); renderDocuments(); showToast(existingTemplate ? 'Template aggiornato.' : 'Template salvato.');
-  openGoogleDocument(googleDocumentId);
 }
 
 function openTemplateEditor(templateId = '') {
@@ -2781,8 +2859,8 @@ async function initialize() {
   document.querySelectorAll('[data-bs-target="#documentModal"], [data-bs-target="#templateModal"]').forEach(button => { button.removeAttribute('data-bs-toggle'); button.removeAttribute('data-bs-target'); });
   document.getElementById('newDocumentButton').addEventListener('click', () => openDocumentModal());
   newTemplateButton?.addEventListener('click', () => openTemplateEditor());
-  document.getElementById('documentTemplate').addEventListener('change', event => openDocumentModal(event.target.value));
-  document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); });
+  document.getElementById('documentTemplate').addEventListener('change', updateTemplateSelectionHints);
+  document.getElementById('documentCategory').addEventListener('change', event => { refreshDocumentTemplateOptions(event.target.value); document.getElementById('documentNumber').value = nextNumber(event.target.value); syncOdgStatusField(); updateTemplateSelectionHints(); });
   document.querySelectorAll('#documentModal [data-bs-dismiss="modal"], #templateModal [data-bs-dismiss="modal"]').forEach(button => { button.removeAttribute('data-bs-dismiss'); button.addEventListener('click', closeEditorScreen); });
   document.querySelectorAll('.rich-editor').forEach(editor => {
     editor.style.border = '1px solid var(--line)';
