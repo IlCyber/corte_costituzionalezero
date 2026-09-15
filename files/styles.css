@@ -137,6 +137,34 @@ img {
   color: var(--accent);
 }
 
+/* La navigazione resta leggibile anche con tutte le sezioni abilitate. */
+#mainNav .navbar-nav {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: .25rem;
+}
+
+#mainNav .nav-link {
+  border-radius: .5rem;
+  padding: .45rem .65rem;
+  font-size: .9rem;
+  white-space: nowrap;
+  transition: color .15s ease, background-color .15s ease;
+}
+
+#mainNav .nav-link:hover,
+#mainNav .nav-link.active {
+  background: rgba(166, 64, 45, .09);
+}
+
+.useful-link-url {
+  display: block;
+  max-width: min(42rem, 50vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .btn-primary {
   --bs-btn-bg: var(--accent);
   --bs-btn-border-color: var(--accent);

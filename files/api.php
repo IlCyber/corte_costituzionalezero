@@ -230,6 +230,12 @@ function ensureGoogleConnectionTable(PDO $pdo): void
     $pdo->exec("CREATE TABLE IF NOT EXISTS google_watch_channels (channel_id VARCHAR(190) NOT NULL PRIMARY KEY, resource_id VARCHAR(190) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, document_id VARCHAR(190) NOT NULL, expiration BIGINT UNSIGNED NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY idx_google_watch_document (document_id), CONSTRAINT fk_google_watch_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 
+function ensureApplicationPermissions(PDO $pdo): void
+{
+    $query = $pdo->prepare("INSERT INTO permissions (permission_key, label, permission_group) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label), permission_group = VALUES(permission_group)");
+    $query->execute(['useful_links', 'Link utili', 'contenuti']);
+}
+
 function ensurePrimaryAdminFullPermissions(PDO $pdo): void
 {
     $pdo->exec("UPDATE users SET role = 'admin', role_id = (SELECT id FROM roles WHERE role_key = 'admin' LIMIT 1), is_active = 1, deleted_at = NULL WHERE is_primary_admin = 1");
@@ -265,6 +271,7 @@ function database(): PDO
         ensureTrashPermissionColumns($pdo);
         ensureGoogleConnectionTable($pdo);
         ensureUserLastLoginColumn($pdo);
+        ensureApplicationPermissions($pdo);
         ensurePrimaryAdminFullPermissions($pdo);
         return $pdo;
     } catch (Throwable $error) {
@@ -323,7 +330,8 @@ function statePermissionMap(): array
         'courtCompositions' => 'composition',
         'compositionSettings' => 'composition',
         'interpretations' => 'interpretations',
-        'interpretationSettings' => 'interpretations'
+        'interpretationSettings' => 'interpretations',
+        'usefulLinks' => 'useful_links'
     ];
 }
 
@@ -394,6 +402,7 @@ function trashEntityConfig(string $entityType): ?array
         'governments' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Scheda Governo'],
         'courtCompositions' => ['state_key' => 'courtCompositions', 'permission' => 'composition', 'label' => 'Composizione della Corte'],
         'interpretations' => ['state_key' => 'interpretations', 'permission' => 'interpretations', 'label' => 'Interpretazione'],
+        'usefulLinks' => ['state_key' => 'usefulLinks', 'permission' => 'useful_links', 'label' => 'Link utile'],
         'parliamentMembers' => ['state_key' => 'parliaments', 'permission' => 'parliament', 'label' => 'Nomina parlamentare', 'member_key' => 'members'],
         'governmentMembers' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Componente del Governo', 'member_key' => 'members'],
         'compositionMembers' => ['state_key' => 'courtCompositions', 'permission' => 'composition', 'label' => 'Componente della Corte', 'member_key' => 'members'],
@@ -410,7 +419,7 @@ function stateItemIndex(array $items, string $id): int
 function stateForTrashMutation(PDO $pdo): array
 {
     $state = rawSiteState($pdo) ?: [];
-    foreach (['documents', 'templates', 'parties', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations'] as $key) {
+    foreach (['documents', 'templates', 'parties', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations', 'usefulLinks'] as $key) {
         if (!isset($state[$key]) || !is_array($state[$key])) $state[$key] = [];
     }
     if (!isset($state['trash']) || !is_array($state['trash'])) $state['trash'] = [];
