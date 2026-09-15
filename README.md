@@ -122,7 +122,7 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 - Il progressivo viene aggiornato per categoria e puo mantenere zeri iniziali.
 - Cercare per titolo, categoria o numero.
 - Riaprire una riga per modificare il documento.
-- Ogni documento e template viene creato come Google Documenti nella cartella Drive configurata. Il pulsante **Apri Google Doc** apre la redazione nell'editor ufficiale di Google.
+- Ogni documento e template viene creato come Google Documenti nella cartella Drive configurata. In archivio si apre un documento cliccando la relativa riga; per i template si usa **Modifica**.
 - **Scarica PDF** usa l'export PDF di Google Drive; il browser non genera più PDF e non conserva il contenuto redazionale nello stato locale.
 - La sezione ODG usa la categoria automatica `ODG` e gli stati `Da valutare` / `Valutato`.
 
@@ -154,7 +154,7 @@ Creare una scheda con nome, data, testo e valori base configurabili, per esempio
 
 Da questa sezione si gestiscono categorie, progressivi, campi minimi dei partiti, ruoli parlamentari, ruoli di Governo, ruoli della Corte e valori base delle interpretazioni.
 
-Il campo **Cifre del progressivo** decide quanti zeri iniziali usare: con il valore 5 la numerazione diventa `00001`, `00002` e così via. Salvando la numerazione i documenti già archiviati e i contatori vengono riformattati con le cifre scelte, quindi l'archivio resta ordinato anche per i record creati in passato. Il progressivo resta un testo: `00042` non viene mai ridotto a `42`.
+Il campo **Cifre del progressivo** decide quanti zeri iniziali usare: con il valore 5 la numerazione diventa `00001`, `00002` e così via. La numerazione può essere reimpostata anche a un valore precedente e si applica soltanto ai documenti creati da quel momento: i progressivi già archiviati non vengono modificati. Il progressivo resta un testo: `00042` non viene mai ridotto a `42`.
 
 ### Nomi dei documenti e Google Drive
 

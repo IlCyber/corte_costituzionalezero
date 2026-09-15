@@ -39,8 +39,11 @@ register_shutdown_function(static function (): void {
 require_once __DIR__ . '/private/config.php';
 
 session_name(SESSION_NAME);
+// La sessione resta valida per due ore in più rispetto ai precedenti 30 minuti.
+// Il timeout è per inattività e viene rinnovato a ogni richiesta autenticata.
+const SESSION_IDLE_LIFETIME = 9000;
 session_set_cookie_params([
-    'lifetime' => 1800,
+    'lifetime' => SESSION_IDLE_LIFETIME,
     'path' => '/',
     'httponly' => true,
     'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
@@ -48,7 +51,7 @@ session_set_cookie_params([
 ]);
 session_start();
 
-$maxLifetime = 1800;
+$maxLifetime = SESSION_IDLE_LIFETIME;
 $currentIp = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
 $currentUa = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200);
 
@@ -74,6 +77,15 @@ if (!empty($_SESSION['user_id'])) {
         }
     }
     $_SESSION['last_activity'] = time();
+    // Rinnova anche la scadenza del cookie, non soltanto quella server-side.
+    // In questo modo i 150 minuti decorrono davvero dall'ultima attività.
+    setcookie(session_name(), session_id(), [
+        'expires' => time() + SESSION_IDLE_LIFETIME,
+        'path' => '/',
+        'httponly' => true,
+        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'samesite' => 'Lax',
+    ]);
 }
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');

@@ -39,6 +39,17 @@ let googleNameWatcher = null;
 let googleNameSyncInFlight = null;
 let googleNameSyncedAt = 0;
 let googleOpenListenerBound = false;
+const SESSION_IDLE_LIFETIME_MS = 150 * 60 * 1000;
+const SESSION_EXPIRY_WARNING_MS = 30 * 1000;
+let sessionExpiryWarningTimer = null;
+
+function scheduleSessionExpiryWarning() {
+  clearTimeout(sessionExpiryWarningTimer);
+  if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return;
+  sessionExpiryWarningTimer = setTimeout(() => {
+    window.alert('La sessione scadrà tra 30 secondi per inattività. Salva il lavoro o esegui un’azione per mantenerla attiva.');
+  }, SESSION_IDLE_LIFETIME_MS - SESSION_EXPIRY_WARNING_MS);
+}
 
 function normalizeParliamentSettings(settings = {}) {
   const safeSettings = settings && typeof settings === 'object' ? settings : {};
@@ -164,6 +175,9 @@ async function apiRequest(action, options = {}) {
   if (!contentType.includes('application/json')) throw backendUnavailableError();
 
   const payload = await response.json().catch(() => ({}));
+
+  // Ogni risposta autenticata rinnova il timeout per inattività anche sul server.
+  if (response.ok && localStorage.getItem(STORAGE_KEYS.session) === 'active') scheduleSessionExpiryWarning();
 
   if (response.status === 401) {
     if (localStorage.getItem(STORAGE_KEYS.session) === 'active') {
@@ -488,7 +502,7 @@ async function loadRemoteState() {
     currentUser = payload.user || null;
     csrfToken = currentUser?.csrfToken || '';
     applyRemoteState(payload.state);
-    await refreshGoogleConnectionStatus();
+    refreshGoogleConnectionStatus();
     return true;
   } catch {
     return false;
@@ -501,7 +515,7 @@ async function loginRemote(username, password) {
   csrfToken = currentUser?.csrfToken || '';
   ensureUserManagementCard();
   applyRemoteState(payload.state);
-  await refreshGoogleConnectionStatus();
+  refreshGoogleConnectionStatus();
   ensureOdgCategory();
   return payload;
 }
@@ -557,6 +571,7 @@ async function submitLogin(event) {
       }
     }
     localStorage.setItem(STORAGE_KEYS.session, 'active');
+    scheduleSessionExpiryWarning();
     document.getElementById('loginView').classList.add('d-none');
     document.getElementById('appView').classList.remove('d-none');
     setView('dashboard');
@@ -893,20 +908,20 @@ function normalizeCounters() {
   state.counters = counters;
 }
 function nextNumber(category) {
-  // Il contatore della categoria dice quale progressivo è libero; per
-  // robustezza si considera anche il massimo già usato dai documenti di quella
-  // tipologia: se il contatore si è perso (stato remoto vuoto) la numerazione
-  // non riparte da 00001 e non genera duplicati. Ogni categoria avanza da sola.
-  const fromCounter = numericValue(state.counters[category]);
+  // Un contatore impostato esplicitamente ha sempre precedenza, anche quando è
+  // inferiore ai numeri già archiviati: il reset non rinumera i file esistenti.
+  const configured = state.counters?.[category];
+  if (configured !== undefined && /^\d+$/.test(String(configured)) && Number.parseInt(configured, 10) > 0) return padNumber(configured);
+  // Solo se il contatore manca del tutto si ricostruisce un valore prudente dai documenti.
   const fromDocuments = (state.documents || []).reduce((max, item) => item.category === category ? Math.max(max, numericValue(item.number)) : max, 0) + 1;
-  return padNumber(String(Math.max(fromCounter, fromDocuments)));
+  return padNumber(String(fromDocuments));
 }
 function numericValue(value) { const parsed = Number.parseInt(String(value ?? '').replace(/\D+/g, ''), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
 function advanceCounter(category, usedNumber) { const nextValue = Math.max(numericValue(nextNumber(category)), numericValue(usedNumber) + 1); state.counters[category] = padNumber(String(nextValue)); }
 function normalizeStoredNumbers() {
-  // Riallinea i dati storici salvati prima dell'introduzione degli zeri iniziali.
+  // Si normalizzano soltanto i contatori. I progressivi dei documenti esistenti
+  // sono dati storici e non devono cambiare quando si modifica la numerazione.
   let changed = false;
-  (state.documents || []).forEach(item => { const padded = padNumber(item?.number); if (padded && padded !== item.number) { item.number = padded; changed = true; } });
   Object.entries(state.counters || {}).forEach(([category, value]) => { const padded = padNumber(value); if (padded && padded !== value) { state.counters[category] = padded; changed = true; } });
   return changed;
 }
@@ -1505,7 +1520,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${document.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${document.googleDocumentId}">Apri Google Doc</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''}</td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -1547,7 +1562,7 @@ function renderTemplates() {
   const grid = document.getElementById('templateGrid');
   const query = archiveSearchValue('templateSearch');
   const templates = state.templates.filter(template => matchesArchiveSearch([template.name, template.category], query));
-  grid.innerHTML = templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">Template Google Documenti</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end flex-wrap gap-2">${template.googleDocumentId ? `<button class="btn btn-sm btn-outline-primary" data-open-google="${template.googleDocumentId}">Apri Google Doc</button>` : ''}${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="templates" data-entity-id="${template.id}">Cestino</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
+  grid.innerHTML = templates.map(template => `<div class="col-12 col-md-6 col-xl-4"><article class="template-card card border-0 shadow-sm"><div class="card-body p-4"><p class="eyebrow text-secondary mb-2">${escapeHtml(template.category)}</p><h2 class="h5">${escapeHtml(template.name)}</h2><p class="card-text text-secondary small mb-0">Template Google Documenti</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-end flex-wrap gap-2">${can('templates', 'edit') ? `<button class="btn btn-sm btn-outline-secondary" data-edit-template="${template.id}">Modifica</button>` : ''}${can('templates', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="templates" data-entity-id="${template.id}">Cestino</button>` : ''}<button class="btn btn-sm btn-outline-secondary" data-use-template="${template.id}">Usa template</button></div></article></div>`).join('');
   document.getElementById('emptyTemplates').classList.toggle('d-none', templates.length > 0);
 }
 
@@ -2445,6 +2460,12 @@ async function saveDocument(event) {
     else state.documents.unshift(documentRecord);
     advanceCounter(category, number);
     writeStorage(STORAGE_KEYS.documents, state.documents); writeStorage(STORAGE_KEYS.counters, state.counters);
+    // Persisti prima di aprire Google: al ritorno, la sincronizzazione Drive non
+    // deve poter rileggere dal server uno stato precedente e far sparire la sentenza.
+    if (remoteMode) {
+      clearTimeout(remoteSaveTimer);
+      await saveRemoteState('documents');
+    }
     editingDocumentId = null;
     activeGoogleDocumentId = null;
     closeEditorScreen();
@@ -2847,11 +2868,10 @@ async function initialize() {
     const requestedPadding = Number.parseInt(paddingInput?.value, 10);
     if (paddingInput && (!Number.isFinite(requestedPadding) || requestedPadding < 1 || requestedPadding > 12)) { showToast('Le cifre del progressivo devono essere un numero da 1 a 12.'); return; }
     if (paddingInput) { state.numberPadding = requestedPadding; writeStorage(STORAGE_KEYS.numberPadding, state.numberPadding); }
-    // Con le nuove cifre si riformattano anche i contatori e i documenti già archiviati.
+    // I nuovi valori valgono solo per le prossime creazioni.
     inputs.forEach(input => { state.counters[input.dataset.category] = padNumber(input.value.trim()); });
-    const documentsChanged = normalizeStoredNumbers();
+    normalizeStoredNumbers();
     writeStorage(STORAGE_KEYS.counters, state.counters);
-    if (documentsChanged) writeStorage(STORAGE_KEYS.documents, state.documents);
     renderSettings();
     renderDocuments();
     renderOdg();
@@ -2900,6 +2920,7 @@ async function initialize() {
   // a ripristinare quella locale salvata al precedente accesso.
   const sessionValid = remoteMode ? localStorage.getItem(STORAGE_KEYS.session) === 'active' : restoreLocalSession();
   if (sessionValid) {
+    scheduleSessionExpiryWarning();
     document.getElementById('loginView').classList.add('d-none');
     document.getElementById('appView').classList.remove('d-none');
     const initialView = window.location.hash.replace('#', '') || 'dashboard';
