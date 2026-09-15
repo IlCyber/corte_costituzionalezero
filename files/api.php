@@ -646,7 +646,7 @@ if ($action === 'google_document_check' && $method === 'POST') {
         $documentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $rawId);
         if ($documentId === '') { $results[$rawId] = false; continue; }
         $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?fields=id,trashed', null, false, true);
-        $results[$documentId] = is_array($file) && isset($file['id']) && empty($file['trashed']);
+        $results[$documentId] = is_array($file) && isset($file['id']) && empty($file['trashed']) ? ['exists' => true, 'name' => (string) ($file['name'] ?? '')] : ['exists' => false, 'name' => ''];
     }
     respond(['results' => $results]);
 }

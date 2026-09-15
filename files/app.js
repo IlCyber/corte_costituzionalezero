@@ -160,7 +160,7 @@ async function refreshGoogleConnectionStatus() {
   try { googleConnection = await apiRequest('google_status'); } catch { googleConnection = { connected: false, configured: false, email: null }; }
   renderGoogleConnectionSettings();
   applyPermissions();
-  if (googleConnection.connected && !wasConnected) {
+  if (googleConnection.connected) {
     rehydrateGoogleLinks();
   }
 }
@@ -208,19 +208,29 @@ async function rehydrateGoogleLinks() {
       showToast('Errore durante la verifica dei file Google: ' + error.message); return;
     }
     let staleCount = 0;
+    let renamedCount = 0;
     idMap.forEach((refs, id) => {
-      if (!results[id]) {
+      const result = results[id];
+      const exists = typeof result === 'object' ? result.exists : Boolean(result);
+      if (!exists) {
         refs.forEach(({ key, index, field }) => {
           if (state[key]?.[index]) { delete state[key][index][field]; staleCount++; }
         });
+      } else if (typeof result === 'object' && result.name) {
+        refs.forEach(({ key, index }) => {
+          const item = state[key]?.[index];
+          if (!item) return;
+          if (key === 'documents' && item.title !== result.name) { item.title = result.name; renamedCount++; }
+          if (key === 'templates' && item.name !== result.name) { item.name = result.name; renamedCount++; }
+        });
       }
     });
-    if (staleCount > 0) {
+    if (staleCount > 0 || renamedCount > 0) {
       writeStorage(STORAGE_KEYS.documents, state.documents);
       writeStorage(STORAGE_KEYS.templates, state.templates);
       writeStorage(STORAGE_KEYS.parties, state.parties);
       writeStorage(STORAGE_KEYS.companies, state.companies);
-      showToast(`Sincronizzazione completata. ${staleCount} collegament${staleCount === 1 ? 'o rimosso' : 'i rimossi'} (file non trovati su Drive).`);
+      showToast(`Sincronizzazione completata. ${renamedCount ? `${renamedCount} nomi aggiornati` : ''}${renamedCount && staleCount ? ', ' : ''}${staleCount ? `${staleCount} collegamenti rimossi` : ''}.`);
     } else {
       showToast(`Sincronizzazione completata. Tutti i ${idMap.size} file Google sono raggiungibili.`);
     }
