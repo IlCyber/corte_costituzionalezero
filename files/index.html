@@ -193,7 +193,7 @@
             <p class="eyebrow text-secondary mb-2">Strumenti di redazione</p>
             <h1 class="display-6 fw-bold mb-2">Template base</h1>
             <p class="text-secondary mb-0">Prepara strutture riutilizzabili, complete di immagini predefinite.</p>
-          </div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#templateModal">+ Nuovo
+          </div><button class="btn btn-primary" id="newTemplateButton" type="button">+ Nuovo
             template</button>
         </div>
         <div id="templateGrid" class="row g-4"></div>
@@ -285,26 +285,11 @@
             </div>
           </div>
         </div>
-        <div class="card border-0 shadow-sm">
-          <div class="card-body p-0">
-            <div class="table-responsive section-scroll">
-              <table class="table align-middle mb-0">
-                <thead>
-                  <tr>
-                    <th class="ps-4">Nome</th>
-                    <th>Status</th>
-                    <th class="text-end pe-4">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody id="coalitionTableBody"></tbody>
-              </table>
-            </div>
-            <div id="emptyCoalitions" class="empty-state d-none">
-              <div class="display-6">□</div>
-              <h3 class="h5 mt-3">Nessuna coalizione presente</h3>
-              <p class="text-secondary mb-0">Premi '+ Nuova coalizione' per crearne una.</p>
-            </div>
-          </div>
+        <div id="coalitionGrid" class="row g-4 section-scroll"></div>
+        <div id="emptyCoalitions" class="empty-state d-none">
+          <div class="display-6">□</div>
+          <h3 class="h5 mt-3">Nessuna coalizione presente</h3>
+          <p class="text-secondary mb-0">Premi '+ Nuova coalizione' per crearne una.</p>
         </div>
       </section>
 
@@ -751,10 +736,6 @@
               <p class="eyebrow text-secondary mb-1">Archivio istituzionale</p>
               <h2 class="modal-title h4">Nuovo mandato</h2>
             </div>
-            <div class="d-flex gap-2">
-              <button type="button" class="btn btn-outline-secondary" id="cancelParliamentEditor">Annulla</button>
-              <button class="btn btn-primary" type="submit">Salva mandato</button>
-            </div>
           </div>
           <div class="modal-body">
             <div class="row g-3">
@@ -789,6 +770,10 @@
                 <div id="substituteList" class="parliament-member-list"></div>
               </div>
             </div>
+          </div>
+          <div class="modal-footer justify-content-end">
+            <button type="button" class="btn btn-outline-secondary" id="cancelParliamentEditor">Annulla</button>
+            <button class="btn btn-primary" type="submit">Salva mandato</button>
           </div>
         </form>
       </div>
