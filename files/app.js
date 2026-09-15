@@ -660,6 +660,7 @@ const TRASH_ENTITY_CONFIG = {
   documents: { storageKey: 'documents', permission: 'documents', label: 'Documento' },
   templates: { storageKey: 'templates', permission: 'templates', label: 'Template' },
   parties: { storageKey: 'parties', permission: 'parties', label: 'Partito' },
+  coalitions: { storageKey: 'coalitions', permission: 'parties', label: 'Coalizione' },
   companies: { storageKey: 'companies', permission: 'companies', label: 'Azienda' },
   parliaments: { storageKey: 'parliaments', permission: 'parliament', label: 'Mandato parlamentare' },
   governments: { storageKey: 'governments', permission: 'government', label: 'Scheda Governo' },
@@ -788,7 +789,7 @@ function applyPermissions() {
   document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
   const controls = {
     '#newDocumentButton': ['documents', 'create'],
-    '#templatesView [data-bs-target="#templateModal"]': ['templates', 'create'],
+    '#newTemplateButton': ['templates', 'create'],
     '#newPartyButton': ['parties', 'create'],
     '#newCompanyButton': ['companies', 'create'],
     '#newParliamentButton': ['parliament', 'create'],
@@ -799,7 +800,11 @@ function applyPermissions() {
     '[data-new-institution="composition"]': ['composition', 'create']
   };
   Object.entries(controls).forEach(([selector, [permission, action]]) => document.querySelectorAll(selector).forEach(control => { control.classList.toggle('d-none', !can(permission, action)); }));
-  if (!googleConnection.connected) document.querySelectorAll('#newDocumentButton, #newTemplateButton, [data-bs-target="#templateModal"], [data-use-template]').forEach(control => control.classList.add('d-none'));
+  // Creazione di documenti e template richiede Google: il toggle deve anche
+  // rimuovere d-none appena il controllo asincrono conferma la connessione.
+  document.querySelectorAll('#newDocumentButton').forEach(control => control.classList.toggle('d-none', !can('documents', 'create') || !googleConnection.connected));
+  document.querySelectorAll('#newTemplateButton').forEach(control => control.classList.toggle('d-none', !can('templates', 'create') || !googleConnection.connected));
+  document.querySelectorAll('[data-use-template]').forEach(control => control.classList.toggle('d-none', !googleConnection.connected));
 }
 
 
@@ -1695,7 +1700,7 @@ function renderCoalitionHistory(coalition = null) {
 }
 
 function renderCoalitions() {
-  const grid = document.getElementById('coalitionTableBody');
+  const grid = document.getElementById('coalitionGrid');
   if (!grid) return;
   const query = archiveSearchValue('coalitionSearch') || '';
   const coalitions = [...state.coalitions].filter(coalition => {
@@ -1703,7 +1708,10 @@ function renderCoalitions() {
     return matchesArchiveSearch([coalition.name, coalition.status, ...partyNames, ...Object.values(coalition.fields || {})], query);
   }).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 
-  grid.innerHTML = coalitions.map(coalition => `<tr><td class="ps-4"><strong>${escapeHtml(coalition.name)}</strong></td><td><span class="badge ${statusClass(coalition.status)}">${statusLabel(coalition.status)}</span></td><td class="text-end pe-4"><div class="d-flex justify-content-end gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="coalitions" data-entity-id="${coalition.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-coalition="${coalition.id}">Modifica</button></div></td></tr>`).join('');
+  grid.innerHTML = coalitions.map(coalition => {
+    const partyNames = (coalition.parties || []).map(id => state.parties.find(party => party.id === id)?.name).filter(Boolean);
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card coalition-card card border-0 shadow-sm" data-open-coalition="${coalition.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(coalition.name)}</h2><span class="badge ${statusClass(coalition.status)}">${statusLabel(coalition.status)}</span></div><p class="text-secondary small mb-3">${partyNames.length ? `${partyNames.length} ${partyNames.length === 1 ? 'partito associato' : 'partiti associati'}` : 'Nessun partito associato'}</p><dl class="party-facts mb-0">${state.coalitionFields.slice(0, 3).map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(coalition.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(coalition.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${can('parties', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="coalitions" data-entity-id="${coalition.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-coalition="${coalition.id}">Modifica</button></span></div></article></div>`;
+  }).join('');
 
   document.getElementById('emptyCoalitions').classList.toggle('d-none', coalitions.length > 0);
   const countEl = document.getElementById('coalitionCount');

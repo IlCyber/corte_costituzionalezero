@@ -397,6 +397,7 @@ function trashEntityConfig(string $entityType): ?array
         'documents' => ['state_key' => 'documents', 'permission' => 'documents', 'label' => 'Documento'],
         'templates' => ['state_key' => 'templates', 'permission' => 'templates', 'label' => 'Template'],
         'parties' => ['state_key' => 'parties', 'permission' => 'parties', 'label' => 'Partito'],
+        'coalitions' => ['state_key' => 'coalitions', 'permission' => 'parties', 'label' => 'Coalizione'],
         'companies' => ['state_key' => 'companies', 'permission' => 'companies', 'label' => 'Azienda'],
         'parliaments' => ['state_key' => 'parliaments', 'permission' => 'parliament', 'label' => 'Mandato parlamentare'],
         'governments' => ['state_key' => 'governments', 'permission' => 'government', 'label' => 'Scheda Governo'],
@@ -419,7 +420,7 @@ function stateItemIndex(array $items, string $id): int
 function stateForTrashMutation(PDO $pdo): array
 {
     $state = rawSiteState($pdo) ?: [];
-    foreach (['documents', 'templates', 'parties', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations', 'usefulLinks'] as $key) {
+    foreach (['documents', 'templates', 'parties', 'coalitions', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations', 'usefulLinks'] as $key) {
         if (!isset($state[$key]) || !is_array($state[$key])) $state[$key] = [];
     }
     if (!isset($state['trash']) || !is_array($state['trash'])) $state['trash'] = [];
