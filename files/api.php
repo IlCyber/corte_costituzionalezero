@@ -1210,6 +1210,23 @@ if ($action === 'create_role' && $method === 'POST') {
     respond(['ok' => true]);
 }
 
+if ($action === 'delete_role' && $method === 'POST') {
+    $adminId = requirePrimaryAdmin();
+    $roleId = (int) (requestBody()['roleId'] ?? 0);
+    $query = $pdo->prepare('SELECT id, name, role_key, is_system FROM roles WHERE id = ? LIMIT 1');
+    $query->execute([$roleId]);
+    $role = $query->fetch();
+    if (!$role) respond(['error' => 'Ruolo non trovato.'], 404);
+    if (!empty($role['is_system']) || $role['role_key'] === 'admin') respond(['error' => 'I ruoli di sistema non possono essere eliminati.'], 422);
+    $users = $pdo->prepare('SELECT COUNT(*) FROM users WHERE role_id = ?');
+    $users->execute([$roleId]);
+    if ((int) $users->fetchColumn() > 0) respond(['error' => 'Il ruolo è assegnato a uno o più utenti. Assegna prima un altro ruolo a questi utenti.'], 409);
+    $delete = $pdo->prepare('DELETE FROM roles WHERE id = ? AND is_system = 0');
+    $delete->execute([$roleId]);
+    auditLog($pdo, 'role_deleted', 'warning', $adminId, ['role_id' => $roleId, 'name' => $role['name']]);
+    respond(['ok' => true]);
+}
+
 if ($action === 'save_role_permissions' && $method === 'POST') {
     requirePrimaryAdmin();
     $body = requestBody();
