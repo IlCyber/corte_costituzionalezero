@@ -1788,6 +1788,211 @@ img {
   }
 }
 
+/* Adattamento trasversale per tablet, telefoni e schermi molto piccoli. */
+@media (max-width: 991.98px) {
+  #mainNav {
+    max-height: calc(100dvh - 4.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: .75rem 0 1rem;
+  }
+
+  #mainNav .navbar-nav {
+    align-items: stretch !important;
+    flex-wrap: nowrap;
+    gap: .25rem !important;
+  }
+
+  #mainNav .nav-link,
+  #mainNav #logoutButton {
+    width: 100%;
+    min-height: 2.75rem;
+    display: flex;
+    align-items: center;
+    padding: .65rem .8rem;
+  }
+
+  #mainNav .nav-item.ms-lg-3 {
+    margin-top: .5rem;
+  }
+
+  .modal:not(.editor-page) .modal-dialog {
+    max-width: calc(100vw - 1.5rem);
+    margin: .75rem auto;
+  }
+
+  .card-footer {
+    flex-wrap: wrap;
+  }
+
+  .party-card .card-footer > span:last-child,
+  .template-card .card-footer > span:last-child,
+  .parliament-card .card-footer > span:last-child {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 575.98px) {
+  body {
+    font-size: .95rem;
+  }
+
+  #appView > .container-fluid {
+    padding-top: 1.25rem !important;
+    padding-bottom: 2rem !important;
+  }
+
+  .navbar {
+    min-height: 3.75rem;
+  }
+
+  .navbar-toggler {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .app-view > .d-flex:first-child {
+    align-items: stretch !important;
+  }
+
+  .app-view > .d-flex:first-child > .btn,
+  .archive-search-row .search-box,
+  .search-box {
+    width: 100%;
+  }
+
+  .row.g-4 {
+    --bs-gutter-y: 1rem;
+  }
+
+  .card-body,
+  .modal-body {
+    overflow-wrap: anywhere;
+  }
+
+  .party-card .card-footer,
+  .coalition-card .card-footer,
+  .company-card .card-footer,
+  .template-card .card-footer,
+  .parliament-card .card-footer,
+  .odg-card .card-footer {
+    align-items: stretch !important;
+    flex-direction: column;
+  }
+
+  .party-card .card-footer > span,
+  .coalition-card .card-footer > span,
+  .company-card .card-footer > span,
+  .template-card .card-footer > span,
+  .parliament-card .card-footer > span,
+  .odg-card .card-footer > span {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .card-footer .btn {
+    flex: 1 1 auto;
+    min-height: 2.5rem;
+  }
+
+  .party-facts div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: .15rem;
+  }
+
+  .party-facts dd {
+    margin-left: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+
+  .parliament-member {
+    align-items: stretch;
+    flex-direction: column;
+    gap: .75rem;
+  }
+
+  .parliament-member > .d-flex {
+    flex-wrap: wrap;
+  }
+
+  .modal-dialog,
+  .modal-dialog.modal-lg,
+  .modal-dialog.modal-xl {
+    width: calc(100% - 1rem);
+    max-width: none;
+    margin: .5rem auto;
+  }
+
+  .modal-header,
+  .modal-footer {
+    padding: .85rem;
+  }
+
+  .modal-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+
+  input.form-control,
+  select.form-select,
+  textarea.form-control {
+    font-size: 16px;
+  }
+
+  .table-responsive {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .table td,
+  .table th {
+    padding: .65rem .55rem;
+  }
+
+  .trash-stat-card {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .useful-link-url {
+    max-width: 65vw;
+  }
+
+  .editor-toolbar {
+    max-height: 42vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .rich-editor {
+    min-height: calc(100dvh - 12rem);
+    padding: 1rem !important;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  #mainNav {
+    max-height: calc(100dvh - 3.75rem);
+  }
+
+  .modal-dialog-scrollable {
+    height: calc(100dvh - 1rem);
+  }
+
+  .editor-toolbar {
+    max-height: 35vh;
+    overflow-y: auto;
+  }
+}
+
 @media print {
   @page {
     size: A4;
