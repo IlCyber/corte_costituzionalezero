@@ -31,6 +31,7 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - [index.html](index.html): interfaccia.
 - [styles.css](styles.css): stile responsive.
 - [app.js](app.js): logica dell'interfaccia, fallback locale e sincronizzazione API.
+- [app-loader.php](app-loader.php): assegna automaticamente ad `app.js` una versione basata sulla data di modifica, evitando cache obsolete.
 - [api.php](api.php): autenticazione, richieste utenti, ruoli, permessi, sessione e persistenza con PDO.
 - [private/config.php](private/config.php): configurazione MySQL non esposta direttamente al browser.
 - [database.sql](database.sql): query per utenti, ruoli, permessi, richieste, log e archivio MySQL 8.0.
@@ -187,7 +188,7 @@ VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin',
 5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web.
 6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_WEBHOOK_URI` e `GOOGLE_DRIVE_FOLDER_ID` in `private/config.php`. L’URI di redirect deve puntare a `api.php?action=google_callback` ed essere registrato nel client Google. Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
-8. Caricare `index.html`, `styles.css`, `app.js`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
+8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
 9. Accedere al sito, aprire **Impostazioni** e usare **Collega account Google**. L’account autorizzato deve avere accesso alla cartella Drive configurata.
 7. Se Altervista consente di tenere file fuori dalla cartella pubblica, spostare lì `private/config.php`; in alternativa mantenerlo come file PHP non collegato pubblicamente e usare le protezioni già disponibili nel pannello Altervista.
 8. Aprire l'URL HTTPS del sito e accedere con l'utente creato.
