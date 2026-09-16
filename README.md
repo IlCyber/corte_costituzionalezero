@@ -99,7 +99,11 @@ L'amministratore principale trova nella scheda autonoma **Utenti e permessi**:
 - autorizzazione dei recuperi password;
 - eliminazione dell'accesso di un utente.
 
-Nella stessa scheda è possibile creare ruoli personalizzati e, per ogni area, impostare separatamente i permessi **Vedere**, **Creare**, **Modificare**, **Spostare nel cestino**, **Ripristinare**, **Eliminare definitivamente** e **Approvare**. Le sezioni e i pulsanti non autorizzati vengono nascosti nell'interfaccia; l'API ripete il controllo lato server.
+Nella stessa scheda è possibile creare ruoli personalizzati e assegnare **capacità atomiche**, una per ogni operazione sensibile. Per esempio, registrare le dimissioni di un parlamentare e annullarle sono due capacità indipendenti; così come modificare il numero di un documento, pubblicarlo, aprirlo su Google, scaricarne il PDF, spostarlo nel cestino, ripristinarlo o eliminarlo definitivamente.
+
+Le capacità sono raggruppate per area, identificate dal relativo codice tecnico e contrassegnate come critiche quando consentono operazioni distruttive o amministrative. Le sezioni e i pulsanti non autorizzati vengono nascosti nell'interfaccia. Il backend non si fida del permesso dichiarato dal browser: confronta lo stato precedente con quello proposto, ricava le capacità realmente necessarie e rifiuta l'intera modifica se ne manca anche una. Le rimozioni passano obbligatoriamente dagli endpoint dedicati del cestino.
+
+Le installazioni esistenti vengono migrate automaticamente: alla prima inizializzazione le vecchie autorizzazioni area × azione sono convertite nelle corrispondenti capacità specifiche. Le tabelle precedenti restano temporaneamente disponibili per compatibilità con client già in cache, mentre la nuova amministrazione usa `capabilities` e `role_capabilities`.
 
 L'amministratore principale non puo eliminare se stesso o essere eliminato da un altro amministratore. L'eliminazione di un account lo sposta nel cestino degli utenti, disattivandone immediatamente l'accesso; l'amministratore principale può poi ripristinarlo o eliminarlo definitivamente.
 

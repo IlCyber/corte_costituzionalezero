@@ -158,6 +158,28 @@ function ensureSchemaAndSeed(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // Capacità atomiche: una riga per ogni azione sensibile del sito.
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS capabilities (
+            capability_key   VARCHAR(120) NOT NULL,
+            label            VARCHAR(190) NOT NULL,
+            capability_group VARCHAR(120) NOT NULL,
+            is_dangerous     TINYINT(1) NOT NULL DEFAULT 0,
+            PRIMARY KEY (capability_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS role_capabilities (
+            role_id       BIGINT UNSIGNED NOT NULL,
+            capability_key VARCHAR(120) NOT NULL,
+            allowed       TINYINT(1) NOT NULL DEFAULT 1,
+            PRIMARY KEY (role_id, capability_key),
+            KEY idx_role_capability_key (capability_key),
+            CONSTRAINT fk_role_capability_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            CONSTRAINT fk_role_capability_definition FOREIGN KEY (capability_key) REFERENCES capabilities(capability_key) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     // Permessi aggiunti nelle installazioni già esistenti.
     foreach (['can_restore', 'can_purge'] as $column) {
         $exists = $pdo->query("SHOW COLUMNS FROM role_permissions LIKE '{$column}'")->fetchAll();

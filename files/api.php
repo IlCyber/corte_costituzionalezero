@@ -37,6 +37,7 @@ register_shutdown_function(static function (): void {
 });
 
 require_once __DIR__ . '/private/config.php';
+require_once __DIR__ . '/private/capabilities.php';
 
 session_name(SESSION_NAME);
 // La sessione resta valida per due ore in più rispetto ai precedenti 30 minuti.
@@ -253,10 +254,34 @@ function ensureApplicationPermissions(PDO $pdo): void
     foreach ($permissions as $permission) $query->execute($permission);
 }
 
+function ensureCapabilitySchema(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS capabilities (capability_key VARCHAR(120) NOT NULL PRIMARY KEY, label VARCHAR(190) NOT NULL, capability_group VARCHAR(120) NOT NULL, is_dangerous TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS role_capabilities (role_id BIGINT UNSIGNED NOT NULL, capability_key VARCHAR(120) NOT NULL, allowed TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (role_id, capability_key), KEY idx_role_capability_key (capability_key), CONSTRAINT fk_role_capability_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE, CONSTRAINT fk_role_capability_definition FOREIGN KEY (capability_key) REFERENCES capabilities(capability_key) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $upsert = $pdo->prepare('INSERT INTO capabilities (capability_key, label, capability_group, is_dangerous) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label), capability_group = VALUES(capability_group), is_dangerous = VALUES(is_dangerous)');
+    foreach (applicationCapabilityCatalog() as $capability) {
+        $upsert->execute([$capability['key'], $capability['label'], $capability['group'], $capability['dangerous'] ? 1 : 0]);
+    }
+
+    // Migrazione non distruttiva: ogni vecchio permesso concesso abilita le
+    // corrispondenti capacità atomiche. In seguito si amministrano solo queste.
+    $needsLegacyMigration = (int) $pdo->query('SELECT COUNT(*) FROM role_capabilities')->fetchColumn() === 0;
+    if ($needsLegacyMigration) {
+        foreach (applicationCapabilityCatalog() as $capability) {
+            $column = 'can_' . $capability['legacyAction'];
+            if (!in_array($column, ['can_view', 'can_create', 'can_edit', 'can_delete', 'can_restore', 'can_purge', 'can_approve', 'can_download'], true)) continue;
+            $statement = $pdo->prepare(sprintf("INSERT IGNORE INTO role_capabilities (role_id, capability_key, allowed) SELECT rp.role_id, ?, 1 FROM role_permissions rp INNER JOIN permissions p ON p.id = rp.permission_id WHERE p.permission_key = ? AND rp.%s = 1", $column));
+            $statement->execute([$capability['key'], $capability['legacyPermission']]);
+        }
+    }
+}
+
 function ensurePrimaryAdminFullPermissions(PDO $pdo): void
 {
     $pdo->exec("UPDATE users SET role = 'admin', role_id = (SELECT id FROM roles WHERE role_key = 'admin' LIMIT 1), is_active = 1, deleted_at = NULL WHERE is_primary_admin = 1");
     $pdo->exec("INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download) SELECT r.id, p.id, 1, 1, 1, 1, 1, 1, 1, 1 FROM roles r CROSS JOIN permissions p WHERE r.role_key = 'admin' ON DUPLICATE KEY UPDATE can_view = 1, can_create = 1, can_edit = 1, can_delete = 1, can_restore = 1, can_purge = 1, can_approve = 1, can_download = 1");
+    $pdo->exec("INSERT INTO role_capabilities (role_id, capability_key, allowed) SELECT r.id, c.capability_key, 1 FROM roles r CROSS JOIN capabilities c WHERE r.role_key = 'admin' ON DUPLICATE KEY UPDATE allowed = 1");
 }
 
 function ensureUserLastLoginColumn(PDO $pdo): void
@@ -289,6 +314,7 @@ function database(): PDO
         ensureGoogleConnectionTable($pdo);
         ensureUserLastLoginColumn($pdo);
         ensureApplicationPermissions($pdo);
+        ensureCapabilitySchema($pdo);
         ensurePrimaryAdminFullPermissions($pdo);
         return $pdo;
     } catch (Throwable $error) {
@@ -303,6 +329,197 @@ function authenticatedUserId(): int
     return (int) $_SESSION['user_id'];
 }
 
+function valuesDiffer(mixed $left, mixed $right): bool
+{
+    return json_encode($left, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) !== json_encode($right, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+/** @return array<string, array> */
+function itemsById(mixed $items): array
+{
+    $result = [];
+    foreach (is_array($items) ? $items : [] as $item) {
+        if (is_array($item) && isset($item['id']) && (string) $item['id'] !== '') $result[(string) $item['id']] = $item;
+    }
+    return $result;
+}
+
+function withoutFields(array $item, array $fields): array
+{
+    foreach ($fields as $field) unset($item[$field]);
+    return $item;
+}
+
+/** @return array<int, string> */
+function capabilitiesForConfigList(mixed $before, mixed $after, string $create, string $edit, string $delete): array
+{
+    $oldItems = itemsById($before);
+    $newItems = itemsById($after);
+    $required = [];
+    if (array_diff_key($newItems, $oldItems)) $required[] = $create;
+    if (array_diff_key($oldItems, $newItems)) $required[] = $delete;
+    foreach (array_intersect_key($newItems, $oldItems) as $id => $item) if (valuesDiffer($oldItems[$id], $item)) { $required[] = $edit; break; }
+    return array_values(array_unique($required));
+}
+
+/**
+ * Calcola dal contenuto effettivamente cambiato le capacità necessarie. Il
+ * client non può scegliere quale permesso far controllare dal server.
+ *
+ * @return array<int, string>
+ */
+function capabilitiesForStateMutation(array $before, array $after): array
+{
+    $required = [];
+    $need = static function (string $capability) use (&$required): void { $required[$capability] = true; };
+    $createdDocument = false;
+
+    if (valuesDiffer($before['documents'] ?? [], $after['documents'] ?? [])) {
+        $oldItems = itemsById($before['documents'] ?? []);
+        $newItems = itemsById($after['documents'] ?? []);
+        if (array_diff_key($oldItems, $newItems)) throw new RuntimeException('I documenti possono essere rimossi soltanto tramite il cestino.');
+        foreach ($newItems as $id => $item) {
+            $old = $oldItems[$id] ?? null;
+            $prefix = (($item['category'] ?? '') === 'ODG' || ($old['category'] ?? '') === 'ODG') ? 'odg' : 'documents';
+            if (!$old) { $need($prefix . '.create'); $createdDocument = true; continue; }
+            if (!valuesDiffer($old, $item)) continue;
+            if (($old['title'] ?? null) !== ($item['title'] ?? null) && !empty($old['googleDocumentId'])) $need($prefix === 'odg' ? 'odg.edit' : 'documents.rename_google');
+            if (($old['number'] ?? null) !== ($item['number'] ?? null)) $need($prefix === 'odg' ? 'odg.edit' : 'documents.change_number');
+            if (($old['status'] ?? null) !== ($item['status'] ?? null)) $need('odg.change_evaluation');
+            if (($old['publicationStatus'] ?? null) !== ($item['publicationStatus'] ?? null)) $need($prefix . '.change_publication');
+            $special = ['number', 'status', 'publicationStatus', 'updatedAt', 'googleModifiedTime', 'googleModifiedBy'];
+            if (valuesDiffer(withoutFields($old, $special), withoutFields($item, $special))) $need($prefix . '.edit');
+        }
+    }
+
+    $simpleCollections = [
+        'templates' => ['templates.create', 'templates.edit'],
+        'interpretations' => ['interpretations.create', 'interpretations.edit'],
+        'usefulLinks' => ['useful_links.create', 'useful_links.edit'],
+    ];
+    foreach ($simpleCollections as $stateKey => [$createCapability, $editCapability]) {
+        if (!valuesDiffer($before[$stateKey] ?? [], $after[$stateKey] ?? [])) continue;
+        $oldItems = itemsById($before[$stateKey] ?? []);
+        $newItems = itemsById($after[$stateKey] ?? []);
+        if (array_diff_key($oldItems, $newItems)) throw new RuntimeException('Gli elementi possono essere rimossi soltanto tramite il cestino.');
+        foreach ($newItems as $id => $item) {
+            if (!isset($oldItems[$id])) $need($createCapability);
+            elseif (valuesDiffer($oldItems[$id], $item)) {
+                if ($stateKey === 'templates' && ($oldItems[$id]['name'] ?? null) !== ($item['name'] ?? null) && !empty($oldItems[$id]['googleDocumentId'])) $need('templates.rename_google');
+                $need($editCapability);
+            }
+        }
+    }
+
+    if (valuesDiffer($before['coalitions'] ?? [], $after['coalitions'] ?? [])) {
+        $oldItems = itemsById($before['coalitions'] ?? []);
+        $newItems = itemsById($after['coalitions'] ?? []);
+        if (array_diff_key($oldItems, $newItems)) throw new RuntimeException('Le coalizioni possono essere rimosse soltanto tramite il cestino.');
+        foreach ($newItems as $id => $item) {
+            $old = $oldItems[$id] ?? null;
+            if (!$old) { $need('coalitions.create'); continue; }
+            if (($old['status'] ?? null) !== ($item['status'] ?? null)) $need('coalitions.change_status');
+            if (valuesDiffer($old['parties'] ?? [], $item['parties'] ?? [])) $need('coalitions.manage_parties');
+            if (valuesDiffer(withoutFields($old, ['status', 'parties', 'history', 'updatedAt']), withoutFields($item, ['status', 'parties', 'history', 'updatedAt']))) $need('coalitions.edit');
+        }
+    }
+
+    foreach ([
+        'parties' => ['parties.create', 'parties.edit', 'party_statutes.create', 'party_statutes.edit', 'googleStatuteDocumentId'],
+        'companies' => ['companies.create', 'companies.edit', 'company_regulations.create', 'company_regulations.edit', 'googleRegulationDocumentId'],
+    ] as $stateKey => [$createCapability, $editCapability, $linkedCreate, $linkedEdit, $documentField]) {
+        if (!valuesDiffer($before[$stateKey] ?? [], $after[$stateKey] ?? [])) continue;
+        $oldItems = itemsById($before[$stateKey] ?? []);
+        $newItems = itemsById($after[$stateKey] ?? []);
+        if (array_diff_key($oldItems, $newItems)) throw new RuntimeException('Gli elementi possono essere rimossi soltanto tramite il cestino.');
+        foreach ($newItems as $id => $item) {
+            $old = $oldItems[$id] ?? null;
+            if (!$old) { $need($createCapability); continue; }
+            if (!valuesDiffer($old, $item)) continue;
+            $googleFields = [$documentField, 'googleUrl', 'statuteUrl', 'regulationUrl', 'statute', 'regulation', 'googleStatuteName', 'googleRegulationName', 'googleDocumentName', 'googleModifiedTime', 'googleModifiedBy', 'googleLatestText'];
+            $generalIgnored = array_merge($googleFields, ['history', 'updatedAt']);
+            if (valuesDiffer($old['history'] ?? [], $item['history'] ?? [])) {
+                $history = is_array($item['history'] ?? null) ? $item['history'] : [];
+                $oldHistoryKeys = array_fill_keys(array_map(static fn (mixed $entry): string => (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), is_array($old['history'] ?? null) ? $old['history'] : []), true);
+                $changedHistory = array_values(array_filter($history, static fn (mixed $entry): bool => !isset($oldHistoryKeys[(string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)])));
+                $onlyLinkedHistory = !empty($changedHistory);
+                foreach ($changedHistory as $entry) {
+                    $label = is_array($entry) ? (string) ($entry['label'] ?? '') : '';
+                    $linkedLabels = $stateKey === 'parties' ? ['Statuto', 'Statuto Google'] : ['Regolamento', 'Regolamento Google'];
+                    if (!in_array($label, $linkedLabels, true)) { $onlyLinkedHistory = false; break; }
+                }
+                $need($onlyLinkedHistory ? $linkedEdit : $editCapability);
+            }
+            if ($stateKey === 'parties' && ($old['status'] ?? null) !== ($item['status'] ?? null)) { $need('parties.change_status'); $generalIgnored[] = 'status'; }
+            $hadDocument = !empty($old[$documentField]);
+            $hasDocument = !empty($item[$documentField]);
+            if ($hadDocument && ($old['name'] ?? null) !== ($item['name'] ?? null)) $need($linkedEdit);
+            if (!$hadDocument && $hasDocument) $need($linkedCreate);
+            elseif (valuesDiffer(array_intersect_key($old, array_flip($googleFields)), array_intersect_key($item, array_flip($googleFields)))) $need($linkedEdit);
+            if (valuesDiffer(withoutFields($old, $generalIgnored), withoutFields($item, $generalIgnored))) $need($editCapability);
+        }
+    }
+
+    foreach (['parliaments' => 'parliament', 'governments' => 'government', 'courtCompositions' => 'composition'] as $stateKey => $prefix) {
+        if (!valuesDiffer($before[$stateKey] ?? [], $after[$stateKey] ?? [])) continue;
+        $oldRecords = itemsById($before[$stateKey] ?? []);
+        $newRecords = itemsById($after[$stateKey] ?? []);
+        if (array_diff_key($oldRecords, $newRecords)) throw new RuntimeException('Le schede possono essere rimosse soltanto tramite il cestino.');
+        foreach ($newRecords as $id => $record) {
+            $oldRecord = $oldRecords[$id] ?? null;
+            if (!$oldRecord) { $need($prefix . ($prefix === 'parliament' ? '.mandates.create' : '.records.create')); continue; }
+            $oldMembers = itemsById($oldRecord['members'] ?? []);
+            $newMembers = itemsById($record['members'] ?? []);
+            if (array_diff_key($oldMembers, $newMembers)) throw new RuntimeException('Le nomine possono essere rimosse soltanto tramite il cestino.');
+            foreach ($newMembers as $memberId => $member) {
+                $oldMember = $oldMembers[$memberId] ?? null;
+                if (!$oldMember) { $need($prefix . '.members.create'); continue; }
+                if (!valuesDiffer($oldMember, $member)) continue;
+                if (($oldMember['role'] ?? null) !== ($member['role'] ?? null)) $need($prefix . '.members.change_role');
+                if ($prefix === 'parliament') {
+                    $wasResigned = !empty($oldMember['resignationDate']);
+                    $isResigned = !empty($member['resignationDate']);
+                    if (!$wasResigned && $isResigned) $need('parliament.members.resign');
+                    if ($wasResigned && !$isResigned) $need('parliament.members.undo_resignation');
+                    if ($wasResigned && $isResigned && ($oldMember['resignationDate'] ?? null) !== ($member['resignationDate'] ?? null)) $need('parliament.members.change_resignation_date');
+                    $special = ['role', 'resignationDate'];
+                } else {
+                    if (empty($oldMember['endDate']) && !empty($member['endDate'])) $need($prefix . '.members.end');
+                    if (!empty($oldMember['endDate']) && empty($member['endDate'])) $need($prefix . '.members.undo_end');
+                    if (!empty($oldMember['endDate']) && !empty($member['endDate']) && $oldMember['endDate'] !== $member['endDate']) $need($prefix . '.members.change_end_date');
+                    $special = ['role', 'endDate'];
+                }
+                if (valuesDiffer(withoutFields($oldMember, $special), withoutFields($member, $special))) $need($prefix . '.members.edit');
+            }
+            $recordCapability = $prefix . ($prefix === 'parliament' ? '.mandates.edit' : '.records.edit');
+            if (valuesDiffer(withoutFields($oldRecord, ['members', 'updatedAt']), withoutFields($record, ['members', 'updatedAt']))) $need($recordCapability);
+        }
+    }
+
+    $settings = [
+        'categories' => 'settings.categories.create',
+        'pageMargins' => 'settings.page_margins.edit',
+        'numberPadding' => 'settings.number_padding.edit',
+    ];
+    foreach (capabilitiesForConfigList($before['partyFields'] ?? [], $after['partyFields'] ?? [], 'settings.party_fields.create', 'settings.party_fields.create', 'settings.party_fields.delete') as $capability) $need($capability);
+    foreach (capabilitiesForConfigList($before['coalitionFields'] ?? [], $after['coalitionFields'] ?? [], 'settings.coalition_fields.create', 'settings.coalition_fields.create', 'settings.coalition_fields.delete') as $capability) $need($capability);
+    foreach (capabilitiesForConfigList($before['parliamentSettings']['roles'] ?? [], $after['parliamentSettings']['roles'] ?? [], 'parliament.configuration.roles_create', 'parliament.configuration.roles_edit', 'parliament.configuration.roles_delete') as $capability) $need($capability);
+    foreach (capabilitiesForConfigList($before['parliamentSettings']['fields'] ?? [], $after['parliamentSettings']['fields'] ?? [], 'parliament.configuration.fields_create', 'parliament.configuration.fields_create', 'parliament.configuration.fields_delete') as $capability) $need($capability);
+    foreach (['government' => 'governmentSettings', 'composition' => 'compositionSettings'] as $prefix => $stateKey) {
+        foreach (capabilitiesForConfigList($before[$stateKey]['roles'] ?? [], $after[$stateKey]['roles'] ?? [], $prefix . '.configuration.roles_create', $prefix . '.configuration.roles_edit', $prefix . '.configuration.roles_delete') as $capability) $need($capability);
+    }
+    foreach (capabilitiesForConfigList($before['interpretationSettings']['fields'] ?? [], $after['interpretationSettings']['fields'] ?? [], 'interpretations.configuration.fields_create', 'interpretations.configuration.fields_create', 'interpretations.configuration.fields_delete') as $capability) $need($capability);
+    foreach ($settings as $stateKey => $capability) {
+        if (!valuesDiffer($before[$stateKey] ?? null, $after[$stateKey] ?? null)) continue;
+        if ($stateKey === 'categories' && count(is_array($after[$stateKey] ?? null) ? $after[$stateKey] : []) < count(is_array($before[$stateKey] ?? null) ? $before[$stateKey] : [])) $need('settings.categories.delete');
+        else $need($capability);
+    }
+    $categoriesChanged = valuesDiffer($before['categories'] ?? [], $after['categories'] ?? []);
+    if (!$createdDocument && !$categoriesChanged && valuesDiffer($before['counters'] ?? [], $after['counters'] ?? [])) $need('settings.counters.edit');
+
+    return array_keys($required);
+}
+
 function rawSiteState(PDO $pdo): ?array
 {
     $query = $pdo->query('SELECT state_json FROM site_state WHERE id = 1 LIMIT 1');
@@ -312,16 +529,63 @@ function rawSiteState(PDO $pdo): ?array
     return is_array($state) ? sanitizeState($state) : null;
 }
 
+function stateViewCapabilityMap(): array
+{
+    return [
+        'templates' => 'templates.view',
+        'parties' => 'parties.view', 'coalitions' => 'coalitions.view',
+        'companies' => 'companies.view', 'parliaments' => 'parliament.mandates.view',
+        'governments' => 'government.records.view', 'courtCompositions' => 'composition.records.view',
+        'interpretations' => 'interpretations.view', 'usefulLinks' => 'useful_links.view',
+        'counters' => 'settings.view', 'categories' => 'settings.view', 'pageMargins' => 'settings.view',
+        'numberPadding' => 'settings.view', 'partyFields' => 'parties.view', 'coalitionFields' => 'coalitions.view',
+        'parliamentSettings' => 'parliament.mandates.view', 'governmentSettings' => 'government.records.view',
+        'compositionSettings' => 'composition.records.view', 'interpretationSettings' => 'interpretations.view',
+    ];
+}
+
 function stateForUser(PDO $pdo, int $userId): ?array
 {
     $state = rawSiteState($pdo);
     if (!is_array($state) || !empty($_SESSION['is_primary_admin'])) return $state;
-    $permissions = statePermissionMap();
-    foreach ($permissions as $key => $permission) if (!hasPermission($pdo, $userId, $permission, 'view')) $state[$key] = is_array($state[$key] ?? null) ? [] : null;
+    $canViewDocuments = hasCapability($pdo, $userId, 'documents.view', false);
+    $canViewOdg = hasCapability($pdo, $userId, 'odg.view', false);
+    $state['documents'] = array_values(array_filter(is_array($state['documents'] ?? null) ? $state['documents'] : [], static fn (array $document): bool => (($document['category'] ?? '') === 'ODG') ? $canViewOdg : $canViewDocuments));
+    foreach (stateViewCapabilityMap() as $key => $capability) if (!hasCapability($pdo, $userId, $capability, false)) $state[$key] = is_array($state[$key] ?? null) ? [] : null;
+
+    if (!hasCapability($pdo, $userId, 'parliament.members.view', false)) foreach ($state['parliaments'] ?? [] as &$record) $record['members'] = [];
+    unset($record);
+    if (!hasCapability($pdo, $userId, 'government.members.view', false)) foreach ($state['governments'] ?? [] as &$record) $record['members'] = [];
+    unset($record);
+    if (!hasCapability($pdo, $userId, 'composition.members.view', false)) foreach ($state['courtCompositions'] ?? [] as &$record) $record['members'] = [];
+    unset($record);
+
+    $canPartyHistory = hasCapability($pdo, $userId, 'parties.view_history', false);
+    $canStatuteHistory = hasCapability($pdo, $userId, 'party_statutes.view_history', false);
+    foreach ($state['parties'] ?? [] as &$party) {
+        $party['history'] = array_values(array_filter(is_array($party['history'] ?? null) ? $party['history'] : [], static function (array $entry) use ($canPartyHistory, $canStatuteHistory): bool {
+            $isStatute = in_array((string) ($entry['label'] ?? ''), ['Statuto', 'Statuto Google'], true);
+            return $isStatute ? $canStatuteHistory : $canPartyHistory;
+        }));
+    }
+    unset($party);
+    $canCompanyHistory = hasCapability($pdo, $userId, 'companies.view_history', false);
+    $canRegulationHistory = hasCapability($pdo, $userId, 'company_regulations.view_history', false);
+    foreach ($state['companies'] ?? [] as &$company) {
+        $company['history'] = array_values(array_filter(is_array($company['history'] ?? null) ? $company['history'] : [], static function (array $entry) use ($canCompanyHistory, $canRegulationHistory): bool {
+            $isRegulation = in_array((string) ($entry['label'] ?? ''), ['Regolamento', 'Regolamento Google'], true);
+            return $isRegulation ? $canRegulationHistory : $canCompanyHistory;
+        }));
+    }
+    unset($company);
     $state['trash'] = array_values(array_filter(is_array($state['trash'] ?? null) ? $state['trash'] : [], static function (mixed $entry) use ($pdo, $userId): bool {
         if (!is_array($entry)) return false;
         $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
-        return $config && (hasPermission($pdo, $userId, $config['permission'], 'delete') || hasPermission($pdo, $userId, $config['permission'], 'restore') || hasPermission($pdo, $userId, $config['permission'], 'purge'));
+        if (!$config) return false;
+        $type = (string) ($entry['entityType'] ?? '');
+        $data = is_array($entry['data'] ?? null) ? $entry['data'] : null;
+        return hasCapability($pdo, $userId, trashCapability($type, 'restore', $data), false)
+            || hasCapability($pdo, $userId, trashCapability($type, 'purge', $data), false);
     }));
     return $state;
 }
@@ -367,18 +631,48 @@ function permissionsForRole(PDO $pdo, ?int $roleId): array
     return $permissions;
 }
 
+function capabilitiesForRole(PDO $pdo, ?int $roleId): array
+{
+    if (!$roleId) return [];
+    $query = $pdo->prepare('SELECT capability_key FROM role_capabilities WHERE role_id = ? AND allowed = 1');
+    $query->execute([$roleId]);
+    return array_values(array_map('strval', $query->fetchAll(PDO::FETCH_COLUMN)));
+}
+
+function hasCapability(PDO $pdo, int $userId, string $capability, bool $auditDenied = true): bool
+{
+    if (!empty($_SESSION['is_primary_admin'])) return true;
+    static $cache = [];
+    if (!isset($cache[$userId])) {
+        $query = $pdo->prepare('SELECT rc.capability_key FROM users u INNER JOIN role_capabilities rc ON rc.role_id = u.role_id WHERE u.id = ? AND rc.allowed = 1');
+        $query->execute([$userId]);
+        $cache[$userId] = array_fill_keys(array_map('strval', $query->fetchAll(PDO::FETCH_COLUMN)), true);
+    }
+    $allowed = isset($cache[$userId][$capability]);
+    if (!$allowed && $auditDenied) auditLog($pdo, 'capability_denied', 'warning', $userId, ['capability' => $capability]);
+    return $allowed;
+}
+
+function requireCapability(PDO $pdo, int $userId, string $capability, string $message = 'Non hai il permesso di eseguire questa azione.'): void
+{
+    if (!hasCapability($pdo, $userId, $capability)) respond(['error' => $message, 'capability' => $capability], 403);
+}
+
 function userPayload(array $user, PDO $pdo): array
 {
+    $roleId = $user['role_id'] ? (int) $user['role_id'] : null;
     return [
         'id' => (int) $user['id'],
         'username' => $user['username'],
         'displayName' => $user['display_name'],
         'role' => $user['role_name'] ?? $user['role'],
-        'roleId' => $user['role_id'] ? (int) $user['role_id'] : null,
+        'roleId' => $roleId,
         'isPrimaryAdmin' => (bool) $user['is_primary_admin'],
         'mustChangeCredentials' => (bool) ($user['must_change_credentials'] ?? false),
         'deletedAt' => $user['deleted_at'] ?? null,
-        'permissions' => (bool) $user['is_primary_admin'] ? ['*' => ['view' => true, 'create' => true, 'edit' => true, 'delete' => true, 'restore' => true, 'purge' => true, 'approve' => true, 'download' => true]] : permissionsForRole($pdo, $user['role_id'] ? (int) $user['role_id'] : null),
+        'capabilities' => (bool) $user['is_primary_admin'] ? ['*'] : capabilitiesForRole($pdo, $roleId),
+        // Mantenuto durante la migrazione per compatibilità con client già in cache.
+        'permissions' => (bool) $user['is_primary_admin'] ? ['*' => ['view' => true, 'create' => true, 'edit' => true, 'delete' => true, 'restore' => true, 'purge' => true, 'approve' => true, 'download' => true]] : permissionsForRole($pdo, $roleId),
         'csrfToken' => csrfToken(),
     ];
 }
@@ -406,6 +700,20 @@ function pendingRequestExists(PDO $pdo, string $table, string $email): bool
     $query = $pdo->prepare("SELECT id FROM {$table} WHERE email = ? AND status = 'pending' LIMIT 1");
     $query->execute([$email]);
     return (bool) $query->fetchColumn();
+}
+
+function trashCapability(string $entityType, string $action, ?array $data = null): string
+{
+    $prefixes = [
+        'documents' => (($data['category'] ?? '') === 'ODG' ? 'odg' : 'documents'),
+        'templates' => 'templates', 'parties' => 'parties', 'coalitions' => 'coalitions',
+        'companies' => 'companies', 'parliaments' => 'parliament.mandates',
+        'parliamentMembers' => 'parliament.members', 'governments' => 'government.records',
+        'governmentMembers' => 'government.members', 'courtCompositions' => 'composition.records',
+        'compositionMembers' => 'composition.members', 'interpretations' => 'interpretations',
+        'usefulLinks' => 'useful_links',
+    ];
+    return ($prefixes[$entityType] ?? 'unknown') . '.' . $action;
 }
 
 function trashEntityConfig(string $entityType): ?array
@@ -638,6 +946,17 @@ function validGoogleId(mixed $id): string
     return is_string($id) && preg_match('/^[a-zA-Z0-9_-]{5,}$/', $id) === 1 ? $id : '';
 }
 
+function googleDocumentBelongsToResource(array $state, string $documentId, string $resource): bool
+{
+    if ($resource === 'documents' || $resource === 'odg') foreach (($state['documents'] ?? []) as $item) {
+        if (($item['googleDocumentId'] ?? '') === $documentId && (($item['category'] ?? '') === 'ODG') === ($resource === 'odg')) return true;
+    }
+    if ($resource === 'templates') foreach (($state['templates'] ?? []) as $item) if (($item['googleDocumentId'] ?? '') === $documentId) return true;
+    if ($resource === 'parties') foreach (($state['parties'] ?? []) as $item) if (($item['googleStatuteDocumentId'] ?? '') === $documentId) return true;
+    if ($resource === 'companies') foreach (($state['companies'] ?? []) as $item) if (($item['googleRegulationDocumentId'] ?? '') === $documentId) return true;
+    return false;
+}
+
 /**
  * Elenca ogni file Google collegato allo stato, indicando dove il nome va riportato.
  *
@@ -805,6 +1124,7 @@ function maybeAutoSyncGoogleNames(PDO $pdo, int $userId): void
     $interval = googleNameSyncInterval();
     if ($interval <= 0) return;
     if (!googleConnectionExists($pdo, $userId)) return;
+    if (!hasCapability($pdo, $userId, 'google.sync_names', false)) return;
     $last = (int) ($_SESSION['google_names_synced_at'] ?? 0);
     if ($last > 0 && (time() - $last) < $interval) return;
     // Segnata prima del lavoro: se Drive è lento o fallisce non si riprova a ogni caricamento.
@@ -944,6 +1264,8 @@ if ($action === 'google_webhook' && $method === 'POST') {
 
 if ($action === 'google_connect' && $method === 'GET') {
     $userId = authenticatedUserId();
+    $pdo = database();
+    requireCapability($pdo, $userId, 'google.account.connect', 'Non hai il permesso di collegare un account Google.');
     if (!googleConfigured()) respond(['error' => 'Google non configurato: completa private/config.php.'], 503);
     $_SESSION['google_oauth_state'] = bin2hex(random_bytes(24));
     $query = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'response_type' => 'code', 'scope' => 'openid email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents', 'access_type' => 'offline', 'prompt' => 'consent', 'state' => $_SESSION['google_oauth_state']]);
@@ -986,6 +1308,7 @@ if ($action === 'google_disconnect' && $method === 'POST') {
     $userId = authenticatedUserId();
     $pdo = database();
     requireCsrf($pdo);
+    requireCapability($pdo, $userId, 'google.account.disconnect', 'Non hai il permesso di scollegare l’account Google.');
     $query = $pdo->prepare('DELETE FROM google_connections WHERE user_id = ?');
     $query->execute([$userId]);
     respond(['ok' => true]);
@@ -995,7 +1318,7 @@ if ($action === 'google_drive_files' && $method === 'GET') {
     $userId = authenticatedUserId();
     $pdo = database();
     if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
-    if (!hasPermission($pdo, $userId, 'documents', 'view')) respond(['error' => 'Non hai il permesso di vedere i documenti.'], 403);
+    requireCapability($pdo, $userId, 'documents.view', 'Non hai il permesso di vedere i documenti.');
     $query = "'" . addslashes(GOOGLE_DRIVE_FOLDER_ID) . "' in parents and trashed = false and mimeType = 'application/vnd.google-apps.document'";
     $url = 'https://www.googleapis.com/drive/v3/files?' . http_build_query(['q' => $query, 'fields' => 'files(id,name,webViewLink,modifiedTime)', 'orderBy' => 'name', 'pageSize' => 100]);
     $files = googleRequest($pdo, $userId, 'GET', $url);
@@ -1008,7 +1331,9 @@ if ($action === 'google_document_create' && $method === 'POST') {
     requireCsrf($pdo);
     $body = requestBody();
     $permission = (string) (($body['permission'] ?? 'documents'));
-    if (!in_array($permission, ['documents', 'templates', 'parties', 'companies'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di creare documenti Google.'], 403);
+    $createCapabilities = ['documents' => 'documents.create', 'odg' => 'odg.create', 'templates' => 'templates.create', 'parties' => 'party_statutes.create', 'companies' => 'company_regulations.create'];
+    if (!isset($createCapabilities[$permission])) respond(['error' => 'Tipo di documento Google non valido.'], 422);
+    requireCapability($pdo, $userId, $createCapabilities[$permission], 'Non hai il permesso di creare questo documento Google.');
     $title = googleDocumentTitle((string) ($body['title'] ?? 'Documento'));
     $sourceDocumentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($body['sourceDocumentId'] ?? ''));
     if ($sourceDocumentId !== '') {
@@ -1029,10 +1354,13 @@ if ($action === 'google_document_rename' && $method === 'POST') {
     requireCsrf($pdo);
     $body = requestBody();
     $permission = (string) ($body['permission'] ?? 'documents');
-    if (!in_array($permission, ['documents', 'templates', 'parties', 'companies'], true) || !hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di rinominare questo documento Google.'], 403);
+    $renameCapabilities = ['documents' => 'documents.rename_google', 'odg' => 'odg.edit', 'templates' => 'templates.rename_google', 'parties' => 'party_statutes.edit', 'companies' => 'company_regulations.edit'];
+    if (!isset($renameCapabilities[$permission])) respond(['error' => 'Tipo di documento Google non valido.'], 422);
+    requireCapability($pdo, $userId, $renameCapabilities[$permission], 'Non hai il permesso di rinominare questo documento Google.');
     $documentId = validGoogleId((string) ($body['documentId'] ?? ''));
     $title = googleDocumentTitle((string) ($body['title'] ?? ''));
     if ($documentId === '' || $title === '') respond(['error' => 'Documento Google o titolo non valido.'], 422);
+    if (!googleDocumentBelongsToResource(rawSiteState($pdo) ?: [], $documentId, $permission)) respond(['error' => 'Il documento non appartiene all’area dichiarata.'], 403);
     $name = renameGoogleDocument($pdo, $userId, $documentId, $title);
     if ($name === null) respond(['error' => 'Google non ha accettato la rinomina del documento.'], 502);
     auditLog($pdo, 'google_document_renamed', 'info', $userId, ['document_id' => $documentId, 'to' => $name]);
@@ -1044,6 +1372,7 @@ if ($action === 'google_sync_names' && $method === 'POST') {
     $pdo = database();
     requireCsrf($pdo);
     if (!googleConnectionExists($pdo, $userId)) respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
+    requireCapability($pdo, $userId, 'google.sync_names', 'Non hai il permesso di sincronizzare i nomi Google.');
     $summary = syncGoogleDocumentNames($pdo, $userId);
     respond([
         'ok' => true,
@@ -1058,9 +1387,21 @@ if ($action === 'google_sync_names' && $method === 'POST') {
 if ($action === 'google_document_pdf' && $method === 'GET') {
     $userId = authenticatedUserId();
     $pdo = database();
-    if (!hasPermission($pdo, $userId, 'documents_pdf', 'download')) respond(['error' => 'Non hai il permesso di scaricare PDF.'], 403);
+    $scope = (string) ($_GET['scope'] ?? 'documents');
+    $downloadCapabilities = ['documents' => 'documents.download_pdf', 'odg' => 'odg.download_pdf', 'templates' => 'templates.download_pdf', 'party_statutes' => 'party_statutes.download_pdf', 'company_regulations' => 'company_regulations.download_pdf'];
+    if (!isset($downloadCapabilities[$scope])) respond(['error' => 'Tipo di esportazione non valido.'], 422);
+    requireCapability($pdo, $userId, $downloadCapabilities[$scope], 'Non hai il permesso di scaricare questo PDF.');
     $documentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($_GET['id'] ?? ''));
     if ($documentId === '') respond(['error' => 'Documento Google non valido.'], 422);
+    $state = rawSiteState($pdo) ?: [];
+    $scopeMatches = false;
+    if ($scope === 'documents' || $scope === 'odg') foreach (($state['documents'] ?? []) as $item) {
+        if (($item['googleDocumentId'] ?? '') === $documentId && (($item['category'] ?? '') === 'ODG') === ($scope === 'odg')) { $scopeMatches = true; break; }
+    }
+    if ($scope === 'templates') foreach (($state['templates'] ?? []) as $item) if (($item['googleDocumentId'] ?? '') === $documentId) { $scopeMatches = true; break; }
+    if ($scope === 'party_statutes') foreach (($state['parties'] ?? []) as $item) if (($item['googleStatuteDocumentId'] ?? '') === $documentId) { $scopeMatches = true; break; }
+    if ($scope === 'company_regulations') foreach (($state['companies'] ?? []) as $item) if (($item['googleRegulationDocumentId'] ?? '') === $documentId) { $scopeMatches = true; break; }
+    if (!$scopeMatches) respond(['error' => 'Il documento non appartiene all’area dichiarata.'], 403);
     $pdf = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '/export?mimeType=application%2Fpdf', null, true);
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="documento-google.pdf"');
@@ -1072,6 +1413,7 @@ if ($action === 'google_document_check' && $method === 'POST') {
     $userId = authenticatedUserId();
     $pdo = database();
     requireCsrf($pdo);
+    requireCapability($pdo, $userId, 'google.sync_names', 'Non hai il permesso di verificare i documenti Google.');
     $body = requestBody();
     $ids = $body['ids'] ?? [];
     if (!is_array($ids)) respond(['error' => 'Parametro ids non valido.'], 422);
@@ -1213,20 +1555,32 @@ if ($action === 'state' && $method === 'GET') {
 }
 
 if ($action === 'security_logs' && $method === 'GET') {
-    if (!hasPermission($pdo, $userId, 'logs', 'view')) respond(['error' => 'Non hai il permesso di consultare i log di sicurezza.'], 403);
-    $logs = $pdo->query('SELECT l.id, l.event_type, l.severity, l.ip_address, l.details, l.created_at, u.username FROM security_logs l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.created_at DESC LIMIT 500')->fetchAll();
+    requireCapability($pdo, $userId, 'security_logs.view', 'Non hai il permesso di consultare i log di sicurezza.');
+    $logs = $pdo->query('SELECT l.id, l.event_type, l.severity, l.ip_address, l.user_agent, l.details, l.created_at, u.username FROM security_logs l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.created_at DESC LIMIT 500')->fetchAll();
+    if (!hasCapability($pdo, $userId, 'security_logs.view_network', false)) {
+        foreach ($logs as &$log) { $log['ip_address'] = 'riservato'; unset($log['user_agent']); }
+        unset($log);
+    }
     respond(['logs' => $logs]);
 }
 
 if ($action === 'admin_data' && $method === 'GET') {
-    requirePrimaryAdmin();
+    if (!hasCapability($pdo, $userId, 'users.view', false) && !hasCapability($pdo, $userId, 'roles.view', false)) respond(['error' => 'Non hai il permesso di consultare utenti e ruoli.'], 403);
     $users = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.is_active, r.name AS role_name, u.created_at FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NULL ORDER BY u.display_name, u.username')->fetchAll();
     $deletedUsers = $pdo->query('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.deleted_at, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.deleted_at IS NOT NULL ORDER BY u.deleted_at DESC')->fetchAll();
     $roles = $pdo->query("SELECT id, name, role_key, is_system FROM roles WHERE role_key NOT IN ('guest', 'reader', 'editor') ORDER BY is_system DESC, name")->fetchAll();
     $permissions = $pdo->query('SELECT id, permission_key, label, permission_group FROM permissions ORDER BY permission_group, label')->fetchAll();
     $rolePermissions = $pdo->query('SELECT role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download FROM role_permissions')->fetchAll();
+    $capabilities = $pdo->query('SELECT capability_key, label, capability_group, is_dangerous FROM capabilities ORDER BY capability_group, label')->fetchAll();
+    $roleCapabilities = $pdo->query('SELECT role_id, capability_key, allowed FROM role_capabilities WHERE allowed = 1')->fetchAll();
     $registrations = $pdo->query("SELECT id, email, display_name, created_at FROM registration_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
     $resets = $pdo->query("SELECT id, email, created_at FROM password_reset_requests WHERE status = 'pending' ORDER BY created_at")->fetchAll();
+    if (!hasCapability($pdo, $userId, 'users.view', false)) {
+        $users = []; $deletedUsers = []; $registrations = []; $resets = [];
+    }
+    if (!hasCapability($pdo, $userId, 'roles.view', false)) {
+        $capabilities = []; $roleCapabilities = [];
+    }
 
     $userPayloads = function (array $rows) use ($pdo): array {
         return array_map(function (array $user) use ($pdo): array {
@@ -1240,13 +1594,15 @@ if ($action === 'admin_data' && $method === 'GET') {
         'roles' => $roles,
         'permissions' => $permissions,
         'rolePermissions' => $rolePermissions,
+        'capabilities' => $capabilities,
+        'roleCapabilities' => $roleCapabilities,
         'registrations' => $registrations,
         'resets' => $resets,
     ]);
 }
 
 if ($action === 'create_role' && $method === 'POST') {
-    requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'roles.create', 'Non hai il permesso di creare ruoli.');
     $name = trim((string) (requestBody()['name'] ?? ''));
     if ($name === '' || strlen($name) > 120) respond(['error' => 'Inserisci un nome ruolo valido.'], 422);
     $key = 'custom_' . bin2hex(random_bytes(8));
@@ -1257,7 +1613,8 @@ if ($action === 'create_role' && $method === 'POST') {
 }
 
 if ($action === 'delete_role' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'roles.delete', 'Non hai il permesso di eliminare ruoli.');
+    $adminId = $userId;
     $roleId = (int) (requestBody()['roleId'] ?? 0);
     $query = $pdo->prepare('SELECT id, name, role_key, is_system FROM roles WHERE id = ? LIMIT 1');
     $query->execute([$roleId]);
@@ -1297,14 +1654,50 @@ if ($action === 'save_role_permissions' && $method === 'POST') {
     respond(['ok' => true]);
 }
 
+if ($action === 'save_role_capabilities' && $method === 'POST') {
+    requireCapability($pdo, $userId, 'roles.edit_permissions', 'Non hai il permesso di modificare le capacità dei ruoli.');
+    $adminId = $userId;
+    $body = requestBody();
+    $roleId = (int) ($body['roleId'] ?? 0);
+    $selected = array_values(array_unique(array_filter(array_map('strval', is_array($body['capabilities'] ?? null) ? $body['capabilities'] : []))));
+    $roleQuery = $pdo->prepare("SELECT id, role_key FROM roles WHERE id = ? LIMIT 1");
+    $roleQuery->execute([$roleId]);
+    $role = $roleQuery->fetch();
+    if (!$role) respond(['error' => 'Ruolo non trovato.'], 404);
+    if ($role['role_key'] === 'admin') respond(['error' => 'Il ruolo amministratore mantiene sempre tutte le capacità.'], 422);
+    if (empty($_SESSION['is_primary_admin'])) {
+        $actorCapabilities = capabilitiesForRole($pdo, (int) ($_SESSION['role_id'] ?? 0));
+        $notOwned = array_values(array_diff($selected, $actorCapabilities));
+        if ($notOwned) respond(['error' => 'Non puoi assegnare capacità che non possiedi.', 'capabilities' => $notOwned], 403);
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM role_capabilities WHERE role_id = ?')->execute([$roleId]);
+        $insert = $pdo->prepare('INSERT INTO role_capabilities (role_id, capability_key, allowed) SELECT ?, capability_key, 1 FROM capabilities WHERE capability_key = ?');
+        foreach ($selected as $capability) $insert->execute([$roleId, $capability]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        respond(['error' => 'Impossibile salvare le capacità del ruolo.'], 500);
+    }
+    auditLog($pdo, 'role_capabilities_updated', 'warning', $adminId, ['role_id' => $roleId, 'count' => count($selected)]);
+    respond(['ok' => true]);
+}
+
 if ($action === 'approve_registration' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'registrations.approve', 'Non hai il permesso di approvare registrazioni.');
+    $adminId = $userId;
     $body = requestBody();
     $requestId = (int) ($body['requestId'] ?? 0);
     $roleId = (int) ($body['roleId'] ?? 0);
-    $roleQuery = $pdo->prepare('SELECT id FROM roles WHERE id = ? LIMIT 1');
+    $roleQuery = $pdo->prepare('SELECT id, role_key FROM roles WHERE id = ? LIMIT 1');
     $roleQuery->execute([$roleId]);
-    if (!$roleQuery->fetch()) respond(['error' => 'Seleziona un ruolo valido.'], 422);
+    $selectedRole = $roleQuery->fetch();
+    if (!$selectedRole) respond(['error' => 'Seleziona un ruolo valido.'], 422);
+    if (empty($_SESSION['is_primary_admin'])) {
+        if ($selectedRole['role_key'] === 'admin' || array_diff(capabilitiesForRole($pdo, $roleId), capabilitiesForRole($pdo, (int) ($_SESSION['role_id'] ?? 0)))) respond(['error' => 'Non puoi assegnare un ruolo con capacità superiori alle tue.'], 403);
+    }
     $query = $pdo->prepare("SELECT * FROM registration_requests WHERE id = ? AND status = 'pending' LIMIT 1");
     $query->execute([$requestId]);
     $request = $query->fetch();
@@ -1324,14 +1717,16 @@ if ($action === 'approve_registration' && $method === 'POST') {
 }
 
 if ($action === 'reject_registration' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'registrations.reject', 'Non hai il permesso di rifiutare registrazioni.');
+    $adminId = $userId;
     $query = $pdo->prepare("UPDATE registration_requests SET status = 'rejected', reviewed_by = ?, reviewed_at = UTC_TIMESTAMP() WHERE id = ? AND status = 'pending'");
     $query->execute([$adminId, (int) (requestBody()['requestId'] ?? 0)]);
     respond(['ok' => $query->rowCount() > 0]);
 }
 
 if ($action === 'approve_password_reset' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'password_resets.approve', 'Non hai il permesso di approvare recuperi password.');
+    $adminId = $userId;
     $requestId = (int) (requestBody()['requestId'] ?? 0);
     $updateRequest = $pdo->prepare("UPDATE password_reset_requests SET status = 'approved', reviewed_by = ?, reviewed_at = UTC_TIMESTAMP() WHERE id = ? AND status = 'pending'");
     $updateRequest->execute([$adminId, $requestId]);
@@ -1341,11 +1736,22 @@ if ($action === 'approve_password_reset' && $method === 'POST') {
 }
 
 if ($action === 'change_user_role' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'users.change_role', 'Non hai il permesso di cambiare i ruoli degli utenti.');
+    $adminId = $userId;
     $body = requestBody();
     $targetId = (int) ($body['userId'] ?? 0);
     $roleId = (int) ($body['roleId'] ?? 0);
     if (!$roleId || $targetId === $adminId) respond(['error' => 'Ruolo o utente non validi.'], 422);
+    $targetRoleQuery = $pdo->prepare('SELECT role_key FROM roles WHERE id = ? LIMIT 1');
+    $targetRoleQuery->execute([$roleId]);
+    $targetRoleKey = $targetRoleQuery->fetchColumn();
+    if (!$targetRoleKey) respond(['error' => 'Ruolo non trovato.'], 404);
+    if (empty($_SESSION['is_primary_admin'])) {
+        if ($targetRoleKey === 'admin') respond(['error' => 'Non puoi assegnare il ruolo amministratore.'], 403);
+        $actorCapabilities = capabilitiesForRole($pdo, (int) ($_SESSION['role_id'] ?? 0));
+        $targetCapabilities = capabilitiesForRole($pdo, $roleId);
+        if (array_diff($targetCapabilities, $actorCapabilities)) respond(['error' => 'Non puoi assegnare un ruolo con capacità superiori alle tue.'], 403);
+    }
     $query = $pdo->prepare('UPDATE users SET role_id = ?, updated_at = UTC_TIMESTAMP() WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NULL');
     $query->execute([$roleId, $targetId]);
     auditLog($pdo, 'user_role_changed', 'info', $adminId, ['target_user_id' => $targetId, 'role_id' => $roleId]);
@@ -1353,7 +1759,8 @@ if ($action === 'change_user_role' && $method === 'POST') {
 }
 
 if ($action === 'delete_user' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'users.trash', 'Non hai il permesso di disattivare utenti.');
+    $adminId = $userId;
     $targetId = (int) (requestBody()['userId'] ?? 0);
     if ($targetId === $adminId) respond(['error' => 'L’amministratore principale non può eliminare se stesso.'], 422);
     $query = $pdo->prepare('UPDATE users SET is_active = 0, deleted_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP() WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NULL');
@@ -1363,7 +1770,8 @@ if ($action === 'delete_user' && $method === 'POST') {
 }
 
 if ($action === 'restore_user' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'users.restore', 'Non hai il permesso di ripristinare utenti.');
+    $adminId = $userId;
     $targetId = (int) (requestBody()['userId'] ?? 0);
     if ($targetId === $adminId) respond(['error' => 'L’amministratore principale non può ripristinare se stesso.'], 422);
     $query = $pdo->prepare('UPDATE users SET is_active = 1, deleted_at = NULL, updated_at = UTC_TIMESTAMP() WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NOT NULL');
@@ -1373,7 +1781,8 @@ if ($action === 'restore_user' && $method === 'POST') {
 }
 
 if ($action === 'purge_user' && $method === 'POST') {
-    $adminId = requirePrimaryAdmin();
+    requireCapability($pdo, $userId, 'users.purge', 'Non hai il permesso di eliminare definitivamente utenti.');
+    $adminId = $userId;
     $targetId = (int) (requestBody()['userId'] ?? 0);
     if ($targetId === $adminId) respond(['error' => 'L’amministratore principale non può eliminare definitivamente se stesso.'], 422);
     $target = $pdo->prepare('SELECT id FROM users WHERE id = ? AND is_primary_admin = 0 AND deleted_at IS NOT NULL LIMIT 1');
@@ -1401,7 +1810,6 @@ if ($action === 'trash_item' && $method === 'POST') {
     $parentId = trim((string) ($body['parentId'] ?? ''));
     $config = trashEntityConfig($entityType);
     if (!$config || $entityId === '' || strlen($entityId) > 190 || strlen($parentId) > 190) respond(['error' => 'Elemento del cestino non valido.'], 422);
-    if (!hasPermission($pdo, $userId, $config['permission'], 'delete')) respond(['error' => 'Non hai il permesso di spostare questo elemento nel cestino.'], 403);
     $state = stateForTrashMutation($pdo);
     $items =& $state[$config['state_key']];
     $originalIndex = -1;
@@ -1413,6 +1821,7 @@ if ($action === 'trash_item' && $method === 'POST') {
         $originalIndex = stateItemIndex($members, $entityId);
         if ($originalIndex < 0) respond(['error' => 'Elemento non trovato o già eliminato.'], 404);
         $data = $members[$originalIndex];
+        requireCapability($pdo, $userId, trashCapability($entityType, 'trash', is_array($data) ? $data : null), 'Non hai il permesso di spostare questo elemento nel cestino.');
         array_splice($members, $originalIndex, 1);
         $items[$parentIndex]['updatedAt'] = gmdate('c');
         unset($members);
@@ -1420,6 +1829,7 @@ if ($action === 'trash_item' && $method === 'POST') {
         $originalIndex = stateItemIndex($items, $entityId);
         if ($originalIndex < 0) respond(['error' => 'Elemento non trovato o già eliminato.'], 404);
         $data = $items[$originalIndex];
+        requireCapability($pdo, $userId, trashCapability($entityType, 'trash', is_array($data) ? $data : null), 'Non hai il permesso di spostare questo elemento nel cestino.');
         updateGoogleTrashState($pdo, $userId, is_array($data) ? $data : [], true);
         array_splice($items, $originalIndex, 1);
     }
@@ -1439,7 +1849,7 @@ if ($action === 'restore_trash_item' && $method === 'POST') {
     $entry = $state['trash'][$trashIndex];
     $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
     if (!$config || !is_array($entry['data'] ?? null)) respond(['error' => 'Elemento del cestino non ripristinabile.'], 422);
-    if (!hasPermission($pdo, $userId, $config['permission'], 'restore')) respond(['error' => 'Non hai il permesso di ripristinare questo elemento.'], 403);
+    requireCapability($pdo, $userId, trashCapability((string) $entry['entityType'], 'restore', $entry['data']), 'Non hai il permesso di ripristinare questo elemento.');
     $items =& $state[$config['state_key']];
     $dataId = (string) ($entry['data']['id'] ?? '');
     if ($dataId === '') respond(['error' => 'Elemento del cestino non valido.'], 422);
@@ -1475,7 +1885,7 @@ if ($action === 'purge_trash_item' && $method === 'POST') {
     $entry = $state['trash'][$trashIndex];
     $config = trashEntityConfig((string) ($entry['entityType'] ?? ''));
     if (!$config) respond(['error' => 'Elemento del cestino non eliminabile.'], 422);
-    if (!hasPermission($pdo, $userId, $config['permission'], 'purge')) respond(['error' => 'Non hai il permesso di eliminare definitivamente questo elemento.'], 403);
+    requireCapability($pdo, $userId, trashCapability((string) $entry['entityType'], 'purge', is_array($entry['data'] ?? null) ? $entry['data'] : null), 'Non hai il permesso di eliminare definitivamente questo elemento.');
     $title = trashEntryTitle($entry);
     updateGoogleTrashState($pdo, $userId, is_array($entry['data']) ? $entry['data'] : [], false, true);
     array_splice($state['trash'], $trashIndex, 1);
@@ -1486,22 +1896,58 @@ if ($action === 'purge_trash_item' && $method === 'POST') {
 
 if ($action === 'save_state' && $method === 'POST') {
     $body = requestBody();
-    $permission = preg_replace('/[^a-z_]/', '', (string) ($body['permission'] ?? 'documents')) ?: 'documents';
-    if (!hasPermission($pdo, $userId, $permission, 'edit')) respond(['error' => 'Non hai il permesso di modificare questa area.'], 403);
     $encodedState = (string) ($body['state'] ?? '');
     $decodedState = json_decode($encodedState, true);
     if (!is_array($decodedState) || strlen($encodedState) > maxStateBytes()) respond(['error' => 'Stato applicativo non valido.'], 422);
     $decodedState = sanitizeState($decodedState);
     $existingState = rawSiteState($pdo) ?: [];
-    // Il cestino può essere modificato esclusivamente dalle azioni dedicate,
-    // così non può essere forgiato da un generico salvataggio dell'interfaccia.
+    // Cestino e aree non visibili non possono essere sovrascritti dal payload.
     $decodedState['trash'] = is_array($existingState['trash'] ?? null) ? $existingState['trash'] : [];
     if (empty($_SESSION['is_primary_admin'])) {
-        foreach (statePermissionMap() as $key => $area) if ($area !== $permission) $decodedState[$key] = $existingState[$key] ?? null;
+        $canViewDocuments = hasCapability($pdo, $userId, 'documents.view', false);
+        $canViewOdg = hasCapability($pdo, $userId, 'odg.view', false);
+        if (!$canViewDocuments || !$canViewOdg) {
+            $visibleIncoming = array_values(array_filter(is_array($decodedState['documents'] ?? null) ? $decodedState['documents'] : [], static fn (array $document): bool => (($document['category'] ?? '') === 'ODG') ? $canViewOdg : $canViewDocuments));
+            $hiddenExisting = array_values(array_filter(is_array($existingState['documents'] ?? null) ? $existingState['documents'] : [], static fn (array $document): bool => (($document['category'] ?? '') === 'ODG') ? !$canViewOdg : !$canViewDocuments));
+            $decodedState['documents'] = array_merge($visibleIncoming, $hiddenExisting);
+        }
+        foreach (stateViewCapabilityMap() as $key => $viewCapability) {
+            if (!hasCapability($pdo, $userId, $viewCapability, false)) $decodedState[$key] = $existingState[$key] ?? null;
+        }
+        foreach ([['parliaments', 'parliament.members.view'], ['governments', 'government.members.view'], ['courtCompositions', 'composition.members.view']] as [$stateKey, $viewCapability]) {
+            if (hasCapability($pdo, $userId, $viewCapability, false)) continue;
+            $existingById = itemsById($existingState[$stateKey] ?? []);
+            foreach ($decodedState[$stateKey] ?? [] as &$record) if (isset($existingById[(string) ($record['id'] ?? '')])) $record['members'] = $existingById[(string) $record['id']]['members'] ?? [];
+            unset($record);
+        }
+        // Gli storici non visibili restano intatti durante la modifica della scheda.
+        foreach (['parties', 'companies'] as $stateKey) {
+            $existingById = itemsById($existingState[$stateKey] ?? []);
+            foreach ($decodedState[$stateKey] ?? [] as &$record) {
+                $existingHistory = $existingById[(string) ($record['id'] ?? '')]['history'] ?? [];
+                $incomingHistory = is_array($record['history'] ?? null) ? $record['history'] : [];
+                $known = array_fill_keys(array_map(static fn (mixed $entry): string => (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $incomingHistory), true);
+                foreach ($existingHistory as $entry) {
+                    $encoded = json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if (!isset($known[$encoded])) $incomingHistory[] = $entry;
+                }
+                $record['history'] = $incomingHistory;
+            }
+            unset($record);
+        }
+    }
+    try {
+        $required = capabilitiesForStateMutation($existingState, $decodedState);
+    } catch (RuntimeException $error) {
+        respond(['error' => $error->getMessage()], 422);
+    }
+    if (empty($_SESSION['is_primary_admin'])) {
+        foreach ($required as $capability) requireCapability($pdo, $userId, $capability, 'Non hai la capacità richiesta per questa modifica.');
     }
     $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
     $query->execute([$userId, json_encode($decodedState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
-    respond(['ok' => true]);
+    auditLog($pdo, 'state_capabilities_applied', 'info', $userId, ['capabilities' => $required]);
+    respond(['ok' => true, 'capabilities' => $required]);
 }
 
 respond(['error' => 'Azione non riconosciuta.'], 404);
