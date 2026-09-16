@@ -240,6 +240,7 @@ function ensureApplicationPermissions(PDO $pdo): void
         ['odg', 'ODG', 'contenuti'],
         ['documents_pdf', 'Scarica PDF', 'contenuti'],
         ['useful_links', 'Link utili', 'contenuti'],
+        ['tools', 'Tools', 'contenuti'],
         ['settings', 'Impostazioni & Categorie', 'configurazione'],
         ['parties', 'Partiti e coalizioni', 'soggetti'],
         ['companies', 'Aziende', 'soggetti'],
@@ -740,6 +741,37 @@ function stateItemIndex(array $items, string $id): int
 {
     foreach ($items as $index => $item) if (is_array($item) && isset($item['id']) && hash_equals((string) $item['id'], $id)) return $index;
     return -1;
+}
+
+/**
+ * Elenco dei tool pubblicati nella cartella tools/: ogni file HTML presente
+ * diventa una riga della scheda Tools. Vengono considerati solo file regolari
+ * con estensione .html, senza seguire link simbolici e senza uscire dalla
+ * cartella; il nome mostrato è ricavato dal <title> del file stesso.
+ *
+ * @return array<int, array{file:string,title:string,description:string}>
+ */
+function toolsCatalog(): array
+{
+    $directory = realpath(__DIR__ . '/tools');
+    if ($directory === false || !is_dir($directory)) return [];
+    $tools = [];
+    foreach (scandir($directory) ?: [] as $item) {
+        if ($item === '.' || $item === '..' || str_starts_with($item, '.')) continue;
+        $path = $directory . DIRECTORY_SEPARATOR . $item;
+        if (!is_file($path) || strtolower(pathinfo($item, PATHINFO_EXTENSION)) !== 'html') continue;
+        // Solo file realmente contenuti nella cartella: un link simbolico che
+        // punti altrove viene escluso dal confronto tra percorsi reali.
+        if (dirname((string) realpath($path)) !== $directory) continue;
+        $content = (string) file_get_contents($path);
+        $title = $item;
+        if (preg_match('/<title[^>]*>([^<]+)<\/title>/i', $content, $match) === 1 && trim($match[1]) !== '') $title = trim(strip_tags($match[1]));
+        $description = '';
+        if (preg_match('/<meta[^>]+name=["\']description["\'][^>]*>/i', $content, $match) === 1 && preg_match('/content=["\']([^"\']*)["\']/i', $match[0], $contentMatch) === 1) $description = trim(strip_tags($contentMatch[1]));
+        $tools[] = ['file' => $item, 'title' => mb_substr($title, 0, 160), 'description' => mb_substr($description, 0, 300)];
+    }
+    usort($tools, static fn (array $left, array $right): int => strcasecmp($left['title'], $right['title']));
+    return $tools;
 }
 
 function stateForTrashMutation(PDO $pdo): array
@@ -1552,6 +1584,16 @@ if ($action === 'state' && $method === 'GET') {
     $query->execute([$userId]);
     $user = $query->fetch();
     respond(['user' => userPayload($user, $pdo), 'state' => stateForUser($pdo, $userId)]);
+}
+
+// Elenco dei tool pubblicati: serve sia alla scheda Tools del casellario, sia
+// alle pagine dei tool stessi per riconvalidare la sessione e il permesso
+// tools.view senza caricare l'intero stato applicativo.
+if ($action === 'tools_list' && $method === 'GET') {
+    requireCapability($pdo, $userId, 'tools.view', 'Non hai il permesso di visualizzare i tools.');
+    $query = $pdo->prepare('SELECT u.id, u.username, u.display_name, u.role, u.role_id, u.is_primary_admin, u.must_change_credentials, r.name AS role_name FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1');
+    $query->execute([$userId]);
+    respond(['tools' => toolsCatalog(), 'csrfToken' => csrfToken(), 'user' => userPayload($query->fetch(), $pdo)]);
 }
 
 if ($action === 'security_logs' && $method === 'GET') {

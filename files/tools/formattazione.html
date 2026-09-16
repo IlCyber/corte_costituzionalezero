@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formattatore normativo TXT</title>
+    <meta name="description"
+        content="Trasforma un testo normativo in TXT in un documento formattato, con titoli, articoli e commi numerati.">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <!-- Content Security Policy come quella applicata dal backend alle sue
+         risposte, adattata a questa pagina: script solo dalla stessa origine
+         (app_tools.js, servito con versione anti-cache da app-tools-loader.php),
+         stili inline e font Google, nessun oggetto esterno. -->
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #f0f0f0;
+            color: #111;
+            font-family: Arial, sans-serif;
+        }
+
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: #222;
+            color: white;
+            padding: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        button,
+        input,
+        label {
+            font: inherit;
+        }
+
+        button,
+        .file-label {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 8px 12px;
+            background: white;
+            color: #111;
+            cursor: pointer;
+        }
+
+        button:hover,
+        .file-label:hover {
+            background: #ddd;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .layout {
+            display: flex;
+            gap: 20px;
+            max-width: 1500px;
+            margin: 20px auto;
+            padding: 0 20px;
+            align-items: flex-start;
+        }
+
+        .settings {
+            width: 300px;
+            flex-shrink: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 16px;
+            position: sticky;
+            top: 75px;
+        }
+
+        .settings h2 {
+            font-size: 18px;
+            margin: 0 0 14px;
+        }
+
+        .settings h3 {
+            font-size: 14px;
+            margin: 18px 0 8px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .rule {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin: 10px 0;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+
+        .rule input {
+            margin-top: 3px;
+            flex-shrink: 0;
+        }
+
+        .rule label {
+            padding: 0;
+            border: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .settings select,
+        .settings input[type="number"] {
+            width: 100%;
+            padding: 6px;
+            margin-top: 5px;
+        }
+
+        .settings .description {
+            color: #555;
+            font-size: 12px;
+            margin-top: 12px;
+            line-height: 1.4;
+        }
+
+        .page {
+            width: 210mm;
+            min-height: 297mm;
+            max-width: 100%;
+            padding: 20mm;
+            background: white;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+        }
+
+        #documento {
+            font-family: "Raleway", sans-serif;
+            font-size: 12pt;
+            font-weight: 400;
+            line-height: 1.15;
+            text-align: justify;
+            overflow-wrap: anywhere;
+        }
+
+        #documento p {
+            margin: 0;
+        }
+
+        #documento .titolo,
+        #documento .articolo,
+        #documento .numero-comma {
+            font-weight: 700;
+        }
+
+        #documento .separatore {
+            height: 1.15em;
+        }
+
+        #documento .comma {
+            margin: 0;
+        }
+
+        #documento .elenco {
+            margin: 0;
+            padding-left: 1.5em;
+        }
+
+        #documento .elenco li {
+            margin: 0;
+            padding: 0;
+            list-style-type: "- ";
+        }
+
+        .status {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        /* ── Guardia di sessione e controlli di accesso ── */
+
+        #toolContent[hidden] {
+            display: none;
+        }
+
+        .tool-guard {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        .tool-guard-panel {
+            max-width: 540px;
+            padding: 28px 32px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+            text-align: center;
+        }
+
+        .tool-guard-panel h1 {
+            margin: 0 0 10px;
+            font-size: 20px;
+        }
+
+        .tool-guard-panel p {
+            margin: 0;
+            color: #444;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .tool-guard-spinner {
+            width: 34px;
+            height: 34px;
+            margin: 0 auto 16px;
+            border: 3px solid #ddd;
+            border-top-color: #222;
+            border-radius: 50%;
+            animation: tool-guard-spin 1s linear infinite;
+        }
+
+        @keyframes tool-guard-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .tool-guard-hidden {
+            display: none;
+        }
+
+        .tool-guard-link {
+            display: inline-block;
+            margin-top: 18px;
+            color: #111;
+        }
+
+        .tool-guard-noscript {
+            margin-top: 14px;
+            color: #a00;
+        }
+
+        .toolbar-spacer {
+            flex: 1 1 auto;
+        }
+
+        .tool-back {
+            display: inline-block;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: white;
+            color: #111;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .tool-back:hover {
+            background: #ddd;
+        }
+
+        .tool-user {
+            color: #ddd;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .tool-logout {
+            background: #444;
+            border-color: #444;
+            color: white;
+        }
+
+        @media (max-width: 900px) {
+            .layout {
+                flex-direction: column;
+                padding: 0 10px;
+            }
+
+            .settings {
+                width: 100%;
+                position: static;
+            }
+
+            .page {
+                padding: 15mm;
+            }
+        }
+
+        @media print {
+
+            .toolbar,
+            .settings,
+            .status,
+            .tool-guard {
+                display: none;
+            }
+
+            body {
+                background: white;
+            }
+
+            .layout {
+                display: block;
+                margin: 0;
+                padding: 0;
+            }
+
+            .page {
+                width: auto;
+                min-height: auto;
+                padding: 20mm;
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+
+<body data-tool-page="true" data-tool="formattazione">
+
+    <!-- Guardia di sessione e permessi: copre la pagina finché api.php non
+         conferma login, sessione valida e permesso tools.view. Il contenuto
+         resta nascosto fino ad allora. -->
+    <div id="toolGuard" class="tool-guard" role="dialog" aria-modal="true" aria-labelledby="toolGuardTitle">
+        <div class="tool-guard-panel">
+            <div id="toolGuardSpinner" class="tool-guard-spinner" aria-hidden="true"></div>
+            <h1 id="toolGuardTitle">Verifica della sessione…</h1>
+            <p id="toolGuardMessage">Controllo delle credenziali e dei permessi di accesso in corso.</p>
+            <a class="tool-guard-link" href="../index.html">&larr; Torna al casellario</a>
+            <noscript>
+                <p class="tool-guard-noscript">Questa pagina richiede JavaScript attivo per verificare la sessione
+                    e i permessi di accesso.</p>
+            </noscript>
+        </div>
+    </div>
+
+    <div id="toolContent" hidden>
+
+        <div class="toolbar">
+            <a class="tool-back" href="../index.html">&larr; Casellario</a>
+
+            <label class="file-label">
+                Carica TXT
+                <input type="file" id="fileInput" accept=".txt,text/plain">
+            </label>
+
+            <button id="elaboraBtn">Elabora</button>
+            <button id="resetBtn">Ripristina regole</button>
+            <button id="copiaBtn">Copia HTML</button>
+            <button id="scaricaBtn">Scarica HTML</button>
+            <button id="stampaBtn">Stampa</button>
+
+            <span class="toolbar-spacer"></span>
+            <span id="toolUserBadge" class="tool-user"></span>
+            <button id="toolLogoutButton" class="tool-logout" type="button">Esci</button>
+        </div>
+
+        <div class="layout">
+
+        <aside class="settings">
+
+            <h2>Regole di formattazione</h2>
+
+            <h3>Carattere e paragrafo</h3>
+
+            <div class="rule">
+                <input type="checkbox" id="font" checked>
+                <label for="font">Carattere Raleway</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="dimensione" checked>
+                <label for="dimensione">Dimensione 12 pt</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="stileNormale" checked>
+                <label for="stileNormale">Stile normale, senza corsivo o effetti</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="giustificato" checked>
+                <label for="giustificato">Testo giustificato</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="interlinea" checked>
+                <label for="interlinea">Interlinea 1,15</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="spaziatura" checked>
+                <label for="spaziatura">Spaziatura sopra e sotto: 0</label>
+            </div>
+
+            <h3>Struttura del documento</h3>
+
+            <div class="rule">
+                <input type="checkbox" id="titoliGrassetto" checked>
+                <label for="titoliGrassetto">Titoli in grassetto</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="articoliGrassetto" checked>
+                <label for="articoliGrassetto">Intestazioni degli articoli in grassetto</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="commiRomani" checked>
+                <label for="commiRomani">Numerazione dei commi in numeri romani maiuscoli</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="numeriGrassetto" checked>
+                <label for="numeriGrassetto">Numerazione dei commi in grassetto</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="separaTitolo" checked>
+                <label for="separaTitolo">Rigo vuoto tra Titolo e Articolo</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="separaArticoli" checked>
+                <label for="separaArticoli">Rigo vuoto tra Articoli</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="separaCommi">
+                <label for="separaCommi">Rigo vuoto tra i commi</label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="trattini" checked>
+                <label for="trattini">Elenchi con il trattino "-" </label>
+            </div>
+
+            <h3>Suddivisione logica dei commi</h3>
+
+            <div class="rule">
+                <input type="checkbox" id="suddivisioneLogica" checked>
+                <label for="suddivisioneLogica">
+                    Suddividi automaticamente i commi per argomento
+                </label>
+            </div>
+
+            <div class="rule">
+                <input type="checkbox" id="mantieniCommi" checked>
+                <label for="mantieniCommi">
+                    Riconosci e mantieni i commi già numerati nel TXT
+                </label>
+            </div>
+
+            <label for="modalita">
+                Modalità di suddivisione
+            </label>
+
+            <select id="modalita">
+                <option value="conservativa">Conservativa</option>
+                <option value="bilanciata">Bilanciata</option>
+                <option value="estensiva">Estensiva</option>
+            </select>
+
+            <label for="maxParole">
+                Lunghezza indicativa massima del comma
+            </label>
+
+            <input type="number" id="maxParole" value="120" min="20" max="1000">
+
+            <p class="description">
+                Le modifiche alle regole vengono applicate alla successiva
+                elaborazione. La suddivisione logica è euristica: il programma
+                raggruppa le frasi per disposizione e cambio di argomento,
+                senza spezzare automaticamente ogni frase.
+            </p>
+
+            <div class="status" id="status">
+                Nessun file caricato.
+            </div>
+
+        </aside>
+
+        <main class="page">
+            <div id="documento" contenteditable="true">
+                <p class="titolo">Titolo I – Principi fondamentali</p>
+                <div class="separatore"></div>
+
+                <p class="articolo">Art. 1 – Fondamenti</p>
+                <p class="comma">
+                    <span class="numero-comma">I.</span>
+                    Carica un file TXT per elaborare il documento.
+                </p>
+            </div>
+        </main>
+
+    </div>
+
+    </div>
+
+    <script src="app-tools-loader.php"></script>
+
+</body>
+
+</html>

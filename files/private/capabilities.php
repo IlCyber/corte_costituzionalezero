@@ -176,6 +176,10 @@ function applicationCapabilityCatalog(): array
         ['useful_links.restore', 'Ripristinare link', 'restore'],
         ['useful_links.purge', 'Eliminare definitivamente link', 'purge', true],
     ]);
+    $add('Tools', 'tools', [
+        ['tools.view', 'Visualizzare i tools', 'view'],
+        ['tools.open', 'Aprire i tools', 'view'],
+    ]);
     $add('Impostazioni generali', 'settings', [
         ['settings.view', 'Visualizzare impostazioni', 'view'],
         ['settings.categories.create', 'Creare categorie', 'create'],

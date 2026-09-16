@@ -7,7 +7,7 @@ const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentar
 const API_URL = 'api.php';
 const LOCAL_AUTH_KEYS = { users: 'cz_local_users', registrations: 'cz_local_registration_requests', resets: 'cz_local_password_reset_requests', roles: 'cz_local_roles' };
 const PERMISSION_CATALOG = [
-  { key: 'documents', label: 'Documenti', group: 'Archivio' }, { key: 'useful_links', label: 'Link utili', group: 'Archivio' }, { key: 'templates', label: 'Template', group: 'Archivio' }, { key: 'odg', label: 'ODG', group: 'Archivio' },
+  { key: 'documents', label: 'Documenti', group: 'Archivio' }, { key: 'useful_links', label: 'Link utili', group: 'Archivio' }, { key: 'tools', label: 'Tools', group: 'Archivio' }, { key: 'templates', label: 'Template', group: 'Archivio' }, { key: 'odg', label: 'ODG', group: 'Archivio' },
   { key: 'documents_pdf', label: 'Scarica PDF', group: 'Documenti' },
   { key: 'logs', label: 'Log di sicurezza', group: 'Amministrazione' },
   { key: 'parties', label: 'Partiti', group: 'Archivi istituzionali' }, { key: 'companies', label: 'Aziende', group: 'Archivi istituzionali' }, { key: 'parliament', label: 'Parlamento', group: 'Archivi istituzionali' },
@@ -287,6 +287,9 @@ function refreshCurrentView() {
     dashboard: renderDocuments,
     templates: renderTemplates,
     usefulLinks: renderUsefulLinks,
+    // renderTools è definita in tools/app_tools.js: se quel file non fosse
+    // caricato si ricade sul renderer predefinito senza errori.
+    tools: typeof renderTools === 'function' ? renderTools : null,
     securityLogs: renderSecurityLogs,
     parties: renderParties,
     coalitions: renderCoalitions,
@@ -531,6 +534,8 @@ async function loginRemote(username, password) {
   applyRemoteState(payload.state);
   refreshGoogleConnectionStatus();
   ensureOdgCategory();
+  // L'elenco dei tool pubblicati vive in tools/app_tools.js.
+  if (typeof loadToolsCatalog === 'function') loadToolsCatalog();
   return payload;
 }
 // Login locale: usato quando il backend non è raggiungibile, come già avviene
@@ -872,7 +877,7 @@ async function permanentlyDeleteTrashItem(trashId) {
   } catch (error) { showToast(error.message); }
 }
 function applyPermissions() {
-  const views = { dashboard: 'documents.view', templates: 'templates.view', parties: 'parties.view', coalitions: 'coalitions.view', companies: 'companies.view', parliament: 'parliament.mandates.view', government: 'government.records.view', composition: 'composition.records.view', interpretations: 'interpretations.view', usefulLinks: 'useful_links.view', securityLogs: 'security_logs.view', odg: 'odg.view', settings: 'settings.view', access: 'users.view' };
+  const views = { dashboard: 'documents.view', templates: 'templates.view', parties: 'parties.view', coalitions: 'coalitions.view', companies: 'companies.view', parliament: 'parliament.mandates.view', government: 'government.records.view', composition: 'composition.records.view', interpretations: 'interpretations.view', usefulLinks: 'useful_links.view', tools: 'tools.view', securityLogs: 'security_logs.view', odg: 'odg.view', settings: 'settings.view', access: 'users.view' };
   Object.entries(views).forEach(([view, capability]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', view === 'access' ? !canAccessManagement() : !capable(capability)); }));
   document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
   const controls = {
@@ -1608,7 +1613,7 @@ function setView(view, pushState = true) {
   ensureTrashView();
   if (view === 'trash' && !hasTrashAccess()) view = 'dashboard';
   if (view === 'access' && !canAccessManagement()) view = 'dashboard';
-  if (view !== 'dashboard' && view !== 'trash' && view !== 'access' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', usefulLinks: 'useful_links', securityLogs: 'logs', odg: 'odg', settings: 'settings' }[view] || 'documents')) view = 'dashboard';
+  if (view !== 'dashboard' && view !== 'trash' && view !== 'access' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', usefulLinks: 'useful_links', tools: 'tools', securityLogs: 'logs', odg: 'odg', settings: 'settings' }[view] || 'documents')) view = 'dashboard';
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
   document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view));
@@ -1623,6 +1628,7 @@ function setView(view, pushState = true) {
   if (view === 'interpretations') renderInterpretations();
   if (view === 'templates') renderTemplates();
   if (view === 'usefulLinks') renderUsefulLinks();
+  if (view === 'tools' && typeof renderTools === 'function') renderTools();
   if (view === 'securityLogs') renderSecurityLogs();
   if (view === 'trash') renderTrash();
   if (view === 'settings') { renderSettings(); renderInstitutionSettings('government'); renderInstitutionSettings('composition'); renderInterpretationSettings(); }
@@ -3042,6 +3048,7 @@ function seedTestMandate() {
 
 async function initialize() {
   await loadRemoteState();
+  if (remoteMode && typeof loadToolsCatalog === 'function') loadToolsCatalog();
   ensureAuthModals();
   ensureCredentialModal();
   bindResponsiveModalScrolling();

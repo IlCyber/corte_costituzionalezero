@@ -23,6 +23,7 @@ const ALL_PERMISSIONS = [
     ['odg',            'ODG',                          'contenuti'],
     ['documents_pdf',  'Scarica PDF',                  'contenuti'],
     ['useful_links',   'Link utili',                   'contenuti'],
+    ['tools',          'Tools',                        'contenuti'],
     ['settings',       'Impostazioni & Categorie',     'configurazione'],
     ['parties',        'Parti & Campi parte',          'soggetti'],
     ['companies',      'Aziende',                      'soggetti'],

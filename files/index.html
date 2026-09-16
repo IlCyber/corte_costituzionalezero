@@ -95,6 +95,7 @@
             <li class="nav-item"><a class="nav-link" href="#parliament" data-view-link="parliament">Parlamento</a></li>
             <li class="nav-item"><a class="nav-link" href="#templates" data-view-link="templates">Template</a></li>
             <li class="nav-item"><a class="nav-link" href="#usefulLinks" data-view-link="usefulLinks">Link utili</a></li>
+            <li class="nav-item"><a class="nav-link" href="#tools" data-view-link="tools">Tools</a></li>
             <li class="nav-item"><a class="nav-link" href="#securityLogs" data-view-link="securityLogs">Log di sicurezza</a></li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
             <li class="nav-item ms-lg-3"><button class="btn btn-outline-secondary btn-sm" id="logoutButton"
@@ -183,6 +184,26 @@
             </div>
             <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Nome</th><th>Indirizzo</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="usefulLinksTableBody"></tbody></table></div>
             <div id="emptyUsefulLinks" class="empty-state d-none"><div class="display-6">↗</div><h2 class="h5 mt-3">Nessun link salvato</h2><p class="text-secondary mb-0">Aggiungi il primo collegamento utile.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="toolsView" class="app-view d-none">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Strumenti di redazione</p>
+            <h1 class="display-6 fw-bold mb-2">Tools</h1>
+            <p class="text-secondary mb-0">Le utilità pubblicate nella cartella tools del sito, una riga per ogni file HTML.</p>
+          </div>
+        </div>
+        <div class="card border-0 shadow-sm">
+          <div class="card-body p-0">
+            <div class="p-4 border-bottom d-flex flex-column flex-md-row justify-content-between gap-3">
+              <h2 class="h5 mb-0">Strumenti disponibili</h2>
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="toolSearch" type="search" class="form-control" placeholder="Cerca per nome o file"></div>
+            </div>
+            <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Strumento</th><th>File</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="toolsTableBody"></tbody></table></div>
+            <div id="emptyTools" class="empty-state d-none"><div class="display-6"><i class="bi bi-tools" aria-hidden="true"></i></div><h2 class="h5 mt-3">Nessun tool disponibile</h2><p class="text-secondary mb-0">Aggiungi un file HTML nella cartella tools del sito per vederlo comparire qui.</p></div>
           </div>
         </div>
       </section>
@@ -847,6 +868,9 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app-loader.php"></script>
+  <!-- JavaScript dedicato alla scheda Tools e alle pagine dei tool: come per
+     app.js, il loader assegna una versione basata sulla data di modifica. -->
+  <script src="tools/app-tools-loader.php"></script>
 </body>
 
 </html>

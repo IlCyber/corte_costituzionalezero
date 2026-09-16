@@ -24,6 +24,7 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - Parlamento con mandati, ruoli, nomine, giuramenti e dimissioni.
 - Governo e Composizione della Corte con periodi, ruoli, limiti e componenti.
 - Interpretazioni con valori base configurabili.
+- Scheda **Tools**: una riga per ogni file HTML presente nella cartella `tools/`, con ricerca e apertura diretta; permessi dedicati `tools.view` e `tools.open`, elenco dei file ricavato dal server e pagine dei tool protette da sessione e permessi.
 - Persistenza online dell'archivio condiviso tramite MySQL.
 
 ## File principali
@@ -33,6 +34,9 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - [app.js](app.js): logica dell'interfaccia, fallback locale e sincronizzazione API.
 - [app-loader.php](app-loader.php): assegna automaticamente ad `app.js` una versione basata sulla data di modifica, evitando cache obsolete.
 - [api.php](api.php): autenticazione, richieste utenti, ruoli, permessi, sessione e persistenza con PDO.
+- [tools/](tools/): pagine dei tool pubblicati; ogni file HTML della cartella compare come riga nella scheda **Tools** (il titolo è letto dal `<title>`, la descrizione dal meta `description`).
+- [tools/app_tools.js](tools/app_tools.js): JavaScript dedicato alla scheda **Tools**, separato da `app.js`: contiene la logica dell'elenco, la guardia di sessione/permessi delle pagine dei tool e il funzionamento dei tool stessi.
+- [tools/app-tools-loader.php](tools/app-tools-loader.php): controparte di `app-loader.php` per `app_tools.js`, con versione basata sulla data di modifica per evitare cache obsolete.
 - [private/config.php](private/config.php): configurazione MySQL non esposta direttamente al browser.
 - [database.sql](database.sql): query per utenti, ruoli, permessi, richieste, log e archivio MySQL 8.0.
 - [GUIDA_UTENTE.md](GUIDA_UTENTE.md): guida funzionale e installazione Altervista.
@@ -135,6 +139,10 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 
 Creare un template con nome e categoria. Il contenuto si redige nel Google Doc creato nella cartella condivisa. **Usa template** mantiene il collegamento al template nell'archivio applicativo; i template possono essere spostati nel cestino senza modificare i documenti già creati con essi.
 
+### Tools
+
+La scheda **Tools** mostra una riga per ogni file HTML pubblicato nella cartella `tools/` del sito, come la sezione Link utili. Cliccando sulla riga (o con Invio da tastiera) si apre la pagina del tool. L'elenco arriva da `api.php` (`action=tools_list`), che legge la cartella sul server e ricava titolo e descrizione dal file stesso; la sezione è regolata dai permessi `tools.view` (vedere la scheda e le pagine dei tool) e `tools.open` (aprirli). Ogni pagina dei tool riconvalida a ogni caricamento la sessione PHP e il permesso `tools.view` tramite lo stesso endpoint: senza login o con sessione scaduta si torna al casellario, senza permesso la pagina resta bloccata con un messaggio; la sessione viene inoltre riconvalidata periodicamente e alla riapertura della scheda del browser. Tutto il JavaScript della funzionalità vive in `tools/app_tools.js`, caricato senza problemi di cache tramite `tools/app-tools-loader.php`.
+
 ### Partiti
 
 Ogni partito ha nome, stato, campi minimi configurabili e Statuto. Gli stati sono Attivo, Eliminato, Confluito e Cancellato. Le modifiche dei dati e dello Statuto sono registrate nello storico; le versioni dello Statuto possono essere confrontate.
@@ -192,7 +200,7 @@ VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin',
 5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web.
 6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_WEBHOOK_URI` e `GOOGLE_DRIVE_FOLDER_ID` in `private/config.php`. L’URI di redirect deve puntare a `api.php?action=google_callback` ed essere registrato nel client Google. Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
-8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
+8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php`, la cartella `tools/` (con `app_tools.js`, `app-tools-loader.php` e le pagine dei tool) e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
 9. Accedere al sito, aprire **Impostazioni** e usare **Collega account Google**. L’account autorizzato deve avere accesso alla cartella Drive configurata.
 7. Se Altervista consente di tenere file fuori dalla cartella pubblica, spostare lì `private/config.php`; in alternativa mantenerlo come file PHP non collegato pubblicamente e usare le protezioni già disponibili nel pannello Altervista.
 8. Aprire l'URL HTTPS del sito e accedere con l'utente creato.
