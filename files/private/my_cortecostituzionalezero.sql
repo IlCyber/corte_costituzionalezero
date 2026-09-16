@@ -67,7 +67,9 @@ INSERT INTO `permissions` (`id`, `permission_key`, `label`, `permission_group`) 
 (10, 'users', 'Gestione utenti', 'amministrazione'),
 (11, 'roles', 'Gestione ruoli', 'amministrazione'),
 (12, 'logs', 'Log di sicurezza', 'amministrazione'),
-(13, 'useful_links', 'Link utili', 'contenuti');
+(13, 'useful_links', 'Link utili', 'contenuti'),
+(14, 'odg', 'ODG', 'contenuti'),
+(15, 'documents_pdf', 'Scarica PDF', 'contenuti');
 
 -- --------------------------------------------------------
 

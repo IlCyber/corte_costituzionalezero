@@ -233,7 +233,24 @@ function ensureGoogleConnectionTable(PDO $pdo): void
 function ensureApplicationPermissions(PDO $pdo): void
 {
     $query = $pdo->prepare("INSERT INTO permissions (permission_key, label, permission_group) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label), permission_group = VALUES(permission_group)");
-    $query->execute(['useful_links', 'Link utili', 'contenuti']);
+    $permissions = [
+        ['documents', 'Documenti', 'contenuti'],
+        ['templates', 'Modelli', 'contenuti'],
+        ['odg', 'ODG', 'contenuti'],
+        ['documents_pdf', 'Scarica PDF', 'contenuti'],
+        ['useful_links', 'Link utili', 'contenuti'],
+        ['settings', 'Impostazioni & Categorie', 'configurazione'],
+        ['parties', 'Partiti e coalizioni', 'soggetti'],
+        ['companies', 'Aziende', 'soggetti'],
+        ['parliament', 'Parlamento', 'organi'],
+        ['government', 'Governo', 'organi'],
+        ['composition', 'Composizione della Corte', 'organi'],
+        ['interpretations', 'Interpretazioni', 'contenuti'],
+        ['users', 'Gestione utenti', 'amministrazione'],
+        ['roles', 'Gestione ruoli', 'amministrazione'],
+        ['logs', 'Log di sicurezza', 'amministrazione'],
+    ];
+    foreach ($permissions as $permission) $query->execute($permission);
 }
 
 function ensurePrimaryAdminFullPermissions(PDO $pdo): void
