@@ -2142,6 +2142,9 @@ function openMemberEditor(memberId = '', role = 'titolare') {
   document.getElementById('memberRole').value = member?.role || role;
   document.getElementById('oathDate').value = member?.oathDate || today();
   document.getElementById('resignationDate').value = member?.resignationDate || '';
+  const undoResignationButton = document.getElementById('undoResignationButton');
+  undoResignationButton.classList.toggle('d-none', !member?.resignationDate);
+  undoResignationButton.dataset.memberId = member?.resignationDate ? member.id : '';
   const partySelect = document.getElementById('memberParty');
   const coalitionSelect = document.getElementById('memberCoalition');
   const partyOptions = [...state.parties].filter(party => party.status !== 'cancellato').sort((a, b) => a.name.localeCompare(b.name));
@@ -2185,6 +2188,22 @@ function resignMember(memberId) {
   mandate.updatedAt = new Date().toISOString();
   writeStorage(STORAGE_KEYS.parliaments, state.parliaments);
   renderParliamentMembers(mandate); renderParliaments(); showToast('Dimissioni registrate nello storico.');
+}
+
+function undoMemberResignation(memberId) {
+  const mandate = state.parliaments.find(item => item.id === editingParliamentId);
+  const member = mandate?.members.find(item => item.id === memberId);
+  if (!mandate || !member?.resignationDate || !confirm(`Annullare le dimissioni di ${member.name}?`)) return;
+  member.resignationDate = '';
+  mandate.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.parliaments, state.parliaments);
+  document.getElementById('resignationDate').value = '';
+  const button = document.getElementById('undoResignationButton');
+  button.classList.add('d-none');
+  button.dataset.memberId = '';
+  renderParliamentMembers(mandate);
+  renderParliaments();
+  showToast('Dimissioni annullate. Il parlamentare risulta nuovamente attivo.');
 }
 
 function refreshCategoryOptions() {
@@ -3062,6 +3081,7 @@ async function initialize() {
   document.getElementById('companyForm').addEventListener('submit', saveCompany);
   document.getElementById('parliamentForm').addEventListener('submit', saveParliament);
   document.getElementById('memberForm').addEventListener('submit', saveMember);
+  document.getElementById('undoResignationButton').addEventListener('click', event => undoMemberResignation(event.currentTarget.dataset.memberId));
   document.getElementById('memberParty').addEventListener('change', syncMemberCoalitionFromParty);
   document.getElementById('partyStatuteForm').addEventListener('submit', savePartyStatute);
   document.getElementById('companyRegulationForm').addEventListener('submit', saveCompanyRegulation);
