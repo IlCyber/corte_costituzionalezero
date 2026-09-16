@@ -1474,6 +1474,12 @@ async function userManagementAction(action, body, successMessage) {
 
 function setView(view, pushState = true) {
   closeEditorToolbarMenus();
+  // Dopo la scelta di una sezione richiude il menu sui dispositivi compatti,
+  // lasciando subito tutto lo spazio disponibile al contenuto.
+  const mobileNav = document.getElementById('mainNav');
+  if (mobileNav?.classList.contains('show') && window.matchMedia('(max-width: 991.98px)').matches) {
+    bootstrap.Collapse.getOrCreateInstance(mobileNav, { toggle: false }).hide();
+  }
   if (currentUser?.isPrimaryAdmin) ensureUserManagementCard();
   ensureTrashView();
   if (view === 'trash' && !hasTrashAccess()) view = 'dashboard';
