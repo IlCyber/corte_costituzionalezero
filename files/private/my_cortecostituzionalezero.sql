@@ -153,6 +153,29 @@ WHERE `role_id` = 4;
 
 -- --------------------------------------------------------
 
+-- Le capacità atomiche vengono popolate e mantenute automaticamente da api.php
+-- usando private/capabilities.php. Queste tabelle sostituiscono gradualmente la
+-- vecchia matrice generica area × azione senza interrompere i ruoli esistenti.
+CREATE TABLE `capabilities` (
+  `capability_key` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `label` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `capability_group` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `is_dangerous` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`capability_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `role_capabilities` (
+  `role_id` bigint UNSIGNED NOT NULL,
+  `capability_key` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `allowed` tinyint(1) NOT NULL DEFAULT '1',
+  PRIMARY KEY (`role_id`,`capability_key`),
+  KEY `idx_role_capability_key` (`capability_key`),
+  CONSTRAINT `fk_role_capability_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_role_capability_definition` FOREIGN KEY (`capability_key`) REFERENCES `capabilities` (`capability_key`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
 --
 -- Struttura della tabella `security_logs`
 --
