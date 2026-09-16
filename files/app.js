@@ -1514,6 +1514,24 @@ function closeEditorToolbarMenus() {
   document.querySelectorAll('.tox-tbtn[aria-expanded="true"]').forEach(button => button.setAttribute('aria-expanded', 'false'));
 }
 
+let modalPageScrollY = 0;
+function bindResponsiveModalScrolling() {
+  document.addEventListener('show.bs.modal', event => {
+    if (!window.matchMedia('(max-width: 991.98px)').matches || !event.target.classList.contains('modal')) return;
+    modalPageScrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${modalPageScrollY}px`;
+    document.body.style.width = '100%';
+  });
+  document.addEventListener('hidden.bs.modal', () => {
+    if (document.querySelector('.modal.show') || document.body.style.position !== 'fixed') return;
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
+    window.scrollTo(0, modalPageScrollY);
+  });
+}
+
 function showEditorScreen(screenId) {
   document.querySelectorAll('.app-view, .editor-page').forEach(element => element.classList.add('d-none'));
   document.getElementById(screenId).classList.remove('d-none');
@@ -2873,6 +2891,7 @@ async function initialize() {
   await loadRemoteState();
   ensureAuthModals();
   ensureCredentialModal();
+  bindResponsiveModalScrolling();
   ensureOdgCategory();
   ensureInstitutionViews();
   ensureInterpretationView();

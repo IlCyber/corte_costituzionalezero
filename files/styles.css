@@ -1816,9 +1816,43 @@ img {
     margin-top: .5rem;
   }
 
+  .modal:not(.editor-page) {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
   .modal:not(.editor-page) .modal-dialog {
-    max-width: calc(100vw - 1.5rem);
+    width: calc(100% - 1.5rem);
+    max-width: none;
+    height: calc(100dvh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
     margin: .75rem auto;
+  }
+
+  .modal:not(.editor-page) .modal-content {
+    display: flex;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  .modal:not(.editor-page) .modal-body {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal:not(.editor-page) form {
+    display: flex;
+    min-height: 0;
+    max-height: 100%;
+    flex: 1 1 auto;
+    flex-direction: column;
   }
 
   .card-footer {
