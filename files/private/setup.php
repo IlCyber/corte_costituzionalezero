@@ -20,6 +20,8 @@ const ALL_PERMISSIONS = [
     // [key, label, group]
     ['documents',      'Documenti',                    'contenuti'],
     ['templates',      'Modelli',                      'contenuti'],
+    ['odg',            'ODG',                          'contenuti'],
+    ['documents_pdf',  'Scarica PDF',                  'contenuti'],
     ['useful_links',   'Link utili',                   'contenuti'],
     ['settings',       'Impostazioni & Categorie',     'configurazione'],
     ['parties',        'Parti & Campi parte',          'soggetti'],

@@ -497,7 +497,10 @@ async function saveRemoteState(permission = 'documents') {
 function queueRemoteSave(permission = 'documents') {
   clearTimeout(remoteSaveTimer);
   remoteSaveTimer = setTimeout(() => {
-    saveRemoteState(permission).catch(error => console.error(error));
+    saveRemoteState(permission).catch(error => {
+      console.error(error);
+      showToast(error.message || 'Non hai il permesso di salvare questa modifica.');
+    });
   }, 250);
 }
 async function loadRemoteState() {
@@ -608,6 +611,38 @@ function can(permission, action = 'view') {
   if (currentUser?.isPrimaryAdmin) return true;
   const permissions = currentUser?.permissions || {};
   return Boolean(permissions['*']?.[action] || permissions[permission]?.[action]);
+}
+function denyPermission(permission, action) {
+  const labels = { view: 'visualizzare', create: 'creare', edit: 'modificare', delete: 'eliminare', restore: 'ripristinare', purge: 'eliminare definitivamente', approve: 'approvare', download: 'scaricare' };
+  showToast(`Non hai il permesso di ${labels[action] || 'eseguire questa azione'} in questa sezione.`);
+  return false;
+}
+function requirePermission(permission, action = 'view') {
+  return can(permission, action) || denyPermission(permission, action);
+}
+function formPermission(form) {
+  const fixed = {
+    documentForm: ['documents', editingDocumentId ? 'edit' : 'create'], templateForm: ['templates', editingTemplateId ? 'edit' : 'create'],
+    partyForm: ['parties', editingPartyId ? 'edit' : 'create'], coalitionForm: ['parties', editingCoalitionId ? 'edit' : 'create'],
+    companyForm: ['companies', editingCompanyId ? 'edit' : 'create'], parliamentForm: ['parliament', editingParliamentId ? 'edit' : 'create'],
+    memberForm: ['parliament', editingMemberId ? 'edit' : 'create'], usefulLinkForm: ['useful_links', editingUsefulLinkId ? 'edit' : 'create'],
+    interpretationForm: ['interpretations', window.editingInterpretationId ? 'edit' : 'create'], partyStatuteForm: ['parties', 'edit'], companyRegulationForm: ['companies', 'edit'],
+    categoryForm: ['settings', 'edit'], numberingForm: ['settings', 'edit'], pageMarginsForm: ['settings', 'edit'], partyFieldForm: ['parties', 'edit'],
+    coalitionFieldForm: ['parties', 'edit'], parliamentSettingsForm: ['parliament', 'edit'], parliamentFieldForm: ['parliament', 'edit'], interpretationFieldForm: ['interpretations', 'edit']
+  };
+  if (fixed[form.id]) return fixed[form.id];
+  for (const [type, config] of Object.entries(institutionConfigs)) {
+    if (form.id === `${type}Form` || form.id === `${type}PersonForm`) return [config.view, 'edit'];
+    if (form.id === `${type}SettingsForm`) return [config.view, 'edit'];
+  }
+  return null;
+}
+function enforceFormPermissions(event) {
+  const required = formPermission(event.target);
+  if (!required || can(required[0], required[1])) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  denyPermission(required[0], required[1]);
 }
 function permissionForStorageKey(key) {
   const map = {
@@ -791,6 +826,7 @@ function applyPermissions() {
     '#newDocumentButton': ['documents', 'create'],
     '#newTemplateButton': ['templates', 'create'],
     '#newPartyButton': ['parties', 'create'],
+    '#newCoalitionButton': ['parties', 'create'],
     '#newCompanyButton': ['companies', 'create'],
     '#newParliamentButton': ['parliament', 'create'],
     '#newOdgButton': ['odg', 'create'],
@@ -804,7 +840,8 @@ function applyPermissions() {
   // rimuovere d-none appena il controllo asincrono conferma la connessione.
   document.querySelectorAll('#newDocumentButton').forEach(control => control.classList.toggle('d-none', !can('documents', 'create') || !googleConnection.connected));
   document.querySelectorAll('#newTemplateButton').forEach(control => control.classList.toggle('d-none', !can('templates', 'create') || !googleConnection.connected));
-  document.querySelectorAll('[data-use-template]').forEach(control => control.classList.toggle('d-none', !googleConnection.connected));
+  document.querySelectorAll('#newOdgButton').forEach(control => control.classList.toggle('d-none', !can('odg', 'create') || !can('documents', 'create')));
+  document.querySelectorAll('[data-use-template]').forEach(control => control.classList.toggle('d-none', !can('documents', 'create') || !googleConnection.connected));
 }
 
 
@@ -1629,7 +1666,7 @@ function renderDocuments() {
   const query = document.getElementById('documentSearch').value.trim().toLowerCase();
   const documents = state.documents.filter(document => [document.title, document.category, document.number].join(' ').toLowerCase().includes(query)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = document.getElementById('documentTableBody');
-  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''} <span class="badge ${document.publicationStatus === 'pubblicato' ? 'text-bg-success' : 'text-bg-secondary'}">${document.publicationStatus === 'pubblicato' ? 'Pubblicato' : 'Non pubblicato'}</span></td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm ${document.publicationStatus === 'pubblicato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-publication-status="${document.id}">${document.publicationStatus === 'pubblicato' ? 'Segna non pubblicato' : 'Segna pubblicato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-edit-document-number="${document.id}">Modifica numero</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
+  body.innerHTML = documents.map(document => `<tr class="document-row" data-open-document="${document.id}" tabindex="0" role="button"><td class="ps-4 fw-semibold">${escapeHtml(documentCode(document))}</td><td><strong>${escapeHtml(document.title)}</strong><small class="d-block text-secondary">${document.templateName ? `Template: ${escapeHtml(document.templateName)}` : 'Documento Google'}${document.googleModifiedTime ? ` · Modificato ${escapeHtml(formatDateTime(document.googleModifiedTime))}` : ''}</small></td><td><span class="badge text-bg-light">${escapeHtml(document.category)}</span>${document.category === 'ODG' ? ` <span class="badge ${document.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${document.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span>` : ''} <span class="badge ${document.publicationStatus === 'pubblicato' ? 'text-bg-success' : 'text-bg-secondary'}">${document.publicationStatus === 'pubblicato' ? 'Pubblicato' : 'Non pubblicato'}</span></td><td>${formatDate(document.date)}</td><td class="text-end pe-4"><div class="d-flex justify-content-end flex-wrap gap-2">${document.category === 'ODG' && can('documents', 'edit') ? `<button type="button" class="btn btn-sm ${document.status === 'valutato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-odg-status="${document.id}">${document.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm ${document.publicationStatus === 'pubblicato' ? 'btn-outline-warning' : 'btn-outline-success'}" data-toggle-publication-status="${document.id}">${document.publicationStatus === 'pubblicato' ? 'Segna non pubblicato' : 'Segna pubblicato'}</button>` : ''}${can('documents', 'edit') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-edit-document-number="${document.id}">Modifica numero</button>` : ''}${can('documents_pdf', 'download') && document.googleDocumentId ? `<button class="btn btn-sm btn-primary" data-download-pdf="${document.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${document.id}">Cestino</button>` : ''}</div></td></tr>`).join('');
   document.getElementById('emptyDocuments').classList.toggle('d-none', documents.length > 0);
   document.getElementById('documentCount').textContent = state.documents.length;
   document.getElementById('templateCount').textContent = state.templates.length;
@@ -1660,7 +1697,7 @@ function syncOdgStatusField() {
 function renderOdg() {
   const query = archiveSearchValue('odgSearch');
   const odgs = state.documents.filter(document => document.category === 'ODG' && matchesArchiveSearch([document.title, document.number, document.year, document.status], query)).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2"><button type="button" class="btn btn-sm btn-outline-secondary" data-toggle-odg-status="${odg.id}">${odg.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button><button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
+  document.getElementById('odgGrid').innerHTML = odgs.map(odg => `<div class="col-12 col-md-6 col-xl-4"><article class="party-card odg-card card border-0 shadow-sm" data-open-document="${odg.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(odg.title)}</h2><span class="badge ${odg.status === 'valutato' ? 'text-bg-success' : 'text-bg-warning'}">${odg.status === 'valutato' ? 'Valutato' : 'Da valutare'}</span></div><p class="text-secondary small mb-3">Creato il ${formatDate(odg.date)}</p><p class="card-text text-secondary odg-preview">${escapeHtml(plainText(odg.body))}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between gap-2"><span class="small text-secondary">${escapeHtml(documentCode(odg))}</span><span class="d-flex gap-2">${can('documents', 'edit') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-toggle-odg-status="${odg.id}">${odg.status === 'valutato' ? 'Segna da valutare' : 'Segna valutato'}</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-document="${odg.id}">Apri ODG</button>${can('documents_pdf', 'download') ? `<button type="button" class="btn btn-sm btn-primary" data-download-pdf="${odg.id}">Scarica PDF</button>` : ''}${can('documents', 'delete') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="documents" data-entity-id="${odg.id}">Cestino</button>` : ''}</span></div></article></div>`).join('');
   document.getElementById('emptyOdg').classList.toggle('d-none', odgs.length > 0);
   document.getElementById('odgCount').textContent = odgs.length;
   document.getElementById('odgToEvaluateCount').textContent = odgs.filter(odg => odg.status !== 'valutato').length;
@@ -2928,6 +2965,7 @@ async function initialize() {
   ensureAuthModals();
   ensureCredentialModal();
   bindResponsiveModalScrolling();
+  document.addEventListener('submit', enforceFormPermissions, true);
   ensureOdgCategory();
   ensureInstitutionViews();
   ensureInterpretationView();
@@ -2987,6 +3025,7 @@ async function initialize() {
     const toggleOdgStatus = event.target.closest('[data-toggle-odg-status]');
     if (toggleOdgStatus) {
       event.stopImmediatePropagation();
+      if (!requirePermission('documents', 'edit')) return;
       const documentRecord = state.documents.find(item => item.id === toggleOdgStatus.dataset.toggleOdgStatus);
       if (documentRecord) {
         documentRecord.status = documentRecord.status === 'valutato' ? 'da valutare' : 'valutato';
