@@ -1239,7 +1239,13 @@ if ($action === 'save_role_permissions' && $method === 'POST') {
     $delete = $pdo->prepare('DELETE FROM role_permissions WHERE role_id = ?');
     $delete->execute([$roleId]);
     $insert = $pdo->prepare('INSERT INTO role_permissions (role_id, permission_id, can_view, can_create, can_edit, can_delete, can_restore, can_purge, can_approve, can_download) SELECT ?, id, ?, ?, ?, ?, ?, ?, ?, ? FROM permissions WHERE permission_key = ?');
-    foreach ($permissions as $permissionKey => $values) $insert->execute([$roleId, !empty($values['view']), !empty($values['create']), !empty($values['edit']), !empty($values['delete']), !empty($values['restore']), !empty($values['purge']), !empty($values['approve']), !empty($values['download']), $permissionKey]);
+    foreach ($permissions as $permissionKey => $values) {
+        // PDO serializza false come stringa vuota; MySQL in modalità strict non
+        // può inserirla nelle colonne TINYINT e restituisce l'errore 1366.
+        // Passiamo quindi sempre interi espliciti 0/1.
+        $flag = static fn(string $action): int => !empty($values[$action]) ? 1 : 0;
+        $insert->execute([$roleId, $flag('view'), $flag('create'), $flag('edit'), $flag('delete'), $flag('restore'), $flag('purge'), $flag('approve'), $flag('download'), $permissionKey]);
+    }
     $pdo->commit();
     auditLog($pdo, 'role_permissions_updated', 'info', (int) $_SESSION['user_id'], ['role_id' => $roleId]);
     respond(['ok' => true]);
