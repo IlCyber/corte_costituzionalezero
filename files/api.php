@@ -1135,6 +1135,9 @@ if ($action === 'request_password_reset' && $method === 'POST') {
     if (!validEmail($email)) respond(['error' => 'Inserisci una mail valida.'], 422);
     $pdo = database();
     rateLimit($pdo, 'password_reset_request', 5);
+    $approved = $pdo->prepare("SELECT id FROM password_reset_requests WHERE email = ? AND status = 'approved' ORDER BY reviewed_at DESC LIMIT 1");
+    $approved->execute([$email]);
+    if ($approved->fetchColumn()) respond(['ok' => true, 'requiresPassword' => true, 'message' => 'Richiesta approvata. Inserisci la tua nuova password.']);
     $userQuery = $pdo->prepare('SELECT id FROM users WHERE username = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1');
     $userQuery->execute([$email]);
     $userId = $userQuery->fetchColumn();
@@ -1143,6 +1146,32 @@ if ($action === 'request_password_reset' && $method === 'POST') {
         $query->execute([(int) $userId, $email]);
     }
     respond(['ok' => true, 'message' => 'Se la mail è registrata, la richiesta è stata inoltrata all’amministratore principale.']);
+}
+
+if ($action === 'complete_password_reset' && $method === 'POST') {
+    $body = requestBody();
+    $email = strtolower(trim((string) ($body['email'] ?? '')));
+    $password = (string) ($body['password'] ?? '');
+    if (!validEmail($email) || !preg_match('/^(?=.*[A-Za-z])(?=.*[\d\W]).{8,}$/', $password)) respond(['error' => 'Inserisci una password di almeno 8 caratteri contenente almeno un numero o simbolo.'], 422);
+    $pdo = database();
+    rateLimit($pdo, 'password_reset_complete', 5);
+    $query = $pdo->prepare("SELECT r.id, r.user_id FROM password_reset_requests r INNER JOIN users u ON u.id = r.user_id WHERE r.email = ? AND r.status = 'approved' AND u.is_active = 1 AND u.deleted_at IS NULL ORDER BY r.reviewed_at DESC LIMIT 1");
+    $query->execute([$email]);
+    $request = $query->fetch();
+    if (!$request) respond(['error' => 'La richiesta non è ancora stata approvata o non è più valida.'], 409);
+    $pdo->beginTransaction();
+    try {
+        $update = $pdo->prepare('UPDATE users SET password_hash = ?, updated_at = UTC_TIMESTAMP() WHERE id = ?');
+        $update->execute([password_hash($password, PASSWORD_DEFAULT), (int) $request['user_id']]);
+        $consume = $pdo->prepare('DELETE FROM password_reset_requests WHERE id = ?');
+        $consume->execute([(int) $request['id']]);
+        $pdo->commit();
+    } catch (Throwable $error) {
+        $pdo->rollBack();
+        throw $error;
+    }
+    auditLog($pdo, 'password_reset_completed', 'info', (int) $request['user_id']);
+    respond(['ok' => true, 'message' => 'Password aggiornata. Ora puoi effettuare l’accesso.']);
 }
 
 if ($action === 'logout' && $method === 'POST') {
@@ -1286,20 +1315,11 @@ if ($action === 'reject_registration' && $method === 'POST') {
 
 if ($action === 'approve_password_reset' && $method === 'POST') {
     $adminId = requirePrimaryAdmin();
-    $body = requestBody();
-    $requestId = (int) ($body['requestId'] ?? 0);
-    $newPassword = (string) ($body['newPassword'] ?? '');
-    if (strlen($newPassword) < 8) respond(['error' => 'La nuova password deve avere almeno 8 caratteri.'], 422);
-    $query = $pdo->prepare("SELECT user_id FROM password_reset_requests WHERE id = ? AND status = 'pending' LIMIT 1");
-    $query->execute([$requestId]);
-    $request = $query->fetch();
-    if (!$request) respond(['error' => 'Richiesta non trovata.'], 404);
-    $pdo->beginTransaction();
-    $updateUser = $pdo->prepare('UPDATE users SET password_hash = ?, updated_at = UTC_TIMESTAMP() WHERE id = ? AND is_active = 1');
-    $updateUser->execute([password_hash($newPassword, PASSWORD_DEFAULT), (int) $request['user_id']]);
-    $updateRequest = $pdo->prepare("UPDATE password_reset_requests SET status = 'approved', reviewed_by = ?, reviewed_at = UTC_TIMESTAMP() WHERE id = ?");
+    $requestId = (int) (requestBody()['requestId'] ?? 0);
+    $updateRequest = $pdo->prepare("UPDATE password_reset_requests SET status = 'approved', reviewed_by = ?, reviewed_at = UTC_TIMESTAMP() WHERE id = ? AND status = 'pending'");
     $updateRequest->execute([$adminId, $requestId]);
-    $pdo->commit();
+    if ($updateRequest->rowCount() < 1) respond(['error' => 'Richiesta non trovata o già esaminata.'], 404);
+    auditLog($pdo, 'password_reset_approved', 'info', $adminId, ['request_id' => $requestId]);
     respond(['ok' => true]);
 }
 
