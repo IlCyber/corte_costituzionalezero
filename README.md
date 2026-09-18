@@ -30,7 +30,7 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 ## File principali
 
 - [index.html](index.html): interfaccia.
-- [styles.css](styles.css): stile responsive.
+- [styles.css](styles.css): stile responsive, condiviso anche dalle pagine dei tool.
 - [app.js](app.js): logica dell'interfaccia, fallback locale e sincronizzazione API.
 - [app-loader.php](app-loader.php): assegna automaticamente ad `app.js` una versione basata sulla data di modifica, evitando cache obsolete.
 - [api.php](api.php): autenticazione, richieste utenti, ruoli, permessi, sessione e persistenza con PDO.
@@ -141,7 +141,7 @@ Creare un template con nome e categoria. Il contenuto si redige nel Google Doc c
 
 ### Tools
 
-La scheda **Tools** mostra una riga per ogni file HTML pubblicato nella cartella `tools/` del sito, come la sezione Link utili. Cliccando sulla riga (o con Invio da tastiera) si apre la pagina del tool. L'elenco arriva da `api.php` (`action=tools_list`), che legge la cartella sul server e ricava titolo e descrizione dal file stesso; la sezione è regolata dai permessi `tools.view` (vedere la scheda e le pagine dei tool) e `tools.open` (aprirli). Ogni pagina dei tool riconvalida a ogni caricamento la sessione PHP e il permesso `tools.view` tramite lo stesso endpoint: senza login o con sessione scaduta si torna al casellario, senza permesso la pagina resta bloccata con un messaggio; la sessione viene inoltre riconvalidata periodicamente e alla riapertura della scheda del browser. Tutto il JavaScript della funzionalità vive in `tools/app_tools.js`, caricato senza problemi di cache tramite `tools/app-tools-loader.php`.
+La scheda **Tools** mostra una riga per ogni file HTML pubblicato nella cartella `tools/` del sito, come la sezione Link utili. Cliccando sulla riga (o con Invio da tastiera) si apre la pagina del tool. L'elenco arriva da `api.php` (`action=tools_list`), che legge la cartella sul server e ricava titolo e descrizione dal file stesso; la sezione è regolata dai permessi `tools.view` (vedere la scheda e le pagine dei tool) e `tools.open` (aprirli). Ogni pagina dei tool riconvalida a ogni caricamento la sessione PHP e il permesso `tools.view` tramite lo stesso endpoint: senza login o con sessione scaduta si torna al casellario, senza permesso la pagina resta bloccata con un messaggio; la sessione viene inoltre riconvalidata periodicamente e alla riapertura della scheda del browser. Tutto il JavaScript della funzionalità vive in `tools/app_tools.js`, caricato senza problemi di cache tramite `tools/app-tools-loader.php`. Le pagine dei tool usano Bootstrap e `styles.css` come il resto del sito, senza CSS incorporato: le poche regole specifiche (guardia di sessione, foglio A4 dell'anteprima, stampa) stanno in fondo a `styles.css` con selettori dedicati (`tool-*`, `body[data-tool-page]`) che non toccano il casellario.
 
 ### Partiti
 
