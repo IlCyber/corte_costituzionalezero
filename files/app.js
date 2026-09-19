@@ -211,16 +211,28 @@ async function refreshGoogleConnectionStatus() {
   }
 }
 function renderGoogleConnectionSettings() {
+  // Il collegamento Google vive nella navbar (menu accanto a "Esci"), così è
+  // raggiungibile da chiunque abbia la capacità dedicata, senza passare dalle
+  // impostazioni. Ogni azione resta protetta dalla propria capacità
+  // (google.account.connect / google.account.disconnect / google.sync_names).
+  const navItem = document.getElementById('googleAccountNavItem');
+  const navLabel = document.getElementById('googleAccountNavLabel');
   const status = document.getElementById('googleConnectionStatus');
   const connect = document.getElementById('connectGoogleButton');
   const disconnect = document.getElementById('disconnectGoogleButton');
   const syncBtn = document.getElementById('syncGoogleLinksButton');
   if (!status || !connect || !disconnect) return;
+  const canConnect = capable('google.account.connect');
+  const canDisconnect = capable('google.account.disconnect');
+  const canSync = capable('google.sync_names');
+  // Senza alcuna capacità Google il menu sparisce del tutto dalla navbar.
+  if (navItem) navItem.classList.toggle('d-none', !(canConnect || canDisconnect || canSync));
+  if (navLabel) navLabel.textContent = googleConnection.connected ? (googleConnection.email || 'Google collegato') : 'Google';
   if (!googleConnection.configured) { status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.'; connect.classList.add('disabled'); disconnect.classList.add('d-none'); if (syncBtn) syncBtn.classList.add('d-none'); return; }
   status.textContent = googleConnection.connected ? `Collegato: ${googleConnection.email}` : 'Nessun account Google collegato. I documenti non sono disponibili.';
-  connect.classList.toggle('d-none', googleConnection.connected || !capable('google.account.connect'));
-  disconnect.classList.toggle('d-none', !googleConnection.connected || !capable('google.account.disconnect'));
-  if (syncBtn) syncBtn.classList.toggle('d-none', !googleConnection.connected || !capable('google.sync_names'));
+  connect.classList.toggle('d-none', googleConnection.connected || !canConnect);
+  disconnect.classList.toggle('d-none', !googleConnection.connected || !canDisconnect);
+  if (syncBtn) syncBtn.classList.toggle('d-none', !googleConnection.connected || !canSync);
 }
 async function disconnectGoogleAccount() {
   try { await apiRequest('google_disconnect', { method: 'POST', body: '{}' }); await refreshGoogleConnectionStatus(); showToast('Account Google scollegato.'); } catch (error) { showToast(error.message); }
@@ -879,6 +891,7 @@ function applyPermissions() {
   // configurazione: resta visibile se almeno una sezione è accessibile.
   document.querySelectorAll('[data-view-link="settings"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !canAccessSettingsArea()); });
   refreshSettingsSubnav();
+  renderGoogleConnectionSettings();
   const controls = {
     '#newDocumentButton': 'documents.create', '#newTemplateButton': 'templates.create', '#newPartyButton': 'parties.create',
     '#newCoalitionButton': 'coalitions.create', '#newCompanyButton': 'companies.create', '#newParliamentButton': 'parliament.mandates.create',
@@ -1565,7 +1578,11 @@ function ensureSettingsSubnav() {
   });
 }
 function refreshSettingsSubnav(activeView = null) {
-  const view = activeView || window.location.hash.replace('#', '').split('?')[0] || 'dashboard';
+  // La voce attiva si deduce dalla sezione realmente visibile: è l'unica
+  // fonte affidabile qualunque sia l'ordine delle chiamate (applyPermissions,
+  // setView, refresh asincroni).
+  const visible = document.querySelector('.app-view:not(.d-none)')?.id?.replace(/View$/, '');
+  const view = activeView || visible || activeAppView;
   document.querySelectorAll('[data-settings-subnav]').forEach(link => {
     link.classList.toggle('active', link.dataset.settingsSubnav === view);
     link.classList.toggle('d-none', !canAccessSettingsSection(link.dataset.settingsSubnav));

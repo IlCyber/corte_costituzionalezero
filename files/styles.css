@@ -2027,6 +2027,22 @@ img {
   }
 }
 
+/* ─── Menu account Google nella navbar ───────────────────────────────────── */
+
+.google-account-menu {
+  min-width: 320px;
+  max-width: 90vw;
+}
+
+#googleAccountNavLabel {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 /* ─── Sotto-navigazione dell'area Impostazioni ───────────────────────────── */
 
 .settings-subnav {
