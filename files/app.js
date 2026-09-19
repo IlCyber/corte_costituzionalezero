@@ -30,6 +30,10 @@ let selectedEditorImage = null;
 let remoteMode = false;
 let remoteSaveTimer = null;
 let currentUser = null;
+// Vista attualmente mostrata: l'hash dell'URL viene aggiornato solo alla fine
+// di setView, quindi chi deve conoscere la vista corrente (es. la sotto-nav
+// delle impostazioni) legge questa variabile e non window.location.hash.
+let activeAppView = 'dashboard';
 let csrfToken = '';
 let googleConnection = { connected: false, configured: false, email: null };
 let activePartyStatuteDocumentId = null;
@@ -1565,7 +1569,7 @@ function ensureSettingsSubnav() {
   });
 }
 function refreshSettingsSubnav(activeView = null) {
-  const view = activeView || window.location.hash.replace('#', '').split('?')[0] || 'dashboard';
+  const view = activeView || activeAppView;
   document.querySelectorAll('[data-settings-subnav]').forEach(link => {
     link.classList.toggle('active', link.dataset.settingsSubnav === view);
     link.classList.toggle('d-none', !canAccessSettingsSection(link.dataset.settingsSubnav));
@@ -1646,6 +1650,9 @@ function setView(view, pushState = true) {
     view = view === 'settings' ? firstAccessibleSettingsSection() : (canAccessSettingsSection('settings') ? 'settings' : firstAccessibleSettingsSection());
   }
   if (!isSettingsSection(view) && view !== 'dashboard' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', usefulLinks: 'useful_links', odg: 'odg' }[view] || 'documents')) view = 'dashboard';
+  // Registrata PRIMA di applyPermissions: refreshSettingsSubnav senza argomento
+  // legge questa variabile, così la voce evidenziata è sempre quella cliccata.
+  activeAppView = view;
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
   // La voce "Impostazioni" della navbar resta evidenziata in tutta l'area.
