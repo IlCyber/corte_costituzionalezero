@@ -2066,6 +2066,10 @@ img {
   max-width: 34rem;
 }
 
+.tool-guard .spinner-border {
+  color: var(--accent);
+}
+
 .tool-guard-hidden {
   display: none !important;
 }
