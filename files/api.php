@@ -264,6 +264,15 @@ function ensureCapabilitySchema(PDO $pdo): void
         $upsert->execute([$capability['key'], $capability['label'], $capability['group'], $capability['dangerous'] ? 1 : 0]);
     }
 
+    // La sezione Tools è nata dopo la migrazione alle capacità: i ruoli che già
+    // consultano i Link utili ricevono automaticamente le capacità equivalenti
+    // sui tools, senza dover rieseguire la migrazione legacy (INSERT IGNORE:
+    // idempotente e non tocca le scelte fatte a mano dagli amministratori).
+    foreach ([['tools.view', 'useful_links.view'], ['tools.open', 'useful_links.open']] as [$toolCapability, $sourceCapability]) {
+        $grant = $pdo->prepare('INSERT IGNORE INTO role_capabilities (role_id, capability_key, allowed) SELECT role_id, ?, 1 FROM role_capabilities WHERE capability_key = ? AND allowed = 1');
+        $grant->execute([$toolCapability, $sourceCapability]);
+    }
+
     // Migrazione non distruttiva: ogni vecchio permesso concesso abilita le
     // corrispondenti capacità atomiche. In seguito si amministrano solo queste.
     $needsLegacyMigration = (int) $pdo->query('SELECT COUNT(*) FROM role_capabilities')->fetchColumn() === 0;

@@ -2027,6 +2027,73 @@ img {
   }
 }
 
+/* ─── Pagine dei tools (cartella tools/) ─────────────────────────────────── */
+
+.tool-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  max-width: 100%;
+  padding: 20mm;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+}
+
+.tool-settings {
+  position: sticky;
+  top: 90px;
+}
+
+#documento {
+  font-family: 'Raleway', sans-serif;
+  font-size: 12pt;
+  font-weight: 400;
+  line-height: 1.15;
+  text-align: justify;
+  overflow-wrap: anywhere;
+}
+
+#documento p {
+  margin: 0;
+}
+
+#documento .titolo,
+#documento .articolo,
+#documento .numero-comma {
+  font-weight: 700;
+}
+
+#documento .separatore {
+  height: 1.15em;
+}
+
+#documento .comma {
+  margin: 0;
+}
+
+#documento .elenco {
+  margin: 0;
+  padding-left: 1.5em;
+}
+
+#documento .elenco li {
+  margin: 0;
+  padding: 0;
+  list-style-type: '- ';
+}
+
+@media (max-width: 1199.98px) {
+  .tool-settings {
+    position: static;
+  }
+
+  .tool-sheet {
+    padding: 15mm;
+  }
+}
+
 @media print {
   @page {
     size: A4;
@@ -2036,11 +2103,25 @@ img {
   .navbar,
   .btn,
   .modal,
-  .toast-container {
+  .toast-container,
+  .tool-toolbar,
+  .tool-settings,
+  #toolView .eyebrow,
+  #toolView h1,
+  #toolView .text-secondary {
     display: none !important;
   }
 
   body {
     background: #fff;
+  }
+
+  .tool-sheet {
+    width: auto;
+    min-height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 }
