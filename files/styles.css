@@ -2027,6 +2027,35 @@ img {
   }
 }
 
+/* ─── Sotto-navigazione dell'area Impostazioni ───────────────────────────── */
+
+.settings-subnav {
+  gap: .5rem;
+  flex-wrap: wrap;
+  padding: .5rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+}
+
+.settings-subnav .nav-link {
+  color: var(--muted);
+  font-size: .9rem;
+  padding: .45rem .9rem;
+  border-radius: .5rem;
+}
+
+.settings-subnav .nav-link:hover,
+.settings-subnav .nav-link:focus {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.settings-subnav .nav-link.active {
+  color: #fff;
+  background: var(--accent);
+}
+
 /* ─── Pagine dei tools (cartella tools/) ─────────────────────────────────── */
 
 .tool-sheet {

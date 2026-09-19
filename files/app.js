@@ -873,9 +873,12 @@ async function permanentlyDeleteTrashItem(trashId) {
   } catch (error) { showToast(error.message); }
 }
 function applyPermissions() {
-  const views = { dashboard: 'documents.view', templates: 'templates.view', parties: 'parties.view', coalitions: 'coalitions.view', companies: 'companies.view', parliament: 'parliament.mandates.view', government: 'government.records.view', composition: 'composition.records.view', interpretations: 'interpretations.view', usefulLinks: 'useful_links.view', tools: 'tools.view', securityLogs: 'security_logs.view', odg: 'odg.view', settings: 'settings.view', access: 'users.view' };
-  Object.entries(views).forEach(([view, capability]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', view === 'access' ? !canAccessManagement() : !capable(capability)); }));
-  document.querySelectorAll('[data-view-link="trash"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !hasTrashAccess()); });
+  const views = { dashboard: 'documents.view', templates: 'templates.view', parties: 'parties.view', coalitions: 'coalitions.view', companies: 'companies.view', parliament: 'parliament.mandates.view', government: 'government.records.view', composition: 'composition.records.view', interpretations: 'interpretations.view', usefulLinks: 'useful_links.view', odg: 'odg.view' };
+  Object.entries(views).forEach(([view, capability]) => document.querySelectorAll(`[data-view-link="${view}"]`).forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !capable(capability)); }));
+  // La voce "Impostazioni" della navbar principale apre l'area di
+  // configurazione: resta visibile se almeno una sezione è accessibile.
+  document.querySelectorAll('[data-view-link="settings"]').forEach(link => { const navItem = link.closest('.nav-item'); if (navItem) navItem.classList.toggle('d-none', !canAccessSettingsArea()); });
+  refreshSettingsSubnav();
   const controls = {
     '#newDocumentButton': 'documents.create', '#newTemplateButton': 'templates.create', '#newPartyButton': 'parties.create',
     '#newCoalitionButton': 'coalitions.create', '#newCompanyButton': 'companies.create', '#newParliamentButton': 'parliament.mandates.create',
@@ -892,15 +895,6 @@ function applyPermissions() {
 
 
 function ensureTrashView() {
-  const nav = document.querySelector('#mainNav .navbar-nav');
-  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
-  if (nav && settingsLink && !nav.querySelector('[data-view-link="trash"]')) {
-    const item = document.createElement('li');
-    item.className = 'nav-item';
-    item.innerHTML = '<a class="nav-link" href="#trash" data-view-link="trash">Cestino</a>';
-    nav.insertBefore(item, settingsLink);
-    item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('trash'); });
-  }
   const appContainer = document.querySelector('#appView > .container-fluid');
   if (!document.getElementById('trashView')) appContainer.insertAdjacentHTML('beforeend', '<section id="trashView" class="app-view d-none"><div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Recupero e rimozione</p><h1 class="display-6 fw-bold mb-2">Cestino</h1><p class="text-secondary mb-0">Gli elementi nel cestino non sono visibili negli archivi principali. Ripristinali oppure rimuovili in modo definitivo secondo i permessi assegnati.</p></div><div class="stat-card trash-stat-card"><span class="text-secondary small">Elementi nel cestino</span><strong id="trashCount">0</strong></div></div><div class="card border-0 shadow-sm"><div class="card-body p-0"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Tipo</th><th>Elemento</th><th>Eliminato il</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="trashTableBody"></tbody></table></div><div id="emptyTrash" class="empty-state d-none"><div class="display-6"><i class="bi bi-trash3" aria-hidden="true"></i></div><h2 class="h5 mt-3">Il cestino è vuoto</h2><p class="text-secondary mb-0">Gli elementi spostati qui non compariranno più nelle rispettive sezioni principali.</p></div></div></div></section>');
   ensureArchiveSearch('trashView', 'trashSearch', 'Cerca nel cestino', 'trashTableBody');
@@ -1537,11 +1531,49 @@ async function submitRecoveryRequest(event) {
 
 function canAccessManagement() { return capable('users.view') || capable('roles.view'); }
 
+/*
+ * Area "Impostazioni": raggruppa in una sotto-navigazione dedicata le sezioni
+ * di configurazione e amministrazione. Le voci compaiono solo se l'utente ha
+ * la capacità corrispondente; la voce "Impostazioni" della navbar principale
+ * resta visibile se almeno una sezione dell'area è accessibile.
+ */
+const SETTINGS_SECTIONS = [
+  { view: 'settings', label: 'Impostazioni', icon: 'bi-sliders' },
+  { view: 'tools', label: 'Tools', icon: 'bi-tools' },
+  { view: 'trash', label: 'Cestino', icon: 'bi-trash3' },
+  { view: 'securityLogs', label: 'Log di sicurezza', icon: 'bi-shield-lock' },
+  { view: 'access', label: 'Utenti e permessi', icon: 'bi-people' }
+];
+function isSettingsSection(view) { return SETTINGS_SECTIONS.some(section => section.view === view); }
+function canAccessSettingsSection(view) {
+  if (view === 'trash') return hasTrashAccess();
+  if (view === 'access') return canAccessManagement();
+  return capable({ settings: 'settings.view', tools: 'tools.view', securityLogs: 'security_logs.view' }[view] || 'settings.view');
+}
+function canAccessSettingsArea() { return SETTINGS_SECTIONS.some(section => canAccessSettingsSection(section.view)); }
+function firstAccessibleSettingsSection() { return SETTINGS_SECTIONS.find(section => canAccessSettingsSection(section.view))?.view || 'dashboard'; }
+function ensureSettingsSubnav() {
+  SETTINGS_SECTIONS.forEach(({ view }) => {
+    const section = document.getElementById(`${view}View`);
+    if (!section || section.querySelector('.settings-subnav')) return;
+    const nav = document.createElement('nav');
+    nav.className = 'settings-subnav nav nav-pills mb-4';
+    nav.setAttribute('aria-label', 'Sezioni di configurazione');
+    nav.innerHTML = SETTINGS_SECTIONS.map(item => `<a class="nav-link" href="#${item.view}" data-settings-subnav="${item.view}"><i class="bi ${item.icon} me-1" aria-hidden="true"></i>${item.label}</a>`).join('');
+    section.prepend(nav);
+    nav.querySelectorAll('a').forEach(link => link.addEventListener('click', event => { event.preventDefault(); setView(link.dataset.settingsSubnav); }));
+  });
+}
+function refreshSettingsSubnav(activeView = null) {
+  const view = activeView || window.location.hash.replace('#', '').split('?')[0] || 'dashboard';
+  document.querySelectorAll('[data-settings-subnav]').forEach(link => {
+    link.classList.toggle('active', link.dataset.settingsSubnav === view);
+    link.classList.toggle('d-none', !canAccessSettingsSection(link.dataset.settingsSubnav));
+  });
+}
+
 function ensureUserManagementCard() {
   if (!canAccessManagement() || document.getElementById('userManagementCard')) return;
-  const nav = document.querySelector('#mainNav .navbar-nav');
-  const settingsLink = nav?.querySelector('[data-view-link="settings"]')?.closest('.nav-item');
-  if (nav && settingsLink && !nav.querySelector('[data-view-link="access"]')) { const item = document.createElement('li'); item.className = 'nav-item'; item.innerHTML = '<a class="nav-link" href="#access" data-view-link="access">Utenti e permessi</a>'; nav.insertBefore(item, settingsLink); item.querySelector('a').addEventListener('click', event => { event.preventDefault(); setView('access'); }); }
   const appContainer = document.querySelector('#appView > .container-fluid');
   if (!document.getElementById('accessView')) appContainer.insertAdjacentHTML('beforeend', '<section id="accessView" class="app-view d-none"><div class="mb-4"><p class="eyebrow text-secondary mb-2">Amministrazione</p><h1 class="display-6 fw-bold mb-2">Utenti e permessi</h1><p class="text-secondary mb-0">Crea ruoli, assegna capacità e gestisci gli accessi.</p></div><div id="accessManagementContainer"></div></section>');
   const accessContainer = document.getElementById('accessManagementContainer');
@@ -1607,12 +1639,18 @@ function setView(view, pushState = true) {
   }
   if (canAccessManagement()) ensureUserManagementCard();
   ensureTrashView();
-  if (view === 'trash' && !hasTrashAccess()) view = 'dashboard';
-  if (view === 'access' && !canAccessManagement()) view = 'dashboard';
-  if (view !== 'dashboard' && view !== 'trash' && view !== 'access' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', usefulLinks: 'useful_links', tools: 'tools', securityLogs: 'logs', odg: 'odg', settings: 'settings' }[view] || 'documents')) view = 'dashboard';
+  ensureSettingsSubnav();
+  if (isSettingsSection(view) && !canAccessSettingsSection(view)) {
+    // Sezione dell'area impostazioni non permessa: si ripiega sulla prima
+    // sezione accessibile dell'area, altrimenti sulla dashboard.
+    view = view === 'settings' ? firstAccessibleSettingsSection() : (canAccessSettingsSection('settings') ? 'settings' : firstAccessibleSettingsSection());
+  }
+  if (!isSettingsSection(view) && view !== 'dashboard' && !can({ dashboard: 'documents', templates: 'templates', parties: 'parties', coalitions: 'parties', companies: 'companies', parliament: 'parliament', government: 'government', composition: 'composition', interpretations: 'interpretations', usefulLinks: 'useful_links', odg: 'odg' }[view] || 'documents')) view = 'dashboard';
   document.querySelectorAll('.editor-page').forEach(element => element.classList.add('d-none'));
   document.querySelectorAll('.app-view').forEach(element => element.classList.toggle('d-none', element.id !== `${view}View`));
-  document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view));
+  // La voce "Impostazioni" della navbar resta evidenziata in tutta l'area.
+  document.querySelectorAll('[data-view-link]').forEach(link => link.classList.toggle('active', link.dataset.viewLink === view || (link.dataset.viewLink === 'settings' && isSettingsSection(view))));
+  refreshSettingsSubnav(view);
   if (view === 'dashboard') renderDocuments();
   if (view === 'parties') renderParties();
   if (view === 'coalitions') renderCoalitions();
@@ -3054,6 +3092,7 @@ async function initialize() {
   ensureInterpretationView();
   ensureOdgView();
   ensureTrashView();
+  ensureSettingsSubnav();
   ensureArchiveSearch('templatesView', 'templateSearch', 'Cerca template per nome o categoria', 'templateGrid');
   ensureArchiveSearch('partiesView', 'partySearch', 'Cerca partiti per nome, stato o valore', 'partyGrid');
   ensureArchiveSearch('companiesView', 'companySearch', 'Cerca aziende per nome o regolamento', 'companyGrid');
