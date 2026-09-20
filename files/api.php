@@ -1277,7 +1277,19 @@ if ($action === 'google_connect' && $method === 'GET') {
     requireCapability($pdo, $userId, 'google.account.connect', 'Non hai il permesso di collegare un account Google.');
     if (!googleConfigured()) respond(['error' => 'Google non configurato: completa private/config.php.'], 503);
     $_SESSION['google_oauth_state'] = bin2hex(random_bytes(24));
-    $query = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'response_type' => 'code', 'scope' => 'openid email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents', 'access_type' => 'offline', 'prompt' => 'consent', 'state' => $_SESSION['google_oauth_state']]);
+    $query = http_build_query([
+        'client_id' => GOOGLE_CLIENT_ID,
+        'redirect_uri' => GOOGLE_REDIRECT_URI,
+        'response_type' => 'code',
+        'scope' => 'openid email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents',
+        // Il refresh token consente di ottenere access token nuovi senza far
+        // ricollegare l'utente ogni ora. È il collegamento persistente previsto
+        // da Google per le applicazioni web server-side.
+        'access_type' => 'offline',
+        'prompt' => 'consent select_account',
+        'include_granted_scopes' => 'true',
+        'state' => $_SESSION['google_oauth_state'],
+    ]);
     header('Location: https://accounts.google.com/o/oauth2/v2/auth?' . $query, true, 302);
     exit;
 }
@@ -1290,15 +1302,33 @@ if ($action === 'google_callback' && $method === 'GET') {
     $post = http_build_query(['code' => $code, 'client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'grant_type' => 'authorization_code']);
     $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => googleApiTimeout(), 'ignore_errors' => true]]);
     $tokenPayload = json_decode((string) file_get_contents('https://oauth2.googleapis.com/token', false, $context), true);
-    if (!is_array($tokenPayload) || empty($tokenPayload['refresh_token'])) respond(['error' => 'Google non ha restituito un refresh token. Riprova autorizzando l’accesso.'], 502);
+    if (!is_array($tokenPayload) || empty($tokenPayload['access_token'])) {
+        unset($_SESSION['google_oauth_state']);
+        respond(['error' => 'Google non ha rilasciato un token di accesso. Riprova il collegamento.'], 502);
+    }
     $token = (string) $tokenPayload['access_token'];
     $curl = curl_init('https://openidconnect.googleapis.com/v1/userinfo');
     curl_setopt_array($curl, [CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => googleApiTimeout()]);
     $profile = json_decode((string) curl_exec($curl), true);
     curl_close($curl);
     $pdo = database();
+
+    // Normalmente prompt=consent restituisce sempre un refresh token. Google può
+    // però ometterlo quando esiste già un consenso valido: in quel caso non si
+    // deve sovrascrivere e perdere il token persistente già salvato.
+    $refreshToken = trim((string) ($tokenPayload['refresh_token'] ?? ''));
+    if ($refreshToken === '') {
+        $existingToken = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
+        $existingToken->execute([$userId]);
+        $refreshToken = trim((string) $existingToken->fetchColumn());
+    }
+    if ($refreshToken === '') {
+        unset($_SESSION['google_oauth_state']);
+        respond(['error' => 'Google non ha rilasciato l’accesso offline. Rimuovi l’autorizzazione dell’app dal tuo account Google e riprova.'], 502);
+    }
+
     $query = $pdo->prepare('INSERT INTO google_connections (user_id, google_email, refresh_token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token = VALUES(refresh_token), updated_at = UTC_TIMESTAMP()');
-    $query->execute([$userId, (string) ($profile['email'] ?? ''), (string) $tokenPayload['refresh_token']]);
+    $query->execute([$userId, (string) ($profile['email'] ?? ''), $refreshToken]);
     unset($_SESSION['google_oauth_state']);
     header('Location: ./index.html#settings?google=connected', true, 302);
     exit;
@@ -1307,10 +1337,22 @@ if ($action === 'google_callback' && $method === 'GET') {
 if ($action === 'google_status' && $method === 'GET') {
     $userId = authenticatedUserId();
     $pdo = database();
-    $query = $pdo->prepare('SELECT google_email FROM google_connections WHERE user_id = ? LIMIT 1');
+    $query = $pdo->prepare('SELECT google_email, refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
     $query->execute([$userId]);
-    $email = $query->fetchColumn();
-    respond(['connected' => is_string($email) && $email !== '', 'email' => $email ?: null, 'configured' => googleConfigured()]);
+    $connection = $query->fetch();
+    $hasStoredConnection = is_array($connection) && trim((string) ($connection['refresh_token'] ?? '')) !== '';
+
+    // Non basta che esista una riga nel DB: un consenso può essere revocato o,
+    // se il progetto OAuth è rimasto in modalità "Test", scadere dopo 7 giorni.
+    // Verificare davvero il refresh token evita di mostrare un falso "Collegato"
+    // e rende immediatamente disponibile il pulsante per autorizzare di nuovo.
+    $connected = $hasStoredConnection && googleAccessTokenOrNull($pdo, $userId) !== null;
+    respond([
+        'connected' => $connected,
+        'email' => $connection['google_email'] ?? null,
+        'configured' => googleConfigured(),
+        'reconnectRequired' => $hasStoredConnection && !$connected,
+    ]);
 }
 
 if ($action === 'google_disconnect' && $method === 'POST') {

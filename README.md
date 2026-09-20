@@ -189,8 +189,8 @@ INSERT INTO users (username, password_hash, display_name, role, is_primary_admin
 VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin', 1);
 ```
 
-5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web.
-6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_WEBHOOK_URI` e `GOOGLE_DRIVE_FOLDER_ID` in `private/config.php`. L’URI di redirect deve puntare a `api.php?action=google_callback` ed essere registrato nel client Google. Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
+5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web. Nella schermata consenso OAuth pubblicare l'app in stato **In produzione**: se il progetto esterno resta in stato **Test**, Google fa scadere i refresh token dopo 7 giorni e nessuna modifica applicativa può evitarlo. In produzione il collegamento usa un refresh token offline, viene rinnovato automaticamente e resta valido finché l'utente non revoca l'accesso, non cambia condizioni di sicurezza dell'account o non lascia il collegamento inutilizzato per il periodo previsto da Google.
+6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_WEBHOOK_URI` e `GOOGLE_DRIVE_FOLDER_ID` in `private/config.php`. L’URI di redirect deve puntare esattamente a `api.php?action=google_callback` ed essere registrato tra gli URI autorizzati del client Google (stesso protocollo HTTPS, dominio e percorso). Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
 8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
 9. Accedere al sito, aprire **Impostazioni** e usare **Collega account Google**. L’account autorizzato deve avere accesso alla cartella Drive configurata.
