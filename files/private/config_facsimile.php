@@ -8,6 +8,7 @@ const DB_USER = 'BOH';
 const DB_PASSWORD = 'BOH';
 const SESSION_NAME = 'BOH';
 const MAX_STATE_BYTES = 'BOH';
+/* Facoltativo e mantenuto per migrare vecchie installazioni: le tre cartelle si configurano dall'interfaccia. */
 const GOOGLE_DRIVE_FOLDER_ID = 'BOH';
 const GOOGLE_CLIENT_ID = 'BOH';
 const GOOGLE_CLIENT_SECRET = 'BOH';

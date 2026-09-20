@@ -279,7 +279,7 @@
           <div>
             <p class="eyebrow text-secondary mb-2">Archivio imprese</p>
             <h1 class="display-6 fw-bold mb-2">Aziende</h1>
-            <p class="text-secondary mb-0">Salva le aziende e redigi il loro Regolamento in un documento separato.</p>
+            <p class="text-secondary mb-0">Salva le aziende e collega i loro Regolamenti Google già esistenti.</p>
           </div><button class="btn btn-primary" id="newCompanyButton">+ Nuova azienda</button>
         </div>
         <div class="row g-3 mb-4">
@@ -366,11 +366,22 @@
         <div class="mb-4">
           <p class="eyebrow text-secondary mb-2">Configurazione archivio</p>
           <h1 class="display-6 fw-bold mb-2">Impostazioni</h1>
-          <p class="text-secondary mb-0">Gestisci categorie, numerazione e le informazioni minime richieste per ogni
-            partito.</p>
+          <p class="text-secondary mb-0">Gestisci cartelle Google Drive, categorie, numerazione e informazioni richieste dagli archivi.</p>
         </div>
         <div class="row g-4">
           <div class="col-12 col-xl-7">
+            <div class="card border-0 shadow-sm mb-4 d-none" id="googleDriveFoldersCard">
+              <div class="card-body p-4">
+                <h2 class="h5 mb-1">Cartelle Google Drive</h2>
+                <p class="text-secondary small mb-4">Configura tre cartelle distinte. Statuti e regolamenti devono già esistere nella rispettiva cartella; il sito crea nuovi file soltanto in «Documenti sito».</p>
+                <form id="googleDriveFoldersForm" class="row g-3">
+                  <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
+                  <div class="col-12"><label for="googleStatutesFolderId" class="form-label">ID cartella Statuti</label><input id="googleStatutesFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella degli statuti esistenti"></div>
+                  <div class="col-12"><label for="googleRegulationsFolderId" class="form-label">ID cartella Regolamenti</label><input id="googleRegulationsFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella dei regolamenti esistenti"></div>
+                  <div class="col-12"><div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il salvataggio verifica che le cartelle esistano e siano accessibili all’account Google collegato.</div><button class="btn btn-primary" type="submit">Verifica e salva cartelle</button></div>
+                </form>
+              </div>
+            </div>
             <div class="card border-0 shadow-sm mb-4">
               <div class="card-body p-4">
                 <h2 class="h5 mb-1">Progressivi per categoria</h2>
@@ -640,15 +651,11 @@
                 </div>
                 <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
               </aside>
-              <section class="party-statute-canvas"><label class="form-label">Contenuto dello Statuto</label>
+              <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello Statuto su Google Documenti</label>
                 <div class="google-document-editor-panel" id="partyStatuteGooglePanel">
-                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
-                  </div>
-                  <div class="google-document-editor-copy"><strong id="partyStatuteGoogleTitle">Statuto Google non
-                      ancora creato</strong><span id="partyStatuteGoogleStatus">Crea il documento per aprire l’editor
-                      Google.</span></div><button type="button" id="openPartyStatuteGoogleButton"
-                    class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor
-                    Google</button>
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
+                  <div class="google-document-editor-copy flex-grow-1"><strong>Collega uno statuto esistente</strong><span>Il file deve trovarsi nella cartella «Statuti» configurata nelle Impostazioni.</span><input type="url" id="partyStatuteGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit"></div>
+                  <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Verifica e collega</button>
                 </div>
               </section>
             </div>
@@ -672,7 +679,7 @@
           <div class="modal-body"><label for="companyName" class="form-label">Nome dell’azienda</label><input
               id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A.">
             <div id="companyModalRegulationContainer" class="mt-3 d-none"></div>
-            <p class="form-text mb-0">Dopo il salvataggio potrai gestire il Regolamento con Google Documenti.</p>
+            <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc già presente nella cartella Regolamenti.</p>
             <div class="d-none" id="companyHistoryPanel">
               <h3 class="h6 mt-4 mb-2">Storico modifiche</h3>
               <div id="companyHistory" class="history-list"></div>
@@ -703,15 +710,11 @@
                 </div>
                 <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
               </aside>
-              <section class="party-statute-canvas"><label class="form-label">Contenuto del Regolamento</label>
+              <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link del Regolamento su Google Documenti</label>
                 <div class="google-document-editor-panel" id="companyRegulationGooglePanel">
-                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
-                  </div>
-                  <div class="google-document-editor-copy"><strong id="companyRegulationGoogleTitle">Regolamento Google
-                      non ancora creato</strong><span id="companyRegulationGoogleStatus">Crea il documento per aprire
-                      l’editor Google.</span></div><button type="button" id="openCompanyRegulationGoogleButton"
-                    class="btn btn-primary"><i class="bi bi-box-arrow-up-right me-1"></i>Crea e apri editor
-                    Google</button>
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
+                  <div class="google-document-editor-copy flex-grow-1"><strong>Collega un regolamento esistente</strong><span>Il file deve trovarsi nella cartella «Regolamenti» configurata nelle Impostazioni.</span><input type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit"></div>
+                  <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Verifica e collega</button>
                 </div>
               </section>
             </div>
