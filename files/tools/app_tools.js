@@ -354,6 +354,27 @@ function initFormattazioneTool() {
     return { LIBRO: 0, PARTE: 1, TITOLO: 2, CAPO: 3, SEZIONE: 4, SOTTOSEZIONE: 5 }[tipo] ?? 2;
   }
 
+  function formattaTitolo(titolo) {
+    const testo = String(titolo).trim();
+    const match = testo.match(/^(LIBRO|PARTE|TITOLO|CAPO|SEZIONE|SOTTOSEZIONE)\s+([^\s–—:-]+)(?:\s*[–—:-]\s*(.*))?$/i);
+    if (!match) {
+      const minuscolo = testo.toLocaleLowerCase('it-IT');
+      return minuscolo ? minuscolo.charAt(0).toLocaleUpperCase('it-IT') + minuscolo.slice(1) : '';
+    }
+
+    const tipoMinuscolo = match[1].toLocaleLowerCase('it-IT');
+    const tipo = tipoMinuscolo.charAt(0).toLocaleUpperCase('it-IT') + tipoMinuscolo.slice(1);
+    const identificatore = /^[ivxlcdm]+$/i.test(match[2])
+      ? match[2].toLocaleUpperCase('it-IT')
+      : match[2].toLocaleLowerCase('it-IT');
+    const descrizioneMinuscola = (match[3] || '').trim().toLocaleLowerCase('it-IT');
+    const descrizione = descrizioneMinuscola
+      ? descrizioneMinuscola.charAt(0).toLocaleUpperCase('it-IT') + descrizioneMinuscola.slice(1)
+      : '';
+
+    return `${tipo} ${identificatore}${descrizione ? ` - ${descrizione}` : ''}`;
+  }
+
   function parole(testo) {
     return testo.trim().split(/\s+/).filter(Boolean).length;
   }
@@ -662,7 +683,7 @@ function initFormattazioneTool() {
         nuoviTitoli.forEach(titolo => {
           html += `
                 <p class="titolo">
-                    ${escapeHTML(titolo)}
+                    ${escapeHTML(formattaTitolo(titolo))}
                 </p>
             `;
         });
