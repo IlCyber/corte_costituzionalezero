@@ -128,7 +128,7 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 - Cercare per titolo, categoria o numero.
 - Riaprire una riga per modificare il documento.
 - Documenti, ODG e template vengono creati come Google Documenti nella cartella **Documenti sito** configurata. In archivio si apre un documento cliccando la relativa riga; per i template si usa **Modifica**.
-- Statuti e regolamenti non vengono creati dal sito: si collega l'URL di un Google Doc già esistente rispettivamente nella cartella **Statuti** o **Regolamenti**. Il backend verifica tipo di file, accessibilità e appartenenza alla cartella prima di accettarlo.
+- Statuti e regolamenti non vengono creati dal sito: si collega l'URL di un Google Doc già esistente rispettivamente nella cartella **Statuti** o **Regolamenti**. Chi possiede il permesso dedicato può successivamente sostituire il link. Il backend verifica tipo di file, accessibilità, unicità e appartenenza alla cartella prima di accettarlo.
 - **Scarica PDF** usa l'export PDF di Google Drive; il browser non genera più PDF e non conserva il contenuto redazionale nello stato locale.
 - La sezione ODG usa la categoria automatica `ODG` e gli stati `Da valutare` / `Valutato`.
 
