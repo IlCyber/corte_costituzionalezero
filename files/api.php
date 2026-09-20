@@ -189,6 +189,16 @@ function sanitizeState(array $state): array
     $padding = max(1, min(12, $padding));
     if (isset($state['numberPadding'])) $state['numberPadding'] = $padding;
 
+    $folders = is_array($state['googleDriveFolders'] ?? null) ? $state['googleDriveFolders'] : [];
+    $legacyDocumentsFolder = defined('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID')
+        ? (string) GOOGLE_DRIVE_FOLDER_ID
+        : '';
+    $state['googleDriveFolders'] = [];
+    foreach (['documents', 'statutes', 'regulations'] as $folderKey) {
+        $candidate = trim((string) ($folders[$folderKey] ?? ($folderKey === 'documents' ? $legacyDocumentsFolder : '')));
+        $state['googleDriveFolders'][$folderKey] = preg_match('/^[a-zA-Z0-9_-]{5,}$/', $candidate) ? $candidate : '';
+    }
+
     foreach ($state['documents'] ?? [] as &$document) {
         if (isset($document['body'])) $document['body'] = sanitizeRichHtml((string) $document['body']);
         // I progressivi sono salvati già con gli zeri iniziali, così l'archivio
@@ -268,10 +278,20 @@ function ensureCapabilitySchema(PDO $pdo): void
     // consultano i Link utili ricevono automaticamente le capacità equivalenti
     // sui tools, senza dover rieseguire la migrazione legacy (INSERT IGNORE:
     // idempotente e non tocca le scelte fatte a mano dagli amministratori).
-    foreach ([['tools.view', 'useful_links.view'], ['tools.open', 'useful_links.open']] as [$toolCapability, $sourceCapability]) {
+    foreach ([
+        ['tools.view', 'useful_links.view'],
+        ['tools.open', 'useful_links.open'],
+        // Migrazione dei permessi precedenti: chi poteva creare il documento può
+        // ora collegarne uno esistente, senza concedere privilegi più ampi.
+        ['party_statutes.link', 'party_statutes.create'],
+        ['company_regulations.link', 'company_regulations.create'],
+    ] as [$newCapability, $sourceCapability]) {
         $grant = $pdo->prepare('INSERT IGNORE INTO role_capabilities (role_id, capability_key, allowed) SELECT role_id, ?, 1 FROM role_capabilities WHERE capability_key = ? AND allowed = 1');
-        $grant->execute([$toolCapability, $sourceCapability]);
+        $grant->execute([$newCapability, $sourceCapability]);
     }
+    // Le vecchie capacità di creazione non sono più operative né mostrate nella
+    // matrice: dopo averne trasferito le assegnazioni possono essere rimosse.
+    $pdo->exec("DELETE FROM capabilities WHERE capability_key IN ('party_statutes.create', 'company_regulations.create')");
 
     // Migrazione non distruttiva: ogni vecchio permesso concesso abilita le
     // corrispondenti capacità atomiche. In seguito si amministrano solo queste.
@@ -434,8 +454,8 @@ function capabilitiesForStateMutation(array $before, array $after): array
     }
 
     foreach ([
-        'parties' => ['parties.create', 'parties.edit', 'party_statutes.create', 'party_statutes.edit', 'googleStatuteDocumentId'],
-        'companies' => ['companies.create', 'companies.edit', 'company_regulations.create', 'company_regulations.edit', 'googleRegulationDocumentId'],
+        'parties' => ['parties.create', 'parties.edit', 'party_statutes.link', 'party_statutes.edit', 'googleStatuteDocumentId'],
+        'companies' => ['companies.create', 'companies.edit', 'company_regulations.link', 'company_regulations.edit', 'googleRegulationDocumentId'],
     ] as $stateKey => [$createCapability, $editCapability, $linkedCreate, $linkedEdit, $documentField]) {
         if (!valuesDiffer($before[$stateKey] ?? [], $after[$stateKey] ?? [])) continue;
         $oldItems = itemsById($before[$stateKey] ?? []);
@@ -509,6 +529,7 @@ function capabilitiesForStateMutation(array $before, array $after): array
         'categories' => 'settings.categories.create',
         'pageMargins' => 'settings.page_margins.edit',
         'numberPadding' => 'settings.number_padding.edit',
+        'googleDriveFolders' => 'settings.google_folders.edit',
     ];
     foreach (capabilitiesForConfigList($before['partyFields'] ?? [], $after['partyFields'] ?? [], 'settings.party_fields.create', 'settings.party_fields.create', 'settings.party_fields.delete') as $capability) $need($capability);
     foreach (capabilitiesForConfigList($before['coalitionFields'] ?? [], $after['coalitionFields'] ?? [], 'settings.coalition_fields.create', 'settings.coalition_fields.create', 'settings.coalition_fields.delete') as $capability) $need($capability);
@@ -547,7 +568,7 @@ function stateViewCapabilityMap(): array
         'governments' => 'government.records.view', 'courtCompositions' => 'composition.records.view',
         'interpretations' => 'interpretations.view', 'usefulLinks' => 'useful_links.view',
         'counters' => 'settings.view', 'categories' => 'settings.view', 'pageMargins' => 'settings.view',
-        'numberPadding' => 'settings.view', 'partyFields' => 'parties.view', 'coalitionFields' => 'coalitions.view',
+        'numberPadding' => 'settings.view', 'googleDriveFolders' => 'settings.view', 'partyFields' => 'parties.view', 'coalitionFields' => 'coalitions.view',
         'parliamentSettings' => 'parliament.mandates.view', 'governmentSettings' => 'government.records.view',
         'compositionSettings' => 'composition.records.view', 'interpretationSettings' => 'interpretations.view',
     ];
@@ -608,6 +629,7 @@ function statePermissionMap(): array
         'categories' => 'settings',
         'pageMargins' => 'settings',
         'numberPadding' => 'settings',
+        'googleDriveFolders' => 'settings',
         'parties' => 'parties',
         'partyFields' => 'parties',
         'coalitions' => 'parties',
@@ -778,7 +800,30 @@ function trashEntryTitle(array $entry): string
 
 function googleConfigured(): bool
 {
-    return !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_CLIENT_ID') && !configPlaceholder('GOOGLE_CLIENT_SECRET') && !configPlaceholder('GOOGLE_REDIRECT_URI');
+    return !configPlaceholder('GOOGLE_CLIENT_ID') && !configPlaceholder('GOOGLE_CLIENT_SECRET') && !configPlaceholder('GOOGLE_REDIRECT_URI');
+}
+
+/** @return array{documents:string,statutes:string,regulations:string} */
+function googleDriveFolders(PDO $pdo): array
+{
+    $state = rawSiteState($pdo) ?: [];
+    $folders = is_array($state['googleDriveFolders'] ?? null) ? $state['googleDriveFolders'] : [];
+    $legacyDocumentsFolder = defined('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID') ? (string) GOOGLE_DRIVE_FOLDER_ID : '';
+    return [
+        'documents' => validGoogleId($folders['documents'] ?? $legacyDocumentsFolder),
+        'statutes' => validGoogleId($folders['statutes'] ?? null),
+        'regulations' => validGoogleId($folders['regulations'] ?? null),
+    ];
+}
+
+function googleFolderForScope(PDO $pdo, string $scope): string
+{
+    $key = match ($scope) {
+        'parties', 'party_statutes' => 'statutes',
+        'companies', 'company_regulations' => 'regulations',
+        default => 'documents',
+    };
+    return googleDriveFolders($pdo)[$key] ?? '';
 }
 
 /**
@@ -869,7 +914,7 @@ function googleAccessToken(PDO $pdo, int $userId): string
 {
     $token = googleAccessTokenOrNull($pdo, $userId);
     if ($token !== null) return $token;
-    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
+    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth in private/config.php.'], 503);
     $query = $pdo->prepare('SELECT refresh_token FROM google_connections WHERE user_id = ? LIMIT 1');
     $query->execute([$userId]);
     if ((string) $query->fetchColumn() === '') respond(['error' => 'Collega prima un account Google dalle impostazioni.'], 409);
@@ -955,6 +1000,13 @@ function validGoogleId(mixed $id): string
     return is_string($id) && preg_match('/^[a-zA-Z0-9_-]{5,}$/', $id) === 1 ? $id : '';
 }
 
+function googleDocumentIdFromInput(mixed $value): string
+{
+    $input = trim((string) $value);
+    if (preg_match('~docs\.google\.com/document/d/([a-zA-Z0-9_-]+)~i', $input, $match)) return validGoogleId($match[1]);
+    return validGoogleId($input);
+}
+
 function googleDocumentBelongsToResource(array $state, string $documentId, string $resource): bool
 {
     if ($resource === 'documents' || $resource === 'odg') foreach (($state['documents'] ?? []) as $item) {
@@ -1006,33 +1058,35 @@ function googleFileMetadata(PDO $pdo, int $userId, array $ids, ?int $maxLookups 
     if (empty($wanted)) return [];
 
     $found = [];
-    $pageToken = '';
-    $pages = 0;
-    do {
-        $parameters = [
-            'q' => "'" . str_replace("'", "\\'", GOOGLE_DRIVE_FOLDER_ID) . "' in parents",
-            'fields' => 'nextPageToken,files(id,name,trashed,modifiedTime,webViewLink)',
-            'pageSize' => 1000,
-            'supportsAllDrives' => 'true',
-            'includeItemsFromAllDrives' => 'true',
-        ];
-        if ($pageToken !== '') $parameters['pageToken'] = $pageToken;
-        $listing = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files?' . http_build_query($parameters), null, false, true);
-        if (!is_array($listing)) break;
-        foreach (($listing['files'] ?? []) as $file) {
-            $fileId = validGoogleId($file['id'] ?? null);
-            if ($fileId === '') continue;
-            $found[$fileId] = [
-                'name' => trim((string) ($file['name'] ?? '')),
-                'trashed' => (bool) ($file['trashed'] ?? false),
-                'modifiedTime' => $file['modifiedTime'] ?? null,
-                'webViewLink' => $file['webViewLink'] ?? null,
-                'missing' => false,
+    foreach (array_values(array_unique(array_filter(googleDriveFolders($pdo)))) as $folderId) {
+        $pageToken = '';
+        $pages = 0;
+        do {
+            $parameters = [
+                'q' => "'" . str_replace("'", "\\'", $folderId) . "' in parents",
+                'fields' => 'nextPageToken,files(id,name,trashed,modifiedTime,webViewLink)',
+                'pageSize' => 1000,
+                'supportsAllDrives' => 'true',
+                'includeItemsFromAllDrives' => 'true',
             ];
-        }
-        $pageToken = (string) ($listing['nextPageToken'] ?? '');
-        $pages++;
-    } while ($pageToken !== '' && $pages < 10);
+            if ($pageToken !== '') $parameters['pageToken'] = $pageToken;
+            $listing = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files?' . http_build_query($parameters), null, false, true);
+            if (!is_array($listing)) break;
+            foreach (($listing['files'] ?? []) as $file) {
+                $fileId = validGoogleId($file['id'] ?? null);
+                if ($fileId === '') continue;
+                $found[$fileId] = [
+                    'name' => trim((string) ($file['name'] ?? '')),
+                    'trashed' => (bool) ($file['trashed'] ?? false),
+                    'modifiedTime' => $file['modifiedTime'] ?? null,
+                    'webViewLink' => $file['webViewLink'] ?? null,
+                    'missing' => false,
+                ];
+            }
+            $pageToken = (string) ($listing['nextPageToken'] ?? '');
+            $pages++;
+        } while ($pageToken !== '' && $pages < 10);
+    }
 
     $metadata = [];
     $lookups = 0;
@@ -1368,13 +1422,65 @@ if ($action === 'google_disconnect' && $method === 'POST') {
     respond(['ok' => true]);
 }
 
+if ($action === 'google_validate_folders' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare le cartelle Google.');
+    $folders = requestBody()['folders'] ?? null;
+    if (!is_array($folders)) respond(['error' => 'Cartelle Google non valide.'], 422);
+    $normalizedFolderIds = array_map(static fn (string $key): string => validGoogleId($folders[$key] ?? null), ['documents', 'statutes', 'regulations']);
+    if (count(array_unique($normalizedFolderIds)) !== 3 || in_array('', $normalizedFolderIds, true)) respond(['error' => 'Le tre cartelle Google devono essere valide e diverse tra loro.'], 422);
+    $validated = [];
+    foreach (['documents', 'statutes', 'regulations'] as $key) {
+        $folderId = validGoogleId($folders[$key] ?? null);
+        if ($folderId === '') respond(['error' => 'Inserisci tutti e tre gli ID delle cartelle Google Drive.'], 422);
+        $folder = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($folderId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed', 'supportsAllDrives' => 'true']));
+        if (($folder['mimeType'] ?? '') !== 'application/vnd.google-apps.folder' || !empty($folder['trashed'])) respond(['error' => 'Uno degli ID indicati non corrisponde a una cartella Drive accessibile.'], 422);
+        $validated[$key] = ['id' => $folderId, 'name' => (string) ($folder['name'] ?? '')];
+    }
+    respond(['ok' => true, 'folders' => $validated]);
+}
+
+if ($action === 'google_document_link' && $method === 'POST') {
+    $userId = authenticatedUserId();
+    $pdo = database();
+    requireCsrf($pdo);
+    $body = requestBody();
+    $scope = (string) ($body['scope'] ?? '');
+    $capabilities = ['party_statutes' => 'party_statutes.link', 'company_regulations' => 'company_regulations.link'];
+    if (!isset($capabilities[$scope])) respond(['error' => 'Tipo di collegamento Google non valido.'], 422);
+    requireCapability($pdo, $userId, $capabilities[$scope], 'Non hai il permesso di collegare questo documento Google.');
+    $documentId = googleDocumentIdFromInput($body['url'] ?? $body['documentId'] ?? '');
+    if ($documentId === '') respond(['error' => 'Inserisci un link valido di Google Documenti.'], 422);
+    if (isset(googleLinkedDocuments(rawSiteState($pdo) ?: [])[$documentId])) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
+    $folderId = googleFolderForScope($pdo, $scope);
+    if ($folderId === '') respond(['error' => 'Configura prima la cartella Google dedicata nelle Impostazioni.'], 409);
+    $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,mimeType,parents,trashed,webViewLink,modifiedTime', 'supportsAllDrives' => 'true']));
+    if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documenti valido e accessibile.'], 422);
+    if (!in_array($folderId, is_array($file['parents'] ?? null) ? $file['parents'] : [], true)) respond(['error' => 'Il documento non si trova nella cartella Drive configurata per questa sezione.'], 422);
+    googleWatchDocument($pdo, $userId, $documentId);
+    auditLog($pdo, 'google_document_linked', 'info', $userId, ['document_id' => $documentId, 'scope' => $scope]);
+    respond([
+        'id' => $documentId,
+        'name' => (string) ($file['name'] ?? ''),
+        'url' => (string) ($file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit')),
+        'modifiedTime' => $file['modifiedTime'] ?? null,
+    ]);
+}
+
 if ($action === 'google_drive_files' && $method === 'GET') {
     $userId = authenticatedUserId();
     $pdo = database();
-    if (!googleConfigured()) respond(['error' => 'Google non configurato: completa le credenziali OAuth e l’ID della cartella in private/config.php.'], 503);
-    requireCapability($pdo, $userId, 'documents.view', 'Non hai il permesso di vedere i documenti.');
-    $query = "'" . addslashes(GOOGLE_DRIVE_FOLDER_ID) . "' in parents and trashed = false and mimeType = 'application/vnd.google-apps.document'";
-    $url = 'https://www.googleapis.com/drive/v3/files?' . http_build_query(['q' => $query, 'fields' => 'files(id,name,webViewLink,modifiedTime)', 'orderBy' => 'name', 'pageSize' => 100]);
+    if (!googleConfigured()) respond(['error' => 'Google OAuth non configurato in private/config.php.'], 503);
+    $scope = (string) ($_GET['scope'] ?? 'documents');
+    $viewCapabilities = ['documents' => 'documents.view', 'party_statutes' => 'party_statutes.view', 'company_regulations' => 'company_regulations.view'];
+    if (!isset($viewCapabilities[$scope])) respond(['error' => 'Tipo di cartella Google non valido.'], 422);
+    requireCapability($pdo, $userId, $viewCapabilities[$scope], 'Non hai il permesso di vedere questi documenti.');
+    $folderId = googleFolderForScope($pdo, $scope);
+    if ($folderId === '') respond(['error' => 'Cartella Google non configurata.'], 409);
+    $query = "'" . addslashes($folderId) . "' in parents and trashed = false and mimeType = 'application/vnd.google-apps.document'";
+    $url = 'https://www.googleapis.com/drive/v3/files?' . http_build_query(['q' => $query, 'fields' => 'files(id,name,webViewLink,modifiedTime)', 'orderBy' => 'name', 'pageSize' => 100, 'supportsAllDrives' => 'true', 'includeItemsFromAllDrives' => 'true']);
     $files = googleRequest($pdo, $userId, 'GET', $url);
     respond(['files' => is_array($files['files'] ?? null) ? $files['files'] : []]);
 }
@@ -1385,15 +1491,17 @@ if ($action === 'google_document_create' && $method === 'POST') {
     requireCsrf($pdo);
     $body = requestBody();
     $permission = (string) (($body['permission'] ?? 'documents'));
-    $createCapabilities = ['documents' => 'documents.create', 'odg' => 'odg.create', 'templates' => 'templates.create', 'parties' => 'party_statutes.create', 'companies' => 'company_regulations.create'];
-    if (!isset($createCapabilities[$permission])) respond(['error' => 'Tipo di documento Google non valido.'], 422);
+    $createCapabilities = ['documents' => 'documents.create', 'odg' => 'odg.create', 'templates' => 'templates.create'];
+    if (!isset($createCapabilities[$permission])) respond(['error' => 'Statuti e regolamenti devono essere collegati da Google Drive e non possono essere creati dal sito.'], 422);
     requireCapability($pdo, $userId, $createCapabilities[$permission], 'Non hai il permesso di creare questo documento Google.');
+    $folderId = googleFolderForScope($pdo, 'documents');
+    if ($folderId === '') respond(['error' => 'Configura la cartella «Documenti sito» nelle Impostazioni.'], 409);
     $title = googleDocumentTitle((string) ($body['title'] ?? 'Documento'));
     $sourceDocumentId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($body['sourceDocumentId'] ?? ''));
     if ($sourceDocumentId !== '') {
-        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($sourceDocumentId) . '/copy?fields=id,name,webViewLink,mimeType', ['name' => $title, 'parents' => [GOOGLE_DRIVE_FOLDER_ID]]);
+        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($sourceDocumentId) . '/copy?fields=id,name,webViewLink,mimeType', ['name' => $title, 'parents' => [$folderId]]);
     } else {
-        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,mimeType', ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document', 'parents' => [GOOGLE_DRIVE_FOLDER_ID]]);
+        $created = googleRequest($pdo, $userId, 'POST', 'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink,mimeType', ['name' => $title, 'mimeType' => 'application/vnd.google-apps.document', 'parents' => [$folderId]]);
     }
     $documentId = (string) ($created['id'] ?? '');
     if ($documentId === '') respond(['error' => 'Google non ha restituito il documento creato.'], 502);

@@ -127,7 +127,8 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 - Il progressivo viene aggiornato per categoria e puo mantenere zeri iniziali.
 - Cercare per titolo, categoria o numero.
 - Riaprire una riga per modificare il documento.
-- Ogni documento e template viene creato come Google Documenti nella cartella Drive configurata. In archivio si apre un documento cliccando la relativa riga; per i template si usa **Modifica**.
+- Documenti, ODG e template vengono creati come Google Documenti nella cartella **Documenti sito** configurata. In archivio si apre un documento cliccando la relativa riga; per i template si usa **Modifica**.
+- Statuti e regolamenti non vengono creati dal sito: si collega l'URL di un Google Doc già esistente rispettivamente nella cartella **Statuti** o **Regolamenti**. Il backend verifica tipo di file, accessibilità e appartenenza alla cartella prima di accettarlo.
 - **Scarica PDF** usa l'export PDF di Google Drive; il browser non genera più PDF e non conserva il contenuto redazionale nello stato locale.
 - La sezione ODG usa la categoria automatica `ODG` e gli stati `Da valutare` / `Valutato`.
 
@@ -167,7 +168,7 @@ Il nome del file su Google Drive è il riferimento per il titolo mostrato dal si
 
 - Se un documento viene rinominato dentro Google Documenti, il sito recepisce il nome nuovo e smette di mostrare quello vecchio. Vale per documenti, template, Statuti dei partiti e Regolamenti delle aziende.
 - L'allineamento avviene all'apertura del sito, quando si torna sulla scheda del browser, a intervalli regolari mentre la pagina resta aperta e subito tramite il webhook Drive, se configurato. Il pulsante **Sincronizza nomi** in Impostazioni forza il controllo in qualsiasi momento.
-- Se il titolo viene cambiato dal sito, la modifica viene riportata anche sul file in Drive, così le due parti non si sovrascrivono a vicenda.
+- Per documenti e template creati dal sito, un cambio di titolo viene riportato anche su Drive. Per statuti e regolamenti collegati, invece, il nome del file Google è sempre la fonte di verità e non viene rinominato quando cambia il nome del partito o dell’azienda.
 - Il controllo periodico si ferma mentre un editor del sito è aperto, per non interferire con una modifica in corso.
 
 Le costanti facoltative `DOCUMENT_NUMBER_PADDING`, `GOOGLE_NAME_SYNC_INTERVAL` e `GOOGLE_SYNC_MAX_LOOKUPS` in `private/config.php` regolano cifre predefinite, frequenza minima del riallineamento automatico lato server e numero massimo di file interrogati singolarmente fuori dalla cartella configurata. Se mancano, `api.php` usa valori predefiniti e le installazioni già attive continuano a funzionare.
@@ -190,10 +191,10 @@ VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin',
 ```
 
 5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web. Nella schermata consenso OAuth pubblicare l'app in stato **In produzione**: se il progetto esterno resta in stato **Test**, Google fa scadere i refresh token dopo 7 giorni e nessuna modifica applicativa può evitarlo. In produzione il collegamento usa un refresh token offline, viene rinnovato automaticamente e resta valido finché l'utente non revoca l'accesso, non cambia condizioni di sicurezza dell'account o non lascia il collegamento inutilizzato per il periodo previsto da Google.
-6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_WEBHOOK_URI` e `GOOGLE_DRIVE_FOLDER_ID` in `private/config.php`. L’URI di redirect deve puntare esattamente a `api.php?action=google_callback` ed essere registrato tra gli URI autorizzati del client Google (stesso protocollo HTTPS, dominio e percorso). Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
+6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` e `GOOGLE_WEBHOOK_URI` in `private/config.php`. `GOOGLE_DRIVE_FOLDER_ID` è mantenuto solo come migrazione facoltativa della vecchia cartella documenti. L’URI di redirect deve puntare esattamente a `api.php?action=google_callback` ed essere registrato tra gli URI autorizzati del client Google (stesso protocollo HTTPS, dominio e percorso). Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
 8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
-9. Accedere al sito, aprire **Impostazioni** e usare **Collega account Google**. L’account autorizzato deve avere accesso alla cartella Drive configurata.
+9. Accedere al sito, usare **Collega account Google**, quindi aprire **Impostazioni → Cartelle Google Drive** e salvare gli ID delle tre cartelle **Documenti sito**, **Statuti** e **Regolamenti**. L’account autorizzato deve avere accesso a tutte e tre.
 7. Se Altervista consente di tenere file fuori dalla cartella pubblica, spostare lì `private/config.php`; in alternativa mantenerlo come file PHP non collegato pubblicamente e usare le protezioni già disponibili nel pannello Altervista.
 8. Aprire l'URL HTTPS del sito e accedere con l'utente creato.
 
@@ -201,7 +202,7 @@ Il browser deve comunicare con `api.php` sullo stesso dominio. Non inserire mai 
 
 ## Architettura Google Drive
 
-Il backend usa OAuth server-side per ogni utente. Il browser riceve solo l'ID del Google Doc e apre `docs.google.com`; client secret e refresh token non vengono mai inviati al browser. Senza backend o senza account Google collegato le azioni documentali restano disabilitate.
+Il backend usa OAuth server-side per ogni utente. Il browser riceve solo l'ID del Google Doc e apre `docs.google.com`; client secret e refresh token non vengono mai inviati al browser. Gli ID delle tre cartelle sono impostazioni applicative, mentre ogni collegamento di statuto o regolamento viene verificato lato server contro la cartella prevista. Senza backend o senza account Google collegato le azioni documentali restano disabilitate.
 
 ## Architettura dati
 
