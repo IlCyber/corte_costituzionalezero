@@ -269,6 +269,7 @@ function ensureCapabilitySchema(PDO $pdo): void
     $pdo->exec("CREATE TABLE IF NOT EXISTS capabilities (capability_key VARCHAR(120) NOT NULL PRIMARY KEY, label VARCHAR(190) NOT NULL, capability_group VARCHAR(120) NOT NULL, is_dangerous TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     $pdo->exec("CREATE TABLE IF NOT EXISTS role_capabilities (role_id BIGINT UNSIGNED NOT NULL, capability_key VARCHAR(120) NOT NULL, allowed TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (role_id, capability_key), KEY idx_role_capability_key (capability_key), CONSTRAINT fk_role_capability_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE, CONSTRAINT fk_role_capability_definition FOREIGN KEY (capability_key) REFERENCES capabilities(capability_key) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
+    $existingCapabilityKeys = array_fill_keys(array_map('strval', $pdo->query('SELECT capability_key FROM capabilities')->fetchAll(PDO::FETCH_COLUMN)), true);
     $upsert = $pdo->prepare('INSERT INTO capabilities (capability_key, label, capability_group, is_dangerous) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label), capability_group = VALUES(capability_group), is_dangerous = VALUES(is_dangerous)');
     foreach (applicationCapabilityCatalog() as $capability) {
         $upsert->execute([$capability['key'], $capability['label'], $capability['group'], $capability['dangerous'] ? 1 : 0]);
@@ -286,6 +287,17 @@ function ensureCapabilitySchema(PDO $pdo): void
         ['party_statutes.link', 'party_statutes.create'],
         ['company_regulations.link', 'company_regulations.create'],
     ] as [$newCapability, $sourceCapability]) {
+        $grant = $pdo->prepare('INSERT IGNORE INTO role_capabilities (role_id, capability_key, allowed) SELECT role_id, ?, 1 FROM role_capabilities WHERE capability_key = ? AND allowed = 1');
+        $grant->execute([$newCapability, $sourceCapability]);
+    }
+    // Le nuove capacità di sostituzione ereditano inizialmente il vecchio
+    // permesso di modifica. La copia avviene solo quando la capacità viene
+    // introdotta, così una revoca successiva non viene annullata a ogni richiesta.
+    foreach ([
+        ['party_statutes.change_link', 'party_statutes.edit'],
+        ['company_regulations.change_link', 'company_regulations.edit'],
+    ] as [$newCapability, $sourceCapability]) {
+        if (isset($existingCapabilityKeys[$newCapability])) continue;
         $grant = $pdo->prepare('INSERT IGNORE INTO role_capabilities (role_id, capability_key, allowed) SELECT role_id, ?, 1 FROM role_capabilities WHERE capability_key = ? AND allowed = 1');
         $grant->execute([$newCapability, $sourceCapability]);
     }
@@ -454,9 +466,9 @@ function capabilitiesForStateMutation(array $before, array $after): array
     }
 
     foreach ([
-        'parties' => ['parties.create', 'parties.edit', 'party_statutes.link', 'party_statutes.edit', 'googleStatuteDocumentId'],
-        'companies' => ['companies.create', 'companies.edit', 'company_regulations.link', 'company_regulations.edit', 'googleRegulationDocumentId'],
-    ] as $stateKey => [$createCapability, $editCapability, $linkedCreate, $linkedEdit, $documentField]) {
+        'parties' => ['parties.create', 'parties.edit', 'party_statutes.link', 'party_statutes.change_link', 'party_statutes.edit', 'googleStatuteDocumentId'],
+        'companies' => ['companies.create', 'companies.edit', 'company_regulations.link', 'company_regulations.change_link', 'company_regulations.edit', 'googleRegulationDocumentId'],
+    ] as $stateKey => [$createCapability, $editCapability, $linkedCreate, $linkedChange, $linkedEdit, $documentField]) {
         if (!valuesDiffer($before[$stateKey] ?? [], $after[$stateKey] ?? [])) continue;
         $oldItems = itemsById($before[$stateKey] ?? []);
         $newItems = itemsById($after[$stateKey] ?? []);
@@ -482,8 +494,10 @@ function capabilitiesForStateMutation(array $before, array $after): array
             if ($stateKey === 'parties' && ($old['status'] ?? null) !== ($item['status'] ?? null)) { $need('parties.change_status'); $generalIgnored[] = 'status'; }
             $hadDocument = !empty($old[$documentField]);
             $hasDocument = !empty($item[$documentField]);
+            $documentChanged = $hadDocument && $hasDocument && ($old[$documentField] ?? '') !== ($item[$documentField] ?? '');
             if ($hadDocument && ($old['name'] ?? null) !== ($item['name'] ?? null)) $need($linkedEdit);
             if (!$hadDocument && $hasDocument) $need($linkedCreate);
+            elseif ($documentChanged) $need($linkedChange);
             elseif (valuesDiffer(array_intersect_key($old, array_flip($googleFields)), array_intersect_key($item, array_flip($googleFields)))) $need($linkedEdit);
             if (valuesDiffer(withoutFields($old, $generalIgnored), withoutFields($item, $generalIgnored))) $need($editCapability);
         }
@@ -1448,19 +1462,31 @@ if ($action === 'google_document_link' && $method === 'POST') {
     requireCsrf($pdo);
     $body = requestBody();
     $scope = (string) ($body['scope'] ?? '');
-    $capabilities = ['party_statutes' => 'party_statutes.link', 'company_regulations' => 'company_regulations.link'];
-    if (!isset($capabilities[$scope])) respond(['error' => 'Tipo di collegamento Google non valido.'], 422);
-    requireCapability($pdo, $userId, $capabilities[$scope], 'Non hai il permesso di collegare questo documento Google.');
+    $entityId = trim((string) ($body['entityId'] ?? ''));
+    $scopeConfig = [
+        'party_statutes' => ['collection' => 'parties', 'field' => 'googleStatuteDocumentId', 'link' => 'party_statutes.link', 'change' => 'party_statutes.change_link'],
+        'company_regulations' => ['collection' => 'companies', 'field' => 'googleRegulationDocumentId', 'link' => 'company_regulations.link', 'change' => 'company_regulations.change_link'],
+    ][$scope] ?? null;
+    if (!is_array($scopeConfig) || $entityId === '') respond(['error' => 'Tipo di collegamento Google non valido.'], 422);
+    $siteState = rawSiteState($pdo) ?: [];
+    $entities = itemsById($siteState[$scopeConfig['collection']] ?? []);
+    $entity = $entities[$entityId] ?? null;
+    if (!is_array($entity)) respond(['error' => 'Elemento da collegare non trovato.'], 404);
+    $currentDocumentId = validGoogleId($entity[$scopeConfig['field']] ?? null);
+    $requiredCapability = $currentDocumentId === '' ? $scopeConfig['link'] : $scopeConfig['change'];
+    requireCapability($pdo, $userId, $requiredCapability, $currentDocumentId === '' ? 'Non hai il permesso di collegare questo documento Google.' : 'Non hai il permesso di sostituire questo collegamento Google.');
     $documentId = googleDocumentIdFromInput($body['url'] ?? $body['documentId'] ?? '');
     if ($documentId === '') respond(['error' => 'Inserisci un link valido di Google Documenti.'], 422);
-    if (isset(googleLinkedDocuments(rawSiteState($pdo) ?: [])[$documentId])) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
+    if ($currentDocumentId !== '' && $documentId === $currentDocumentId) respond(['error' => 'Il link inserito coincide con quello già collegato.'], 422);
+    $existingReferences = googleLinkedDocuments($siteState)[$documentId] ?? [];
+    if ($documentId !== $currentDocumentId && !empty($existingReferences)) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
     $folderId = googleFolderForScope($pdo, $scope);
     if ($folderId === '') respond(['error' => 'Configura prima la cartella Google dedicata nelle Impostazioni.'], 409);
     $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,mimeType,parents,trashed,webViewLink,modifiedTime', 'supportsAllDrives' => 'true']));
     if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documenti valido e accessibile.'], 422);
     if (!in_array($folderId, is_array($file['parents'] ?? null) ? $file['parents'] : [], true)) respond(['error' => 'Il documento non si trova nella cartella Drive configurata per questa sezione.'], 422);
     googleWatchDocument($pdo, $userId, $documentId);
-    auditLog($pdo, 'google_document_linked', 'info', $userId, ['document_id' => $documentId, 'scope' => $scope]);
+    auditLog($pdo, $currentDocumentId === '' ? 'google_document_linked' : 'google_document_link_changed', $currentDocumentId === '' ? 'info' : 'warning', $userId, ['document_id' => $documentId, 'previous_document_id' => $currentDocumentId ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
     respond([
         'id' => $documentId,
         'name' => (string) ($file['name'] ?? ''),
