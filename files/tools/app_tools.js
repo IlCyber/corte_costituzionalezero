@@ -266,11 +266,22 @@ function initFormattazioneTool() {
   /* ── Pulizia e riconoscimento ──────────────────────────── */
 
   function pulisci(testo) {
+    const intestazione = '(?:LIBRO|PARTE|TITOLO|CAPO|SEZIONE|SOTTOSEZIONE)\\s+(?:[IVXLCDM]+|\\d+[°º]?|UNIC[OA]|PRIM[OA]|SECOND[OA]|TERZ[OA]|QUART[OA]|QUINT[OA]|SEST[OA]|SETTIM[OA]|OTTAV[OA]|NON[OA]|DECIM[OA])|(?:Art\\.?|Articolo)\\s*\\d+';
+
     return testo
       .replace(/^\uFEFF/, '')
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .replace(/\u00a0/g, ' ')
+      // Alcune esportazioni TXT usano «#-» come marcatore di paragrafo.
+      // Se introduce un Titolo o un Articolo è un confine strutturale; negli
+      // altri casi è solo rumore di esportazione e non deve finire nel testo.
+      .replace(new RegExp(`[ \\t]*#-[ \\t]*(?=${intestazione})`, 'gi'), '\n')
+      .replace(new RegExp(`([.!?])[ \\t]+(?=${intestazione})`, 'gi'), '$1\n')
+      .replace(/[ \t]*#-[ \t]*/g, ' ')
+      // Rimuove il cancelletto Markdown davanti alle intestazioni senza
+      // eliminare eventuali trattini appartenenti al contenuto.
+      .replace(/^\s*#{1,6}\s*(?=(?:LIBRO|PARTE|TITOLO|CAPO|SEZIONE|SOTTOSEZIONE|Art\.?|Articolo)\b)/gim, '')
       .replace(/[ \t]+/g, ' ')
       .split('\n')
       .map(r => r.trim())
@@ -292,6 +303,29 @@ function initFormattazioneTool() {
     // Gestisce anche «Art. 3-bis», «ARTICOLO 4 ter» e l'eventuale rubrica
     // presente sulla stessa riga.
     return /^(?:Art\.?|Articolo)\s*\d+(?:[\s.-]*(?:bis|ter|quater|quinquies|sexies|septies|octies|novies|decies))?\b/i.test(riga);
+  }
+
+  function separaArticoloEContenuto(riga) {
+    const match = riga.match(/^((?:Art\.?|Articolo)\s*\d+(?:[\s.-]*(?:bis|ter|quater|quinquies|sexies|septies|octies|novies|decies))?)(?:\s*[–—-]\s*(.*))?$/i);
+    if (!match || !match[2]) return { intestazione: riga, contenuto: '' };
+
+    const prefisso = match[1].trim();
+    const resto = match[2].trim();
+    const paroleRubrica = Array.from(resto.matchAll(/\S+/g));
+    const iniziPeriodo = /^(?:Il|Lo|La|I|Gli|Le|Un|Una|È|Sono|Si|Ogni|Ciascun[oa]?|Chiunque|Rinascita|Sarà|Viene|In\s+caso|Sino\s+al)\b/i;
+
+    // Nelle esportazioni compattate la rubrica e il primo periodo possono
+    // trovarsi sulla stessa riga: «Art. 3 - Principi Fondanti Il partito...».
+    // Dopo almeno due parole di rubrica cerchiamo un tipico inizio di periodo.
+    for (let i = 2; i < paroleRubrica.length; i++) {
+      const indice = paroleRubrica[i].index;
+      const possibileContenuto = resto.slice(indice);
+      if (!iniziPeriodo.test(possibileContenuto)) continue;
+      const rubrica = resto.slice(0, indice).trim();
+      return { intestazione: `${prefisso} - ${rubrica}`, contenuto: possibileContenuto.trim() };
+    }
+
+    return { intestazione: `${prefisso} - ${resto}`, contenuto: '' };
   }
 
   function estraiCommaEsplicito(riga) {
@@ -331,6 +365,18 @@ function initFormattazioneTool() {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  function formattaTestoComma(testo, regole) {
+    if (!regole.trattini) return escapeHTML(testo);
+    const posizioneDuePunti = testo.indexOf(':');
+    if (posizioneDuePunti < 0) return escapeHTML(testo);
+
+    const introduzione = testo.slice(0, posizioneDuePunti + 1);
+    const elementi = testo.slice(posizioneDuePunti + 1).split(';').map(item => item.trim()).filter(Boolean);
+    if (elementi.length < 2) return escapeHTML(testo);
+
+    return `${escapeHTML(introduzione)}<br>${elementi.map(item => `- ${escapeHTML(item)}`).join(';<br>')}`;
   }
 
   /* ── Numeri romani ─────────────────────────────────────── */
@@ -394,7 +440,8 @@ function initFormattazioneTool() {
       'la presente legge', 'il presente regolamento', "l'autorità", 'le autorità',
       'il governo', 'il parlamento', 'il presidente', 'la regione', 'le regioni',
       'il comune', 'i comuni', "l'ente", 'gli enti', 'ai fini', "nell'ambito",
-      'in materia di', 'a decorrere', 'entro il termine', 'con decreto'
+      'in materia di', 'a decorrere', 'entro il termine', 'con decreto',
+      'comprende', 'comprendono', 'fanno parte', 'i seguenti', 'le seguenti'
     ];
     if (modalita === 'bilanciata') return forti.concat(medi);
 
@@ -419,11 +466,11 @@ function initFormattazioneTool() {
 
   function blocchiOriginali(testo) {
     const righe = testo.split('\n').map(riga => riga.trim());
-    const blocchi = [];
+    const candidati = [];
     let corrente = [];
     const chiudi = () => {
       const blocco = corrente.join(' ').replace(/\s+/g, ' ').trim();
-      if (blocco) blocchi.push(blocco);
+      if (blocco) candidati.push(blocco);
       corrente = [];
     };
 
@@ -433,12 +480,40 @@ function initFormattazioneTool() {
     }
     chiudi();
 
-    // Molti TXT non conservano righe vuote ma mettono ogni comma su una riga.
-    // Se quasi tutte le righe terminano come periodi completi, la loro struttura
-    // è più affidabile di una ricostruzione euristica e viene mantenuta.
+    // Una riga vuota non implica necessariamente un nuovo comma: nei TXT
+    // ottenuti da PDF/Markdown viene spesso inserita anche nel mezzo di una
+    // frase («secondo» / «quanto stabilito...»). Si conserva il confine solo
+    // quando il blocco precedente è sintatticamente concluso.
+    const blocchi = [];
+    let elencoAperto = false;
+    for (const candidato of candidati) {
+      const precedente = blocchi.at(-1);
+      const iniziaMinuscolo = /^[a-zà-öø-ÿ]/.test(candidato);
+      const voceEtichettata = /^[^.!?;:]{2,90}:\s+/.test(candidato);
+
+      if (precedente && elencoAperto && voceEtichettata) {
+        blocchi[blocchi.length - 1] = `${precedente.replace(/[.;]\s*$/, '')}; ${candidato}`;
+        continue;
+      }
+      if (precedente && precedente.endsWith(':') && voceEtichettata) {
+        blocchi[blocchi.length - 1] = `${precedente} ${candidato}`;
+        elencoAperto = true;
+        continue;
+      }
+      elencoAperto = false;
+
+      if (precedente && (!/[.!?]$/.test(precedente) || iniziaMinuscolo)) {
+        blocchi[blocchi.length - 1] = `${precedente} ${candidato}`;
+      } else {
+        blocchi.push(candidato);
+      }
+    }
+
+    // Se non esistono righe vuote ma ogni riga è un periodo completo, le righe
+    // rappresentano con buona probabilità commi distinti e vengono mantenute.
     const nonVuote = righe.filter(Boolean);
     const righeComplete = nonVuote.filter(riga => /[.!?]$/.test(riga)).length;
-    if (blocchi.length <= 1 && nonVuote.length >= 2 && righeComplete / nonVuote.length >= 0.75) return nonVuote;
+    if (candidati.length <= 1 && nonVuote.length >= 2 && righeComplete / nonVuote.length >= 0.75) return nonVuote;
     return blocchi.length ? blocchi : [nonVuote.join(' ')].filter(Boolean);
   }
 
@@ -537,7 +612,9 @@ function initFormattazioneTool() {
 
       if (eArticolo(riga)) {
         salva();
-        articolo = riga;
+        const partiArticolo = separaArticoloEContenuto(riga);
+        articolo = partiArticolo.intestazione;
+        if (partiArticolo.contenuto) contenuto.push(partiArticolo.contenuto);
         continue;
       }
 
@@ -629,7 +706,7 @@ function initFormattazioneTool() {
         html += `
                 <p class="comma">
                     ${numeroHTML}
-                    ${escapeHTML(testoComma)}
+                    ${formattaTestoComma(testoComma, regole)}
                 </p>
             `;
       });
