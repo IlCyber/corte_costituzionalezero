@@ -857,6 +857,42 @@ function googleApiTimeout(): int
     return $value > 0 ? $value : 20;
 }
 
+/**
+ * Esegue lo scambio OAuth con cURL. Alcuni hosting disabilitano allow_url_fopen:
+ * in quel caso file_get_contents() non può contattare Google anche se le normali
+ * richieste API via cURL funzionano correttamente.
+ *
+ * @param array<string, string> $parameters
+ * @return array<string, mixed>
+ */
+function googleOAuthTokenRequest(array $parameters): array
+{
+    $curl = curl_init('https://oauth2.googleapis.com/token');
+    if ($curl === false) return ['error' => 'transport_error', 'error_description' => 'Impossibile inizializzare la connessione OAuth.'];
+    curl_setopt_array($curl, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS => http_build_query($parameters),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => min(10, googleApiTimeout()),
+        CURLOPT_TIMEOUT => googleApiTimeout(),
+    ]);
+    $response = curl_exec($curl);
+    $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $transportError = curl_error($curl);
+    curl_close($curl);
+    $payload = json_decode(is_string($response) ? $response : '', true);
+    if (!is_array($payload)) $payload = [];
+    if ($response === false || $transportError !== '') {
+        error_log('Google OAuth transport failure: ' . ($transportError !== '' ? $transportError : 'risposta assente'));
+        return ['error' => 'transport_error', 'error_description' => 'Google non è raggiungibile dal server.'];
+    }
+    if ($status < 200 || $status >= 300) {
+        error_log('Google OAuth failure [' . $status . ']: ' . (string) ($payload['error'] ?? 'risposta non valida') . ' - ' . substr((string) ($payload['error_description'] ?? ''), 0, 300));
+    }
+    return $payload;
+}
+
 function maxStateBytes(): int
 {
     $value = defined('MAX_STATE_BYTES') ? (int) constant('MAX_STATE_BYTES') : 2097152;
@@ -915,11 +951,13 @@ function googleAccessTokenOrNull(PDO $pdo, int $userId): ?string
         return null;
     }
     if ($refreshToken === '') return null;
-    $post = http_build_query(['client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'refresh_token' => $refreshToken, 'grant_type' => 'refresh_token']);
-    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => googleApiTimeout(), 'ignore_errors' => true]]);
-    $response = @file_get_contents('https://oauth2.googleapis.com/token', false, $context);
-    $payload = json_decode((string) $response, true);
-    if (!is_array($payload) || empty($payload['access_token'])) return null;
+    $payload = googleOAuthTokenRequest([
+        'client_id' => (string) GOOGLE_CLIENT_ID,
+        'client_secret' => (string) GOOGLE_CLIENT_SECRET,
+        'refresh_token' => $refreshToken,
+        'grant_type' => 'refresh_token',
+    ]);
+    if (empty($payload['access_token'])) return null;
     $tokenCache[$userId] = (string) $payload['access_token'];
     return $tokenCache[$userId];
 }
@@ -1367,12 +1405,23 @@ if ($action === 'google_callback' && $method === 'GET') {
     $state = (string) ($_GET['state'] ?? '');
     $code = (string) ($_GET['code'] ?? '');
     if ($state === '' || !hash_equals((string) ($_SESSION['google_oauth_state'] ?? ''), $state) || $code === '') respond(['error' => 'Collegamento Google non valido.'], 400);
-    $post = http_build_query(['code' => $code, 'client_id' => GOOGLE_CLIENT_ID, 'client_secret' => GOOGLE_CLIENT_SECRET, 'redirect_uri' => GOOGLE_REDIRECT_URI, 'grant_type' => 'authorization_code']);
-    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/x-www-form-urlencoded\r\n", 'content' => $post, 'timeout' => googleApiTimeout(), 'ignore_errors' => true]]);
-    $tokenPayload = json_decode((string) file_get_contents('https://oauth2.googleapis.com/token', false, $context), true);
-    if (!is_array($tokenPayload) || empty($tokenPayload['access_token'])) {
+    $tokenPayload = googleOAuthTokenRequest([
+        'code' => $code,
+        'client_id' => (string) GOOGLE_CLIENT_ID,
+        'client_secret' => (string) GOOGLE_CLIENT_SECRET,
+        'redirect_uri' => (string) GOOGLE_REDIRECT_URI,
+        'grant_type' => 'authorization_code',
+    ]);
+    if (empty($tokenPayload['access_token'])) {
         unset($_SESSION['google_oauth_state']);
-        respond(['error' => 'Google non ha rilasciato un token di accesso. Riprova il collegamento.'], 502);
+        $oauthError = (string) ($tokenPayload['error'] ?? '');
+        $message = match ($oauthError) {
+            'invalid_grant' => 'Il codice Google è scaduto o già utilizzato, oppure l’URI di reindirizzamento non coincide. Avvia di nuovo il collegamento dalle Impostazioni.',
+            'invalid_client', 'unauthorized_client' => 'Google ha rifiutato le credenziali OAuth. Verifica Client ID, Client Secret e URI di reindirizzamento.',
+            'transport_error' => (string) ($tokenPayload['error_description'] ?? 'Google non è raggiungibile dal server.'),
+            default => 'Google non ha rilasciato un token di accesso. Avvia di nuovo il collegamento dalle Impostazioni.',
+        };
+        respond(['error' => $message], 502);
     }
     $token = (string) $tokenPayload['access_token'];
     $curl = curl_init('https://openidconnect.googleapis.com/v1/userinfo');
