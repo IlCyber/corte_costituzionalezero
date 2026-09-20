@@ -228,8 +228,27 @@ function renderGoogleConnectionSettings() {
   // Senza alcuna capacità Google il menu sparisce del tutto dalla navbar.
   if (navItem) navItem.classList.toggle('d-none', !(canConnect || canDisconnect || canSync));
   if (navLabel) navLabel.textContent = googleConnection.connected ? (googleConnection.email || 'Google collegato') : 'Google';
-  if (!googleConnection.configured) { status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.'; connect.classList.add('disabled'); disconnect.classList.add('d-none'); if (syncBtn) syncBtn.classList.add('d-none'); return; }
-  status.textContent = googleConnection.connected ? `Collegato: ${googleConnection.email}` : 'Nessun account Google collegato. I documenti non sono disponibili.';
+
+  // All'avvio lo stato Google è ancora sconosciuto e il primo render disabilita
+  // prudenzialmente il link. Quando google_status conferma la configurazione è
+  // indispensabile rimuovere di nuovo .disabled: Bootstrap applica
+  // pointer-events:none ai link con questa classe e, prima di questa pulizia,
+  // il pulsante rimaneva azzurro ma non cliccabile anche per il primary admin.
+  connect.classList.toggle('disabled', !googleConnection.configured);
+  connect.setAttribute('aria-disabled', googleConnection.configured ? 'false' : 'true');
+  connect.tabIndex = googleConnection.configured ? 0 : -1;
+  if (!googleConnection.configured) {
+    status.textContent = 'Il collegamento Google deve essere configurato dal gestore del sito.';
+    disconnect.classList.add('d-none');
+    if (syncBtn) syncBtn.classList.add('d-none');
+    return;
+  }
+
+  status.textContent = googleConnection.connected
+    ? `Collegato: ${googleConnection.email}. L’accesso viene rinnovato automaticamente.`
+    : googleConnection.reconnectRequired
+      ? 'L’autorizzazione Google non è più valida. Collega nuovamente l’account.'
+      : 'Nessun account Google collegato. I documenti non sono disponibili.';
   connect.classList.toggle('d-none', googleConnection.connected || !canConnect);
   disconnect.classList.toggle('d-none', !googleConnection.connected || !canDisconnect);
   if (syncBtn) syncBtn.classList.toggle('d-none', !googleConnection.connected || !canSync);
