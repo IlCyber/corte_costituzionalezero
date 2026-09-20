@@ -109,17 +109,17 @@
 
               <label for="modalita" class="form-label">Modalità di suddivisione</label>
               <select id="modalita" class="form-select mb-3">
-                <option value="conservativa">Conservativa</option>
-                <option value="bilanciata">Bilanciata</option>
-                <option value="estensiva">Estensiva</option>
+                <option value="conservativa">Conservativa · pochi interventi</option>
+                <option value="bilanciata" selected>Bilanciata · consigliata</option>
+                <option value="estensiva">Estensiva · più commi</option>
               </select>
 
-              <label for="maxParole" class="form-label">Lunghezza indicativa massima del comma</label>
-              <input type="number" id="maxParole" class="form-control mb-3" value="120" min="20" max="1000">
+              <label for="maxParole" class="form-label">Lunghezza massima indicativa del comma</label>
+              <input type="number" id="maxParole" class="form-control mb-3" value="90" min="20" max="1000">
 
               <p class="form-text">
-                La suddivisione logica è euristica: il programma raggruppa le frasi per disposizione e cambio di
-                argomento, senza spezzare automaticamente ogni frase.
+                Il programma conserva numerazioni, righe vuote e paragrafi riconoscibili. Negli altri casi divide alle
+                frasi complete, valutando lunghezza, nuovi soggetti e indicatori di cambio dell’argomento.
               </p>
 
               <div class="form-text" id="status">Nessun file caricato.</div>
