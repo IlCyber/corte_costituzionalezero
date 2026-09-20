@@ -1330,7 +1330,10 @@ if ($action === 'google_callback' && $method === 'GET') {
     $query = $pdo->prepare('INSERT INTO google_connections (user_id, google_email, refresh_token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token = VALUES(refresh_token), updated_at = UTC_TIMESTAMP()');
     $query->execute([$userId, (string) ($profile['email'] ?? ''), $refreshToken]);
     unset($_SESSION['google_oauth_state']);
-    header('Location: ./index.html#settings?google=connected', true, 302);
+    // Il frontend rilegge subito lo stato dal backend: non servono parametri
+    // nell'hash, che altrimenti rischiano di essere interpretati come parte
+    // dell'id della vista.
+    header('Location: ./index.html#settings', true, 302);
     exit;
 }
 

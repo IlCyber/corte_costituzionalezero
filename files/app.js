@@ -5,6 +5,14 @@ const defaultCounters = { Sentenze: '00001', Ordinanze: '00001', Decreti: '00001
 const defaultPageMargins = { top: 25, right: 25, bottom: 25, left: 25 };
 const defaultParliamentSettings = { roles: [{ id: 'titolare', name: 'Parlamentare', limit: 10 }, { id: 'sostituto', name: 'Sostituto', limit: 5 }], fields: [] };
 const API_URL = 'api.php';
+
+// Restituisce soltanto il nome della vista. Il callback OAuth può aggiungere
+// parametri dopo l'hash (es. #settings?google=connected), che non fanno parte
+// dell'id della sezione e non devono essere passati a setView().
+function currentHashView() {
+  return window.location.hash.replace(/^#/, '').split('?')[0] || 'dashboard';
+}
+
 const LOCAL_AUTH_KEYS = { users: 'cz_local_users', registrations: 'cz_local_registration_requests', resets: 'cz_local_password_reset_requests', roles: 'cz_local_roles' };
 const PERMISSION_CATALOG = [
   { key: 'documents', label: 'Documenti', group: 'Archivio' }, { key: 'useful_links', label: 'Link utili', group: 'Archivio' }, { key: 'tools', label: 'Tools', group: 'Archivio' }, { key: 'templates', label: 'Template', group: 'Archivio' }, { key: 'odg', label: 'ODG', group: 'Archivio' },
@@ -313,7 +321,7 @@ async function runGoogleNameSync(silent) {
  * Ridisegna la schermata aperta dopo un aggiornamento dei dati arrivato dal server.
  */
 function refreshCurrentView() {
-  const view = window.location.hash.replace('#', '').split('?')[0] || 'dashboard';
+  const view = currentHashView();
   const renderers = {
     dashboard: renderDocuments,
     templates: renderTemplates,
@@ -839,7 +847,7 @@ function persistLocalTrashMutation(config) {
   writeStorage(STORAGE_KEYS.trash, state.trash);
 }
 function rerenderAfterTrashMutation() {
-  const view = window.location.hash.replace('#', '') || 'dashboard';
+  const view = currentHashView();
   if (view === 'trash') renderTrash();
   else setView(view, false);
 }
@@ -1601,7 +1609,7 @@ function refreshSettingsSubnav(activeView = null) {
   // fonte affidabile qualunque sia l'ordine delle chiamate (applyPermissions,
   // setView, refresh asincroni).
   const visible = document.querySelector('.app-view:not(.d-none)')?.id?.replace(/View$/, '');
-  const view = activeView || visible || activeAppView;
+  const view = activeView || visible || currentHashView();
   document.querySelectorAll('[data-settings-subnav]').forEach(link => {
     link.classList.toggle('active', link.dataset.settingsSubnav === view);
     link.classList.toggle('d-none', !canAccessSettingsSection(link.dataset.settingsSubnav));
@@ -3318,7 +3326,7 @@ async function initialize() {
     scheduleSessionExpiryWarning();
     document.getElementById('loginView').classList.add('d-none');
     document.getElementById('appView').classList.remove('d-none');
-    const initialView = window.location.hash.replace('#', '') || 'dashboard';
+    const initialView = currentHashView();
     setView(initialView, false);
   } else {
     document.getElementById('loginView').classList.remove('d-none');
@@ -3331,7 +3339,7 @@ async function initialize() {
 
   window.addEventListener('popstate', (event) => {
     if (localStorage.getItem(STORAGE_KEYS.session) !== 'active') return;
-    const view = event.state?.view || window.location.hash.replace('#', '') || 'dashboard';
+    const view = event.state?.view || currentHashView();
     setView(view, false);
     document.querySelectorAll('.editor-page').forEach(el => el.classList.add('d-none'));
   });
