@@ -278,17 +278,46 @@ function initFormattazioneTool() {
       .trim();
   }
 
+  // Riconosce i livelli strutturali normalmente usati nei testi normativi.
+  // Prima veniva accettato soltanto «Titolo» seguito da un numero romano:
+  // CAPO, PARTE, LIBRO, SEZIONE, numeri arabi e ordinali restavano nel testo.
   function eTitolo(riga) {
-    return /^Titolo\s+[IVXLCDM]+(?:\s*[–—-].*)?$/i.test(riga)
-      || /^TITOLO\s+[IVXLCDM]+/i.test(riga);
+    const livello = '(?:LIBRO|PARTE|TITOLO|CAPO|SEZIONE|SOTTOSEZIONE)';
+    const numero = '(?:[IVXLCDM]+|\\d+[°º]?|UNIC[OA]|PRIM[OA]|SECOND[OA]|TERZ[OA]|QUART[OA]|QUINT[OA]|SEST[OA]|SETTIM[OA]|OTTAV[OA]|NON[OA]|DECIM[OA])';
+    return new RegExp(`^${livello}\\s+${numero}(?:\\s*[–—:.-]\\s*.*)?$`, 'i').test(riga)
+      || /^(?:PREAMBOLO|DISPOSIZIONI\s+(?:GENERALI|FINALI|TRANSITORIE|ATTUATIVE))(?:\s*[–—:.-]\s*.*)?$/i.test(riga);
   }
 
   function eArticolo(riga) {
-    return /^(?:Art\.|Articolo)\s*\d+/i.test(riga);
+    // Gestisce anche «Art. 3-bis», «ARTICOLO 4 ter» e l'eventuale rubrica
+    // presente sulla stessa riga.
+    return /^(?:Art\.?|Articolo)\s*\d+(?:[\s.-]*(?:bis|ter|quater|quinquies|sexies|septies|octies|novies|decies))?\b/i.test(riga);
+  }
+
+  function estraiCommaEsplicito(riga) {
+    const match = String(riga).match(/^\s*((?:\d+(?:[.-]?(?:bis|ter|quater|quinquies|sexies|septies|octies|novies|decies))?|[IVXLCDM]+)[.)])(?:\s+|$)(.*)$/i);
+    return match ? { numero: match[1], testo: match[2].trim() } : null;
   }
 
   function eCommaEsplicito(riga) {
-    return /^\s*(?:[IVXLCDM]+\.|\d+\.)\s+/.test(riga);
+    return Boolean(estraiCommaEsplicito(riga));
+  }
+
+  function eSottotitolo(riga) {
+    const testo = riga.replace(/^\((.*)\)$/, '$1').trim();
+    if (!testo || testo.length > 140 || eTitolo(testo) || eArticolo(testo) || eCommaEsplicito(testo)) return false;
+    // Rubriche fra parentesi oppure brevi intestazioni tutte maiuscole.
+    return /^\(.+\)$/.test(riga) || (testo === testo.toLocaleUpperCase('it-IT') && /[A-ZÀ-ÖØ-Ý]/.test(testo) && !/[.;!?]$/.test(testo));
+  }
+
+  function unisciIntestazione(base, dettaglio) {
+    const pulito = dettaglio.replace(/^\((.*)\)$/, '$1').trim();
+    return pulito ? `${base} – ${pulito}` : base;
+  }
+
+  function livelloTitolo(riga) {
+    const tipo = riga.trim().split(/\s+/, 1)[0].toLocaleUpperCase('it-IT');
+    return { LIBRO: 0, PARTE: 1, TITOLO: 2, CAPO: 3, SEZIONE: 4, SOTTOSEZIONE: 5 }[tipo] ?? 2;
   }
 
   function parole(testo) {
@@ -339,206 +368,136 @@ function initFormattazioneTool() {
   /* ── Suddivisione logica ───────────────────────────────── */
 
   function dividiFrasi(testo) {
-    return testo
-      .replace(/\s+/g, ' ')
-      .match(/[^.!?]+(?:[.!?]+|$)/g)
-      ?.map(f => f.trim())
-      .filter(Boolean) || [];
+    const normalizzato = testo.replace(/\s+/g, ' ').trim();
+    if (!normalizzato) return [];
+
+    // Si separa solo davanti a un probabile nuovo periodo. In questo modo i
+    // punti di «art. 3», «n. 5», iniziali e numeri decimali non producono falsi
+    // commi, come accadeva con la precedente espressione regolare.
+    const frasi = normalizzato.split(/(?<=[.!?])\s+(?=[«“"'(]*[A-ZÀ-ÖØ-Þ])/u);
+    return frasi.map(frase => frase.trim()).filter(Boolean);
   }
 
   function indicatoriCambio(modalita) {
-
-    const base = [
-      'inoltre',
-      'altresì',
-      'tuttavia',
-      'peraltro',
-      'in ogni caso',
-      'resta fermo',
-      'spetta',
-      'compete',
-      'è istituito',
-      'sono istituiti',
-      'si applica',
-      'si applicano',
-      'è vietato',
-      'sono vietati',
-      'è consentito',
-      'sono consentiti',
-      'è riconosciuto',
-      'sono riconosciuti',
-      'è garantito',
-      'sono garantiti'
+    const forti = [
+      'inoltre', 'altresì', 'tuttavia', 'peraltro', 'in ogni caso',
+      'resta fermo', 'restano fermi', 'fatto salvo', 'fatta salva',
+      'spetta', 'compete', 'è istituito', 'sono istituiti',
+      'si applica', 'si applicano', 'è vietato', 'sono vietati',
+      'è consentito', 'sono consentiti', 'è riconosciuto',
+      'sono riconosciuti', 'è garantito', 'sono garantiti',
+      'è fatto obbligo', 'è fatto divieto'
     ];
+    if (modalita === 'conservativa') return forti;
 
-    if (modalita === 'conservativa') {
-      return base;
-    }
+    const medi = [
+      'la presente legge', 'il presente regolamento', "l'autorità", 'le autorità',
+      'il governo', 'il parlamento', 'il presidente', 'la regione', 'le regioni',
+      'il comune', 'i comuni', "l'ente", 'gli enti', 'ai fini', "nell'ambito",
+      'in materia di', 'a decorrere', 'entro il termine', 'con decreto'
+    ];
+    if (modalita === 'bilanciata') return forti.concat(medi);
 
-    if (modalita === 'bilanciata') {
-      return base.concat([
-        'la presente legge',
-        'il presente regolamento',
-        "l'autorità",
-        'le autorità',
-        'il governo',
-        'il parlamento',
-        'il presidente',
-        'la regione',
-        'le regioni',
-        'i comuni',
-        'gli enti',
-        'ai fini',
-        "nell'ambito",
-        'in materia di'
-      ]);
-    }
-
-    return base.concat([
-      'la presente legge',
-      'il presente regolamento',
-      "l'autorità",
-      'le autorità',
-      'il governo',
-      'il parlamento',
-      'il presidente',
-      'la regione',
-      'le regioni',
-      'i comuni',
-      'gli enti',
-      'ai fini',
-      "nell'ambito",
-      'in materia di',
-      'è fatto obbligo',
-      'è fatto divieto',
-      'sono previste',
-      'sono previsti',
-      'sono disciplinate',
-      'sono disciplinati',
-      'si dispone',
-      'si stabilisce'
+    return forti.concat(medi, [
+      'sono previste', 'sono previsti', 'sono disciplinate', 'sono disciplinati',
+      'si dispone', 'si stabilisce', 'chiunque', 'ciascuno', 'ciascuna',
+      'il soggetto', 'i soggetti', 'la commissione', 'le amministrazioni'
     ]);
   }
 
-  function cambiaArgomento(precedente, successiva, regole) {
+  function cambiaArgomento(successiva, regole, paroleCorrenti) {
+    const next = successiva.toLocaleLowerCase('it-IT').trim().replace(/^[«“"'(]+/, '');
+    if (indicatoriCambio(regole.modalita).some(indicatore => next.startsWith(indicatore))) return true;
 
-    const next = successiva.toLowerCase().trim();
-
-    return indicatoriCambio(regole.modalita)
-      .some(indicatore => next.startsWith(indicatore));
+    // In modalità estensiva anche un nuovo soggetto normativo è un indizio,
+    // ma soltanto dopo un blocco abbastanza consistente per evitare un comma
+    // diverso per ogni frase breve.
+    return regole.modalita === 'estensiva'
+      && paroleCorrenti >= 24
+      && /^(?:il|lo|la|i|gli|le|un|una|ciascun|ogni)\s+[a-zà-öø-ÿ'’-]+\s+(?:è|sono|può|possono|deve|devono|provvede|provvedono)\b/i.test(next);
   }
 
-  function suddividiCommi(testo, regole) {
+  function blocchiOriginali(testo) {
+    const righe = testo.split('\n').map(riga => riga.trim());
+    const blocchi = [];
+    let corrente = [];
+    const chiudi = () => {
+      const blocco = corrente.join(' ').replace(/\s+/g, ' ').trim();
+      if (blocco) blocchi.push(blocco);
+      corrente = [];
+    };
 
-    const righe = testo
-      .split('\n')
-      .map(r => r.trim())
-      .filter(Boolean);
-
-    if (
-      regole.mantieniCommi &&
-      righe.filter(eCommaEsplicito).length >= 2
-    ) {
-
-      const commi = [];
-      let corrente = '';
-
-      for (const riga of righe) {
-
-        if (eCommaEsplicito(riga)) {
-
-          if (corrente) {
-            commi.push(corrente.trim());
-          }
-
-          corrente = riga.replace(
-            /^\s*(?:[IVXLCDM]+\.|\d+\.)\s+/,
-            ''
-          );
-
-        } else {
-          corrente += ' ' + riga;
-        }
-      }
-
-      if (corrente) {
-        commi.push(corrente.trim());
-      }
-
-      return commi;
+    for (const riga of righe) {
+      if (!riga) { chiudi(); continue; }
+      corrente.push(riga);
     }
+    chiudi();
 
-    if (!regole.suddivisioneLogica) {
-      return [righe.join(' ').trim()].filter(Boolean);
-    }
+    // Molti TXT non conservano righe vuote ma mettono ogni comma su una riga.
+    // Se quasi tutte le righe terminano come periodi completi, la loro struttura
+    // è più affidabile di una ricostruzione euristica e viene mantenuta.
+    const nonVuote = righe.filter(Boolean);
+    const righeComplete = nonVuote.filter(riga => /[.!?]$/.test(riga)).length;
+    if (blocchi.length <= 1 && nonVuote.length >= 2 && righeComplete / nonVuote.length >= 0.75) return nonVuote;
+    return blocchi.length ? blocchi : [nonVuote.join(' ')].filter(Boolean);
+  }
 
+  function suddividiBlocco(testo, regole) {
     const frasi = dividiFrasi(testo);
-
-    if (!frasi.length) {
-      return [];
-    }
+    if (!frasi.length) return [];
 
     const commi = [];
     let corrente = '';
     let nParole = 0;
+    const minimoCambio = { conservativa: 32, bilanciata: 20, estensiva: 12 }[regole.modalita] || 20;
 
-    for (let i = 0; i < frasi.length; i++) {
-
-      const frase = frasi[i];
+    for (const frase of frasi) {
       const n = parole(frase);
+      if (!corrente) { corrente = frase; nParole = n; continue; }
 
-      if (!corrente) {
-        corrente = frase;
-        nParole = n;
-        continue;
-      }
+      // Il vecchio controllo confrontava soltanto la lunghezza già accumulata:
+      // un comma di 119 parole poteva così assorbirne altre 100. Si valuta invece
+      // la lunghezza risultante prima di aggiungere la nuova frase.
+      const superaLimite = nParole + n > regole.maxParole;
+      const cambio = cambiaArgomento(frase, regole, nParole) && nParole >= minimoCambio;
 
-      const cambio = cambiaArgomento(
-        frasi[i - 1],
-        frase,
-        regole
-      );
-
-      /*
-       * In modalità conservativa, si divide solo quando
-       * esiste un indicatore esplicito di cambio.
-       *
-       * Nelle altre modalità, il limite di lunghezza
-       * costituisce un ulteriore punto di divisione.
-       */
-
-      const superaLimite = nParole >= regole.maxParole;
-
-      if (
-        cambio &&
-        nParole >= 18
-      ) {
-
+      if (superaLimite || cambio) {
         commi.push(corrente.trim());
         corrente = frase;
         nParole = n;
-
-      } else if (
-        superaLimite &&
-        regole.modalita !== 'conservativa'
-      ) {
-
-        commi.push(corrente.trim());
-        corrente = frase;
-        nParole = n;
-
       } else {
-
         corrente += ' ' + frase;
         nParole += n;
       }
     }
+    if (corrente) commi.push(corrente.trim());
+    return commi;
+  }
 
-    if (corrente) {
-      commi.push(corrente.trim());
+  function suddividiCommi(testo, regole) {
+    const righe = testo.split('\n').map(riga => riga.trim());
+    const espliciti = righe.filter(Boolean).filter(eCommaEsplicito);
+
+    if (regole.mantieniCommi && espliciti.length >= 1) {
+      const commi = [];
+      let corrente = '';
+      for (const riga of righe) {
+        if (!riga) continue;
+        const esplicito = estraiCommaEsplicito(riga);
+        if (esplicito) {
+          if (corrente) commi.push(corrente.trim());
+          corrente = esplicito.testo;
+        } else {
+          corrente += (corrente ? ' ' : '') + riga;
+        }
+      }
+      if (corrente) commi.push(corrente.trim());
+      return commi.filter(Boolean);
     }
 
-    return commi;
+    const blocchi = blocchiOriginali(testo);
+    if (!regole.suddivisioneLogica) return blocchi;
+    return blocchi.flatMap(blocco => suddividiBlocco(blocco, regole));
   }
 
   /* ── Analisi del documento ─────────────────────────────── */
@@ -550,35 +509,29 @@ function initFormattazioneTool() {
 
     const sezioni = [];
 
-    let titolo = null;
+    let titoli = [];
     let articolo = null;
     let contenuto = [];
 
     function salva() {
-
-      if (!articolo) {
-        return;
-      }
-
+      if (!articolo) return;
       sezioni.push({
-        titolo,
+        titoli: titoli.map(item => item.testo),
         articolo,
-        contenuto: contenuto.join('\n')
+        // Le righe vuote sono significative: delimitano i paragrafi/commi
+        // originali e non devono essere eliminate durante l'analisi.
+        contenuto: contenuto.join('\n').trim()
       });
-
       articolo = null;
       contenuto = [];
     }
 
     for (const riga of righe) {
-
-      if (!riga) {
-        continue;
-      }
-
       if (eTitolo(riga)) {
         salva();
-        titolo = riga;
+        const livello = livelloTitolo(riga);
+        titoli = titoli.filter(item => item.livello < livello);
+        titoli.push({ livello, testo: riga });
         continue;
       }
 
@@ -588,13 +541,28 @@ function initFormattazioneTool() {
         continue;
       }
 
+      // «TITOLO I» seguito da «PRINCIPI GENERALI» e «Art. 1» seguito da
+      // «(Oggetto)» sono impaginazioni molto comuni. La seconda riga è una
+      // rubrica, non il primo comma dell'articolo.
+      if (eSottotitolo(riga)) {
+        if (articolo && !contenuto.some(Boolean)) {
+          articolo = unisciIntestazione(articolo, riga);
+          continue;
+        }
+        if (!articolo && titoli.length) {
+          titoli[titoli.length - 1].testo = unisciIntestazione(titoli[titoli.length - 1].testo, riga);
+          continue;
+        }
+      }
+
       if (articolo) {
-        contenuto.push(riga);
+        // Evita sequenze di righe vuote, conservandone comunque una come
+        // separatore forte fra due commi del file sorgente.
+        if (riga || contenuto.at(-1) !== '') contenuto.push(riga);
       }
     }
 
     salva();
-
     return sezioni;
   }
 
@@ -603,34 +571,29 @@ function initFormattazioneTool() {
   function genera(sezioni, regole) {
 
     let html = '';
-    let ultimoTitolo = null;
+    let ultimiTitoli = [];
     let primoArticolo = true;
 
     sezioni.forEach(sezione => {
+      const titoli = Array.isArray(sezione.titoli) ? sezione.titoli : [];
+      let primoDiverso = 0;
+      while (primoDiverso < titoli.length && titoli[primoDiverso] === ultimiTitoli[primoDiverso]) primoDiverso++;
+      const nuoviTitoli = titoli.slice(primoDiverso);
 
-      if (
-        sezione.titolo &&
-        sezione.titolo !== ultimoTitolo
-      ) {
-
-        if (html && regole.separaArticoli) {
-          html += '<div class="separatore"></div>';
-        }
-
-        html += `
+      if (nuoviTitoli.length) {
+        if (html && regole.separaArticoli) html += '<div class="separatore"></div>';
+        nuoviTitoli.forEach(titolo => {
+          html += `
                 <p class="titolo">
-                    ${escapeHTML(sezione.titolo)}
+                    ${escapeHTML(titolo)}
                 </p>
             `;
-
-        if (regole.separaTitolo) {
-          html += '<div class="separatore"></div>';
-        }
-
-        ultimoTitolo = sezione.titolo;
+        });
+        if (regole.separaTitolo) html += '<div class="separatore"></div>';
       }
+      ultimiTitoli = titoli;
 
-      if (!primoArticolo && regole.separaArticoli) {
+      if (!primoArticolo && regole.separaArticoli && !nuoviTitoli.length) {
         html += '<div class="separatore"></div>';
       }
 
@@ -704,10 +667,9 @@ function initFormattazioneTool() {
 
     applicaStili(regole);
 
-    statusEl.textContent =
-      'Elaborazione completata: ' +
-      sezioni.length +
-      ' articoli riconosciuti.';
+    const numeroTitoli = new Set(sezioni.flatMap(sezione => sezione.titoli || [])).size;
+    const numeroCommi = documento.querySelectorAll('.comma').length;
+    statusEl.textContent = `Elaborazione completata: ${numeroTitoli} titoli, ${sezioni.length} articoli e ${numeroCommi} commi riconosciuti.`;
   }
 
   /* ── Caricamento file ──────────────────────────────────── */
@@ -743,8 +705,8 @@ function initFormattazioneTool() {
     });
 
     $('separaCommi').checked = false;
-    $('modalita').value = 'conservativa';
-    $('maxParole').value = 120;
+    $('modalita').value = 'bilanciata';
+    $('maxParole').value = 90;
 
     elabora();
   });
