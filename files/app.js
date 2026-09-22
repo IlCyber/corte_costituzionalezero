@@ -84,7 +84,6 @@ const state = {
   pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
   numberPadding: readStorage(STORAGE_KEYS.numberPadding, DEFAULT_NUMBER_PADDING),
   googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '' }),
-  googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '' }),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
   coalitions: readStorage(STORAGE_KEYS.coalitions, []),
@@ -474,7 +473,6 @@ function applyRemoteState(remoteState) {
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
   state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
   state.pageMargins = normalizePageMargins(state.pageMargins);
-  state.googleDriveFolders = { documents: '', ...(state.googleDriveFolders || {}) };
   state.googleDriveFolders = { documents: '', ...(state.googleDriveFolders || {}) };
   normalizeCounters();
   normalizeStoredNumbers();
@@ -1046,6 +1044,8 @@ function normalizeStoredNumbers() {
 function documentCode(document) { return `${document.category} ${formatNumber(document.number)}/${document.year}`; }
 function statusLabel(status) { return { attivo: 'Attivo', eliminato: 'Eliminato', confluito: 'Confluito', cancellato: 'Cancellato' }[status] || 'Attivo'; }
 function statusClass(status) { return { attivo: 'text-bg-success', eliminato: 'text-bg-danger', confluito: 'text-bg-warning', cancellato: 'text-bg-secondary' }[status] || 'text-bg-success'; }
+function coalitionStatusLabel(status) { return { attiva: 'Attiva', sciolta: 'Sciolta' }[status] || status || '—'; }
+function coalitionStatusClass(status) { return status === 'attiva' ? 'text-bg-success' : status === 'sciolta' ? 'text-bg-secondary' : 'text-bg-light'; }
 function mandateStatusLabel(status) { return status === 'in corso' ? 'In corso' : 'Concluso'; }
 function parliamentRoleLabel(role, plural = false) {
   const configuredRole = state.parliamentSettings.roles.find(item => item.id === role);
@@ -2094,7 +2094,7 @@ function renderCoalitions() {
 
   grid.innerHTML = coalitions.map(coalition => {
     const partyNames = (coalition.parties || []).map(id => state.parties.find(party => party.id === id)?.name).filter(Boolean);
-    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card coalition-card card border-0 shadow-sm" data-open-coalition="${coalition.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(coalition.name)}</h2><span class="badge ${statusClass(coalition.status)}">${statusLabel(coalition.status)}</span></div><p class="text-secondary small mb-3">${partyNames.length ? `${partyNames.length} ${partyNames.length === 1 ? 'partito associato' : 'partiti associati'}` : 'Nessun partito associato'}</p><dl class="party-facts mb-0">${state.coalitionFields.map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(coalition.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(coalition.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('coalitions.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="coalitions" data-entity-id="${coalition.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-coalition="${coalition.id}">Modifica</button></span></div></article></div>`;
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card coalition-card card border-0 shadow-sm" data-open-coalition="${coalition.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(coalition.name)}</h2><span class="badge ${coalitionStatusClass(coalition.status)}">${escapeHtml(coalitionStatusLabel(coalition.status))}</span></div><p class="text-secondary small mb-3">${partyNames.length ? `${partyNames.length} ${partyNames.length === 1 ? 'partito associato' : 'partiti associati'}` : 'Nessun partito associato'}</p><dl class="party-facts mb-0">${state.coalitionFields.map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(coalition.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(coalition.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('coalitions.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="coalitions" data-entity-id="${coalition.id}">Cestino</button>` : ''}<button type="button" class="btn btn-sm btn-outline-secondary" data-open-coalition="${coalition.id}">Modifica</button></span></div></article></div>`;
   }).join('');
 
   document.getElementById('emptyCoalitions').classList.toggle('d-none', coalitions.length > 0);
@@ -2534,7 +2534,6 @@ function renderPartyFields(party = null) {
     const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
     const isGoogle = Boolean(party.googleStatuteDocumentId);
     const statusText = isGoogle ? 'Statuto Google collegato' : (hasStatute ? 'Statuto web collegato' : 'Nessuno statuto ancora collegato');
-    html += `<div class="col-12 mt-3"><div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center"><div><strong class="d-block">Statuto del partito</strong><span class="text-secondary small">${escapeHtml(statusText)}</span></div><div class="d-flex gap-2">${hasStatute && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}"><i class="bi ${hasStatute ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button></div></div></div>`;
     html += `<div class="col-12 mt-3"><div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center"><div><strong class="d-block">Statuto del partito</strong><span class="text-secondary small">${escapeHtml(statusText)}</span></div><div class="d-flex gap-2">${hasStatute && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}"><i class="bi ${hasStatute ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button></div></div></div>`;
   }
   fields.innerHTML = html;
@@ -3009,13 +3008,10 @@ async function openPartyStatuteEditor(partyId, changeLink = false) {
   editingPartyId = party.id;
   document.getElementById('partyStatutePartyName').textContent = party.name;
   document.getElementById('partyStatuteSubtitle').textContent = docUrl ? 'Modifica il link dello Statuto (Google Documenti o pagina web esterna).' : 'Inserisci il link dello Statuto (Google Documenti o pagina web esterna).';
-  document.getElementById('partyStatuteSubtitle').textContent = docUrl ? 'Modifica il link dello Statuto (Google Documenti o pagina web esterna).' : 'Inserisci il link dello Statuto (Google Documenti o pagina web esterna).';
   const status = document.getElementById('partyStatuteStatus');
   status.textContent = statusLabel(party.status);
   status.className = `badge ${statusClass(party.status)}`;
   document.getElementById('partyStatuteGoogleUrl').value = docUrl || '';
-  document.getElementById('partyStatuteGoogleTitle').textContent = docUrl ? 'Modifica il link dello statuto' : 'Collega uno statuto';
-  document.getElementById('openPartyStatuteGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   document.getElementById('partyStatuteGoogleTitle').textContent = docUrl ? 'Modifica il link dello statuto' : 'Collega uno statuto';
   document.getElementById('openPartyStatuteGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   const showLinkEditor = () => showEditorScreen('partyStatuteEditor');
@@ -3065,10 +3061,7 @@ async function openCompanyRegulationEditor(companyId, changeLink = false) {
   editingCompanyId = company.id;
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
   document.getElementById('companyRegulationSubtitle').textContent = docUrl ? 'Modifica il link del Regolamento (Google Documenti o pagina web esterna).' : 'Inserisci il link del Regolamento (Google Documenti o pagina web esterna).';
-  document.getElementById('companyRegulationSubtitle').textContent = docUrl ? 'Modifica il link del Regolamento (Google Documenti o pagina web esterna).' : 'Inserisci il link del Regolamento (Google Documenti o pagina web esterna).';
   document.getElementById('companyRegulationGoogleUrl').value = docUrl || '';
-  document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Modifica il link del regolamento' : 'Collega un regolamento';
-  document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Modifica il link del regolamento' : 'Collega un regolamento';
   document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   const showLinkEditor = () => showEditorScreen('companyRegulationEditor');
@@ -3213,83 +3206,40 @@ async function savePartyStatute(event) {
   const rawUrl = document.getElementById('partyStatuteGoogleUrl').value.trim();
   if (!rawUrl) { showToast('Inserisci un link valido per lo statuto.'); return; }
   let url = rawUrl;
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    const docId = extractGoogleDocId(url);
-    url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
+  if (!/^https?:\/\//i.test(url)) {
+    const extractedId = extractGoogleDocId(url);
+    url = extractedId ? `https://docs.google.com/document/d/${encodeURIComponent(extractedId)}/edit` : `https://${url}`;
   }
   try {
     const previousUrl = party.statuteUrl || party.googleUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${party.googleStatuteDocumentId}/edit` : '');
-    const replacing = Boolean(previousUrl);
-    let linked = null;
-    if (remoteMode) {
-      linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'party_statutes', entityId: party.id, url }) });
-    }
+    const linked = remoteMode
+      ? await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'party_statutes', entityId: party.id, url }) })
+      : null;
     const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
-    const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
-    const docName = linked?.name || null;
+    const documentId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
     const finalUrl = linked?.url || url;
-
-    if (party.googleStatuteDocumentId && party.googleStatuteDocumentId !== docId) {
-      const rawUrl = document.getElementById('partyStatuteGoogleUrl').value.trim();
-      if (!rawUrl) { showToast('Inserisci un link valido per lo statuto.'); return; }
-      let url = rawUrl;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        const docId = extractGoogleDocId(url);
-        url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
-      }
-      try {
-        const previousUrl = party.statuteUrl || party.googleUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${party.googleStatuteDocumentId}/edit` : '');
-        const replacing = Boolean(previousUrl);
-        let linked = null;
-        if (remoteMode) {
-          linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'party_statutes', entityId: party.id, url }) });
-        }
-        const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
-        const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
-        const docName = linked?.name || null;
-        const finalUrl = linked?.url || url;
-
-        if (party.googleStatuteDocumentId && party.googleStatuteDocumentId !== docId) {
-          party.googleLatestText = '';
-          party.googleModifiedBy = null;
-        }
-        party.googleStatuteDocumentId = isGoogle ? docId : null;
-        party.googleStatuteName = docName;
-        party.googleDocumentName = docName;
-        party.googleUrl = finalUrl;
-        party.statuteUrl = finalUrl;
-        party.statute = isGoogle ? 'Statuto Google collegato' : 'Statuto esterno collegato';
-        party.googleModifiedTime = linked?.modifiedTime || null;
-        party.googleStatuteDocumentId = isGoogle ? docId : null;
-        party.googleStatuteName = docName;
-        party.googleDocumentName = docName;
-        party.googleUrl = finalUrl;
-        party.statuteUrl = finalUrl;
-        party.statute = isGoogle ? 'Statuto Google collegato' : 'Statuto esterno collegato';
-        party.googleModifiedTime = linked?.modifiedTime || null;
-        party.updatedAt = new Date().toISOString();
-        if (!Array.isArray(party.history)) party.history = [];
-        party.history.push({
-          label: isGoogle ? 'Statuto Google' : 'Statuto',
-          from: previousUrl || 'Nessuno statuto',
-          to: finalUrl,
-          at: new Date().toISOString()
-        });
-        if (!Array.isArray(party.history)) party.history = [];
-        party.history.push({
-          label: isGoogle ? 'Statuto Google' : 'Statuto',
-          from: previousUrl || 'Nessuno statuto',
-          to: finalUrl,
-          at: new Date().toISOString()
-        });
-        writeStorage(STORAGE_KEYS.parties, state.parties);
-        if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('parties'); }
-        closePartyStatuteEditor();
-        renderParties();
-        showToast(replacing ? 'Collegamento dello statuto aggiornato.' : 'Statuto collegato.');
-      } catch (error) { showToast(error.message || 'Impossibile collegare lo statuto.'); }
+    if (party.googleStatuteDocumentId && party.googleStatuteDocumentId !== documentId) {
+      party.googleLatestText = '';
+      party.googleModifiedBy = null;
     }
-  } catch (error) { showToast(error.message || 'Impossibile collegare lo statuto.'); }
+    party.googleStatuteDocumentId = isGoogle ? documentId : null;
+    party.googleStatuteName = linked?.name || null;
+    party.googleDocumentName = linked?.name || null;
+    party.googleUrl = finalUrl;
+    party.statuteUrl = finalUrl;
+    party.statute = isGoogle ? 'Statuto Google collegato' : 'Statuto esterno collegato';
+    party.googleModifiedTime = linked?.modifiedTime || null;
+    party.updatedAt = new Date().toISOString();
+    party.history ||= [];
+    party.history.push({ label: isGoogle ? 'Statuto Google' : 'Statuto', from: previousUrl || 'Nessuno statuto', to: finalUrl, at: party.updatedAt });
+    writeStorage(STORAGE_KEYS.parties, state.parties);
+    if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('parties'); }
+    closePartyStatuteEditor();
+    renderParties();
+    showToast(previousUrl ? 'Collegamento dello statuto aggiornato.' : 'Statuto collegato.');
+  } catch (error) {
+    showToast(error.message || 'Impossibile collegare lo statuto.');
+  }
 }
 
 async function saveParty(event) {
