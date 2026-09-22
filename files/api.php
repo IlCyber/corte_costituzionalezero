@@ -197,6 +197,10 @@ function sanitizeState(array $state): array
     $state['googleDriveFolders'] = [
         'documents' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $candidate) ? $candidate : '',
     ];
+    $candidate = trim((string) ($folders['documents'] ?? $legacyDocumentsFolder));
+    $state['googleDriveFolders'] = [
+        'documents' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $candidate) ? $candidate : '',
+    ];
 
     foreach ($state['documents'] ?? [] as &$document) {
         if (isset($document['body'])) $document['body'] = sanitizeRichHtml((string) $document['body']);
@@ -215,7 +219,17 @@ function sanitizeState(array $state): array
         if (isset($party['statuteUrl']) && !preg_match('~^https?://~i', (string) $party['statuteUrl'])) $party['statuteUrl'] = null;
         if (isset($party['googleUrl']) && !preg_match('~^https?://~i', (string) $party['googleUrl'])) $party['googleUrl'] = null;
     }
+    foreach ($state['parties'] ?? [] as &$party) {
+        if (isset($party['statute'])) $party['statute'] = sanitizeRichHtml((string) $party['statute']);
+        if (isset($party['statuteUrl']) && !preg_match('~^https?://~i', (string) $party['statuteUrl'])) $party['statuteUrl'] = null;
+        if (isset($party['googleUrl']) && !preg_match('~^https?://~i', (string) $party['googleUrl'])) $party['googleUrl'] = null;
+    }
     unset($party);
+    foreach ($state['companies'] ?? [] as &$company) {
+        if (isset($company['regulation'])) $company['regulation'] = sanitizeRichHtml((string) $company['regulation']);
+        if (isset($company['regulationUrl']) && !preg_match('~^https?://~i', (string) $company['regulationUrl'])) $company['regulationUrl'] = null;
+        if (isset($company['googleUrl']) && !preg_match('~^https?://~i', (string) $company['googleUrl'])) $company['googleUrl'] = null;
+    }
     foreach ($state['companies'] ?? [] as &$company) {
         if (isset($company['regulation'])) $company['regulation'] = sanitizeRichHtml((string) $company['regulation']);
         if (isset($company['regulationUrl']) && !preg_match('~^https?://~i', (string) $company['regulationUrl'])) $company['regulationUrl'] = null;
@@ -500,6 +514,13 @@ function capabilitiesForStateMutation(array $before, array $after): array
                 $need($onlyLinkedHistory ? $linkedEdit : $editCapability);
             }
             if ($stateKey === 'parties' && ($old['status'] ?? null) !== ($item['status'] ?? null)) { $need('parties.change_status'); $generalIgnored[] = 'status'; }
+            $hadDocument = !empty($old[$documentField]) || !empty($old['statuteUrl']) || !empty($old['regulationUrl']) || !empty($old['googleUrl']);
+            $hasDocument = !empty($item[$documentField]) || !empty($item['statuteUrl']) || !empty($item['regulationUrl']) || !empty($item['googleUrl']);
+            $documentChanged = $hadDocument && $hasDocument && (
+                ($old[$documentField] ?? '') !== ($item[$documentField] ?? '') ||
+                ($old['statuteUrl'] ?? $old['googleUrl'] ?? '') !== ($item['statuteUrl'] ?? $item['googleUrl'] ?? '') ||
+                ($old['regulationUrl'] ?? $old['googleUrl'] ?? '') !== ($item['regulationUrl'] ?? $item['googleUrl'] ?? '')
+            );
             $hadDocument = !empty($old[$documentField]) || !empty($old['statuteUrl']) || !empty($old['regulationUrl']) || !empty($old['googleUrl']);
             $hasDocument = !empty($item[$documentField]) || !empty($item['statuteUrl']) || !empty($item['regulationUrl']) || !empty($item['googleUrl']);
             $documentChanged = $hadDocument && $hasDocument && (
@@ -838,6 +859,7 @@ function googleConfigured(): bool
 }
 
 /** @return array{documents:string} */
+/** @return array{documents:string} */
 function googleDriveFolders(PDO $pdo): array
 {
     $state = rawSiteState($pdo) ?: [];
@@ -850,6 +872,7 @@ function googleDriveFolders(PDO $pdo): array
 
 function googleFolderForScope(PDO $pdo, string $scope): string
 {
+    return googleDriveFolders($pdo)['documents'] ?? '';
     return googleDriveFolders($pdo)['documents'] ?? '';
 }
 
@@ -1503,7 +1526,14 @@ if ($action === 'google_validate_folders' && $method === 'POST') {
     $pdo = database();
     requireCsrf($pdo);
     requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare la cartella Google Drive.');
+    requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare la cartella Google Drive.');
     $folders = requestBody()['folders'] ?? null;
+    if (!is_array($folders)) respond(['error' => 'Dati cartella Google non validi.'], 422);
+    $folderId = validGoogleId($folders['documents'] ?? null);
+    if ($folderId === '') respond(['error' => 'Inserisci l’ID della cartella Google Drive «Documenti sito».'], 422);
+    $folder = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($folderId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed', 'supportsAllDrives' => 'true']));
+    if (($folder['mimeType'] ?? '') !== 'application/vnd.google-apps.folder' || !empty($folder['trashed'])) respond(['error' => 'L’ID indicato non corrisponde a una cartella Drive accessibile.'], 422);
+    respond(['ok' => true, 'folders' => ['documents' => ['id' => $folderId, 'name' => (string) ($folder['name'] ?? '')]]]);
     if (!is_array($folders)) respond(['error' => 'Dati cartella Google non validi.'], 422);
     $folderId = validGoogleId($folders['documents'] ?? null);
     if ($folderId === '') respond(['error' => 'Inserisci l’ID della cartella Google Drive «Documenti sito».'], 422);
@@ -1522,13 +1552,59 @@ if ($action === 'google_document_link' && $method === 'POST') {
     $scopeConfig = [
         'party_statutes' => ['collection' => 'parties', 'field' => 'googleStatuteDocumentId', 'urlField' => 'statuteUrl', 'link' => 'party_statutes.link', 'change' => 'party_statutes.change_link'],
         'company_regulations' => ['collection' => 'companies', 'field' => 'googleRegulationDocumentId', 'urlField' => 'regulationUrl', 'link' => 'company_regulations.link', 'change' => 'company_regulations.change_link'],
+        'party_statutes' => ['collection' => 'parties', 'field' => 'googleStatuteDocumentId', 'urlField' => 'statuteUrl', 'link' => 'party_statutes.link', 'change' => 'party_statutes.change_link'],
+        'company_regulations' => ['collection' => 'companies', 'field' => 'googleRegulationDocumentId', 'urlField' => 'regulationUrl', 'link' => 'company_regulations.link', 'change' => 'company_regulations.change_link'],
     ][$scope] ?? null;
+    if (!is_array($scopeConfig) || $entityId === '') respond(['error' => 'Tipo di collegamento non valido.'], 422);
     if (!is_array($scopeConfig) || $entityId === '') respond(['error' => 'Tipo di collegamento non valido.'], 422);
     $siteState = rawSiteState($pdo) ?: [];
     $entities = itemsById($siteState[$scopeConfig['collection']] ?? []);
     $entity = $entities[$entityId] ?? null;
     if (!is_array($entity)) respond(['error' => 'Elemento da collegare non trovato.'], 404);
     $currentDocumentId = validGoogleId($entity[$scopeConfig['field']] ?? null);
+    $currentUrl = trim((string) ($entity[$scopeConfig['urlField']] ?? $entity['googleUrl'] ?? ''));
+    $hasCurrent = $currentDocumentId !== '' || $currentUrl !== '';
+    $requiredCapability = $hasCurrent ? $scopeConfig['change'] : $scopeConfig['link'];
+    requireCapability($pdo, $userId, $requiredCapability, $hasCurrent ? 'Non hai il permesso di sostituire questo collegamento.' : 'Non hai il permesso di collegare questo documento.');
+
+    $rawInput = trim((string) ($body['url'] ?? $body['documentId'] ?? ''));
+    if ($rawInput === '') respond(['error' => 'Inserisci un link valido.'], 422);
+
+    $documentId = googleDocumentIdFromInput($rawInput);
+    $isGoogleDoc = $documentId !== '' && (str_contains($rawInput, 'docs.google.com') || !preg_match('~^https?://~i', $rawInput));
+
+    if ($isGoogleDoc && googleConfigured() && googleConnectionExists($pdo, $userId)) {
+        if ($currentDocumentId !== '' && $documentId === $currentDocumentId) respond(['error' => 'Il link inserito coincide con quello già collegato.'], 422);
+        $existingReferences = googleLinkedDocuments($siteState)[$documentId] ?? [];
+        if ($documentId !== $currentDocumentId && !empty($existingReferences)) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
+        $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed,webViewLink,modifiedTime', 'supportsAllDrives' => 'true']));
+        if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documenti valido e accessibile.'], 422);
+        googleWatchDocument($pdo, $userId, $documentId);
+        auditLog($pdo, $hasCurrent ? 'google_document_link_changed' : 'google_document_linked', $hasCurrent ? 'warning' : 'info', $userId, ['document_id' => $documentId, 'previous_document_id' => $currentDocumentId ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
+        respond([
+            'isGoogleDoc' => true,
+            'id' => $documentId,
+            'name' => (string) ($file['name'] ?? ''),
+            'url' => (string) ($file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit')),
+            'modifiedTime' => $file['modifiedTime'] ?? null,
+        ]);
+    } else {
+        $targetUrl = $rawInput;
+        if ($documentId !== '' && !preg_match('~^https?://~i', $targetUrl)) {
+            $targetUrl = 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit';
+        }
+        if (!preg_match('~^https?://~i', $targetUrl) || filter_var($targetUrl, FILTER_VALIDATE_URL) === false) {
+            respond(['error' => 'Inserisci un indirizzo web valido (http:// o https://).'], 422);
+        }
+        auditLog($pdo, $hasCurrent ? 'external_link_changed' : 'external_link_linked', 'info', $userId, ['url' => $targetUrl, 'previous_url' => $currentUrl ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
+        respond([
+            'isGoogleDoc' => false,
+            'id' => null,
+            'name' => null,
+            'url' => $targetUrl,
+            'modifiedTime' => null,
+        ]);
+    }
     $currentUrl = trim((string) ($entity[$scopeConfig['urlField']] ?? $entity['googleUrl'] ?? ''));
     $hasCurrent = $currentDocumentId !== '' || $currentUrl !== '';
     $requiredCapability = $hasCurrent ? $scopeConfig['change'] : $scopeConfig['link'];

@@ -94,11 +94,12 @@
             <li class="nav-item"><a class="nav-link" href="#coalitions" data-view-link="coalitions">Coalizioni</a></li>
             <li class="nav-item"><a class="nav-link" href="#parliament" data-view-link="parliament">Parlamento</a></li>
             <li class="nav-item"><a class="nav-link" href="#templates" data-view-link="templates">Template</a></li>
-            <li class="nav-item"><a class="nav-link" href="#usefulLinks" data-view-link="usefulLinks">Link utili</a></li>
+            <li class="nav-item"><a class="nav-link" href="#usefulLinks" data-view-link="usefulLinks">Link utili</a>
+            </li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
             <li class="nav-item dropdown ms-lg-3" id="googleAccountNavItem">
-              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" id="googleAccountNavButton"
-                type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-google me-1"
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" id="googleAccountNavButton" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-google me-1"
                   aria-hidden="true"></i><span id="googleAccountNavLabel">Google</span></button>
               <div class="dropdown-menu dropdown-menu-end p-3 google-account-menu">
                 <h6 class="mb-1">Account Google Documenti</h6>
@@ -181,8 +182,38 @@
       </section>
 
       <section id="securityLogsView" class="app-view d-none">
-        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4"><div><p class="eyebrow text-secondary mb-2">Controllo accessi</p><h1 class="display-6 fw-bold mb-2">Log di sicurezza</h1><p class="text-secondary mb-0">Consulta gli eventi di accesso, autorizzazione e amministrazione.</p></div><button id="refreshSecurityLogsButton" class="btn btn-outline-primary" type="button">Aggiorna</button></div>
-        <div class="card border-0 shadow-sm"><div class="card-body p-0"><div class="p-4 border-bottom"><div class="input-group search-box"><span class="input-group-text">⌕</span><input id="securityLogSearch" type="search" class="form-control" placeholder="Cerca evento, utente, gravità o IP"></div></div><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Data</th><th>Gravità</th><th>Evento</th><th>Utente</th><th>Dettagli</th></tr></thead><tbody id="securityLogsTableBody"></tbody></table></div><div id="emptySecurityLogs" class="empty-state d-none"><h2 class="h5">Nessun evento trovato</h2></div></div></div>
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-end gap-3 mb-4">
+          <div>
+            <p class="eyebrow text-secondary mb-2">Controllo accessi</p>
+            <h1 class="display-6 fw-bold mb-2">Log di sicurezza</h1>
+            <p class="text-secondary mb-0">Consulta gli eventi di accesso, autorizzazione e amministrazione.</p>
+          </div><button id="refreshSecurityLogsButton" class="btn btn-outline-primary" type="button">Aggiorna</button>
+        </div>
+        <div class="card border-0 shadow-sm">
+          <div class="card-body p-0">
+            <div class="p-4 border-bottom">
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="securityLogSearch"
+                  type="search" class="form-control" placeholder="Cerca evento, utente, gravità o IP"></div>
+            </div>
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th class="ps-4">Data</th>
+                    <th>Gravità</th>
+                    <th>Evento</th>
+                    <th>Utente</th>
+                    <th>Dettagli</th>
+                  </tr>
+                </thead>
+                <tbody id="securityLogsTableBody"></tbody>
+              </table>
+            </div>
+            <div id="emptySecurityLogs" class="empty-state d-none">
+              <h2 class="h5">Nessun evento trovato</h2>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section id="usefulLinksView" class="app-view d-none">
@@ -192,16 +223,33 @@
             <h1 class="display-6 fw-bold mb-2">Link utili</h1>
             <p class="text-secondary mb-0">Raccogli e apri rapidamente i siti e le risorse usati più spesso.</p>
           </div>
-          <button class="btn btn-primary" id="newUsefulLinkButton" type="button" data-bs-toggle="modal" data-bs-target="#usefulLinkModal">+ Nuovo link</button>
+          <button class="btn btn-primary" id="newUsefulLinkButton" type="button" data-bs-toggle="modal"
+            data-bs-target="#usefulLinkModal">+ Nuovo link</button>
         </div>
         <div class="card border-0 shadow-sm">
           <div class="card-body p-0">
             <div class="p-4 border-bottom d-flex flex-column flex-md-row justify-content-between gap-3">
               <h2 class="h5 mb-0">Collegamenti salvati</h2>
-              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="usefulLinkSearch" type="search" class="form-control" placeholder="Cerca per nome o indirizzo"></div>
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="usefulLinkSearch"
+                  type="search" class="form-control" placeholder="Cerca per nome o indirizzo"></div>
             </div>
-            <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Nome</th><th>Indirizzo</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="usefulLinksTableBody"></tbody></table></div>
-            <div id="emptyUsefulLinks" class="empty-state d-none"><div class="display-6">↗</div><h2 class="h5 mt-3">Nessun link salvato</h2><p class="text-secondary mb-0">Aggiungi il primo collegamento utile.</p></div>
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th class="ps-4">Nome</th>
+                    <th>Indirizzo</th>
+                    <th class="text-end pe-4">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="usefulLinksTableBody"></tbody>
+              </table>
+            </div>
+            <div id="emptyUsefulLinks" class="empty-state d-none">
+              <div class="display-6">↗</div>
+              <h2 class="h5 mt-3">Nessun link salvato</h2>
+              <p class="text-secondary mb-0">Aggiungi il primo collegamento utile.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -218,10 +266,27 @@
           <div class="card-body p-0">
             <div class="p-4 border-bottom d-flex flex-column flex-md-row justify-content-between gap-3">
               <h2 class="h5 mb-0">Strumenti disponibili</h2>
-              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="toolSearch" type="search" class="form-control" placeholder="Cerca per nome o descrizione"></div>
+              <div class="input-group search-box"><span class="input-group-text">⌕</span><input id="toolSearch"
+                  type="search" class="form-control" placeholder="Cerca per nome o descrizione"></div>
             </div>
-            <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th class="ps-4">Nome</th><th>Descrizione</th><th class="text-end pe-4">Azioni</th></tr></thead><tbody id="toolsTableBody"></tbody></table></div>
-            <div id="emptyTools" class="empty-state d-none"><div class="display-6"><i class="bi bi-tools" aria-hidden="true"></i></div><h2 class="h5 mt-3">Nessun tool disponibile</h2><p class="text-secondary mb-0">Aggiungi una pagina HTML nella cartella tools e la relativa riga in tools/app_tools.js.</p></div>
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th class="ps-4">Nome</th>
+                    <th>Descrizione</th>
+                    <th class="text-end pe-4">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="toolsTableBody"></tbody>
+              </table>
+            </div>
+            <div id="emptyTools" class="empty-state d-none">
+              <div class="display-6"><i class="bi bi-tools" aria-hidden="true"></i></div>
+              <h2 class="h5 mt-3">Nessun tool disponibile</h2>
+              <p class="text-secondary mb-0">Aggiungi una pagina HTML nella cartella tools e la relativa riga in
+                tools/app_tools.js.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -366,17 +431,33 @@
         <div class="mb-4">
           <p class="eyebrow text-secondary mb-2">Configurazione archivio</p>
           <h1 class="display-6 fw-bold mb-2">Impostazioni</h1>
-          <p class="text-secondary mb-0">Gestisci cartelle Google Drive, categorie, numerazione e informazioni richieste dagli archivi.</p>
+          <p class="text-secondary mb-0">Gestisci cartelle Google Drive, categorie, numerazione e informazioni richieste
+            dagli archivi.</p>
         </div>
         <div class="row g-4">
           <div class="col-12 col-xl-7">
             <div class="card border-0 shadow-sm mb-4 d-none" id="googleDriveFoldersCard">
               <div class="card-body p-4">
                 <h2 class="h5 mb-1">Cartella Google Drive</h2>
-                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
+                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in
+                  cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
+                <h2 class="h5 mb-1">Cartella Google Drive</h2>
+                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in
+                  cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
                 <form id="googleDriveFoldersForm" class="row g-3">
-                  <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
-                  <div class="col-12"><div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div><button class="btn btn-primary" type="submit">Verifica e salva cartella</button></div>
+                  <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti
+                      sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required
+                      autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
+                  <div class="col-12">
+                    <div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il
+                      salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div>
+                    <button class="btn btn-primary" type="submit">Verifica e salva cartella</button>
+                  </div>
+                  <div class="col-12">
+                    <div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il
+                      salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div>
+                    <button class="btn btn-primary" type="submit">Verifica e salva cartella</button>
+                  </div>
                 </form>
               </div>
             </div>
@@ -551,373 +632,442 @@
   </div>
   <div class="modal fade" id="partyModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <form id="partyForm">
-          <div class="modal-header">
-            <div>
-              <p class="eyebrow text-secondary mb-1">Archivio politico</p>
-              <h2 class="modal-title h4">Nuovo partito</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row g-4 align-items-stretch">
-              <div class="col-12 col-lg-7" id="partyFormColumn">
-                <div class="row g-3">
-                  <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
-                      id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div>
-                  <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select id="partyStatus"
-                      class="form-select" required>
-                      <option value="attivo">Attivo</option>
-                      <option value="eliminato">Eliminato</option>
-                      <option value="confluito">Confluito</option>
-                      <option value="cancellato">Cancellato</option>
-                    </select></div>
-                  <div class="col-12">
-                    <h3 class="h6 mb-1">Informazioni minime</h3>
-                    <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
-                  </div>
-                  <div id="partyFields" class="row g-3"></div>
-                </div>
-              </div>
-              <div class="col-12 col-lg-5" id="partyHistoryPanel">
-                <div class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
-                  <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
-                    <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
-                    <button type="button" id="clearPartyHistoryButton" class="btn btn-sm btn-outline-danger d-none" title="Elimina intera cronologia di questo partito">
-                      <i class="bi bi-trash3 me-1"></i>Svuota cronologia
-                    </button>
-                  </div>
-                  <div id="partyHistory" class="history-list flex-grow-1"></div>
-                  <div id="partyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
-                    Nessuna modifica registrata.
-                  </div>
-                </div>
-              </div>
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form id="partyForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Archivio politico</p>
+                <h2 class="modal-title h4">Nuovo partito</h2>
+              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
             </div>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              partito</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="modal fade" id="coalitionModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <form id="coalitionForm">
-          <div class="modal-header">
-            <div>
-              <p class="eyebrow text-secondary mb-1">Alleanze politiche</p>
-              <h2 class="modal-title h4">Nuova coalizione</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row g-4 align-items-stretch">
-              <div class="col-12 col-lg-7" id="coalitionFormColumn">
-                <div class="row g-3">
-                  <div class="col-md-8"><label for="coalitionName" class="form-label">Nome della coalizione</label><input
-                      id="coalitionName" class="form-control" required placeholder="Es. Centro-sinistra"></div>
-                  <div class="col-md-4"><label for="coalitionStatus" class="form-label">Status</label><select
-                      id="coalitionStatus" class="form-select" required>
-                      <option value="attiva">Attiva</option>
-                      <option value="sciolta">Sciolta</option>
-                    </select></div>
-                  <div class="col-12">
-                    <h3 class="h6 mb-1">Informazioni minime</h3>
-                    <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
-                  </div>
-                  <div id="coalitionFields" class="row g-3"></div>
-                  <div class="col-12 mt-4">
-                    <h3 class="h6 mb-1">Partiti membri</h3>
-                    <p class="text-secondary small mb-2">Seleziona i partiti che fanno parte di questa coalizione.</p>
-                    <div id="coalitionPartiesList" class="p-3 border rounded bg-light"></div>
+            <div class="modal-body">
+              <div class="row g-4 align-items-stretch">
+                <div class="col-12 col-lg-7" id="partyFormColumn">
+                  <div class="row g-3">
+                    <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
+                        id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div>
+                    <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select
+                        id="partyStatus" class="form-select" required>
+                        <option value="attivo">Attivo</option>
+                        <option value="eliminato">Eliminato</option>
+                        <option value="confluito">Confluito</option>
+                        <option value="cancellato">Cancellato</option>
+                      </select></div>
+                    <div class="col-12">
+                      <h3 class="h6 mb-1">Informazioni minime</h3>
+                      <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+                    </div>
+                    <div id="partyFields" class="row g-3"></div>
                   </div>
                 </div>
-              </div>
-              <div class="col-12 col-lg-5" id="coalitionHistoryPanel">
-                <div class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
-                  <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
-                    <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
-                    <button type="button" id="clearCoalitionHistoryButton" class="btn btn-sm btn-outline-danger d-none" title="Elimina intera cronologia di questa coalizione">
-                      <i class="bi bi-trash3 me-1"></i>Svuota cronologia
-                    </button>
-                  </div>
-                  <div id="coalitionHistory" class="history-list flex-grow-1"></div>
-                  <div id="coalitionHistoryEmpty" class="text-secondary small text-center py-4 d-none">
-                    Nessuna modifica registrata.
+                <div class="col-12 col-lg-5" id="partyHistoryPanel">
+                  <div
+                    class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                      <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
+                      <button type="button" id="clearPartyHistoryButton" class="btn btn-sm btn-outline-danger d-none"
+                        title="Elimina intera cronologia di questo partito">
+                        <i class="bi bi-trash3 me-1"></i>Svuota cronologia
+                      </button>
+                    </div>
+                    <div id="partyHistory" class="history-list flex-grow-1"></div>
+                    <div id="partyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
+                      Nessuna modifica registrata.
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              coalizione</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="editor-page d-none" id="partyStatuteEditor">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <div>
-            <p class="eyebrow text-secondary mb-1">Documento del partito</p>
-            <h2 class="modal-title h4">Statuto</h2>
-            <p class="text-secondary small mb-0" id="partyStatuteSubtitle"></p>
-          </div><button type="button" class="btn-close" id="closePartyStatuteEditor" aria-label="Chiudi"></button>
-        </div>
-        <form id="partyStatuteForm">
-          <div class="modal-body">
-            <div class="row g-3">
-              <aside class="party-statute-sidebar">
-                <div><span class="form-label d-block">Partito</span><strong id="partyStatutePartyName"></strong></div>
-                <div><span class="form-label d-block">Status</span><span id="partyStatuteStatus" class="badge"></span>
-                </div>
-                <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
-              </aside>
-              <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello Statuto</label>
-                <div class="google-document-editor-panel" id="partyStatuteGooglePanel">
-                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
-                  <div class="google-document-editor-copy flex-grow-1"><strong id="partyStatuteGoogleTitle">Collega uno statuto</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input type="url" id="partyStatuteGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/statuto"></div>
-                  <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Salva e collega</button>
-                </div>
-              </section>
-            </div>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              id="cancelPartyStatuteEditor">Chiudi</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="modal fade" id="companyModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <form id="companyForm">
-          <div class="modal-header">
-            <div>
-              <p class="eyebrow text-secondary mb-1">Archivio imprese</p>
-              <h2 class="modal-title h4">Nuova azienda</h2>
-            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-          </div>
-          <div class="modal-body">
-            <div class="row g-4 align-items-stretch">
-              <div class="col-12 col-lg-7" id="companyFormColumn">
-                <div class="row g-3">
-                  <div class="col-12"><label for="companyName" class="form-label">Nome dell’azienda</label><input
-                      id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A."></div>
-                  <div class="col-12">
-                    <div id="companyModalRegulationContainer" class="d-none"></div>
-                    <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc o una pagina web esterna per il regolamento.</p>
-                  </div>
-                </div>
-              </div>
-              <div class="col-12 col-lg-5" id="companyHistoryPanel">
-                <div class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
-                  <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
-                    <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
-                    <button type="button" id="clearCompanyHistoryButton" class="btn btn-sm btn-outline-danger d-none" title="Elimina intera cronologia di questa azienda">
-                      <i class="bi bi-trash3 me-1"></i>Svuota cronologia
-                    </button>
-                  </div>
-                  <div id="companyHistory" class="history-list flex-grow-1"></div>
-                  <div id="companyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
-                    Nessuna modifica registrata.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
-              azienda</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="editor-page d-none" id="companyRegulationEditor">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <div>
-            <p class="eyebrow text-secondary mb-1">Documento dell’azienda</p>
-            <h2 class="modal-title h4">Regolamento</h2>
-            <p class="text-secondary small mb-0" id="companyRegulationSubtitle"></p>
-          </div><button type="button" class="btn-close" id="closeCompanyRegulationEditor" aria-label="Chiudi"></button>
-        </div>
-        <form id="companyRegulationForm">
-          <div class="modal-body">
-            <div class="row g-3">
-              <aside class="party-statute-sidebar">
-                <div><span class="form-label d-block">Azienda</span><strong id="companyRegulationCompanyName"></strong>
-                </div>
-                <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
-              </aside>
-              <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link del Regolamento</label>
-                <div class="google-document-editor-panel" id="companyRegulationGooglePanel">
-                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
-                  <div class="google-document-editor-copy flex-grow-1"><strong id="companyRegulationGoogleTitle">Collega un regolamento</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/regolamento"></div>
-                  <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Salva e collega</button>
-                </div>
-              </section>
-            </div>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-              id="cancelCompanyRegulationEditor">Chiudi</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="modal fade" id="statuteHistoryModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <div>
-            <p class="eyebrow text-secondary mb-1">Confronto storico</p>
-            <h2 class="modal-title h4" id="statuteHistoryTitle">Statuto</h2>
-            <p class="text-secondary small mb-0" id="statuteHistoryDate"></p>
-          </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-        </div>
-        <div class="modal-body">
-          <div class="diff-legend mb-3"><span><mark class="diff-removed">Testo rimosso</mark></span><span><mark
-                class="diff-added">Testo aggiunto</mark></span></div>
-          <div class="row g-3">
-            <div class="col-12 col-lg-6">
-              <h3 class="h6">Versione precedente</h3>
-              <div id="statutePreviousVersion" class="statute-version"></div>
-            </div>
-            <div class="col-12 col-lg-6">
-              <h3 class="h6">Versione successiva</h3>
-              <div id="statuteNextVersion" class="statute-version"></div>
-            </div>
-          </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+                partito</button></div>
+          </form>
         </div>
       </div>
     </div>
-  </div>
-  <div class="modal fade" id="parliamentModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <form id="parliamentForm">
-          <div class="modal-header">
-            <div>
-              <p class="eyebrow text-secondary mb-1">Archivio istituzionale</p>
-              <h2 class="modal-title h4">Nuovo mandato</h2>
+    <div class="modal fade" id="coalitionModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form id="coalitionForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Alleanze politiche</p>
+                <h2 class="modal-title h4">Nuova coalizione</h2>
+              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
             </div>
-          </div>
-          <div class="modal-body">
-            <div class="row g-3">
-              <div class="col-md-4"><label for="legislationNumber" class="form-label">Numero legislazione</label><input
-                  id="legislationNumber" class="form-control" required placeholder="Es. XVIII"></div>
-              <div class="col-md-4"><label for="mandateStart" class="form-label">Data inizio</label><input
-                  id="mandateStart" type="date" class="form-control" required></div>
-              <div class="col-md-4"><label for="mandateEnd" class="form-label">Data fine</label><input id="mandateEnd"
-                  type="date" class="form-control" required></div>
-              <div class="col-12"><label for="mandateStatus" class="form-label">Tag mandato</label><select
-                  id="mandateStatus" class="form-select" required>
-                  <option value="in corso">In corso</option>
-                  <option value="concluso">Concluso</option>
-                </select></div>
-              <div class="col-12">
-                <hr>
-                <div class="d-flex justify-content-between align-items-center">
-                  <div>
-                    <h3 class="h6 mb-1">Parlamentari</h3>
-                    <p class="text-secondary small mb-0">Titolari e sostituti restano nello storico anche dopo le
-                      dimissioni.</p>
-                  </div><button type="button" class="btn btn-sm btn-primary" id="addMemberButton">+ Nuova
-                    nomina</button>
+            <div class="modal-body">
+              <div class="row g-4 align-items-stretch">
+                <div class="col-12 col-lg-7" id="coalitionFormColumn">
+                  <div class="row g-3">
+                    <div class="col-md-8"><label for="coalitionName" class="form-label">Nome della
+                        coalizione</label><input id="coalitionName" class="form-control" required
+                        placeholder="Es. Centro-sinistra"></div>
+                    <div class="col-md-4"><label for="coalitionStatus" class="form-label">Status</label><select
+                        id="coalitionStatus" class="form-select" required>
+                        <option value="attiva">Attiva</option>
+                        <option value="sciolta">Sciolta</option>
+                      </select></div>
+                    <div class="col-12">
+                      <h3 class="h6 mb-1">Informazioni minime</h3>
+                      <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+                    </div>
+                    <div id="coalitionFields" class="row g-3"></div>
+                    <div class="col-12 mt-4">
+                      <h3 class="h6 mb-1">Partiti membri</h3>
+                      <p class="text-secondary small mb-2">Seleziona i partiti che fanno parte di questa coalizione.</p>
+                      <div id="coalitionPartiesList" class="p-3 border rounded bg-light"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-5" id="coalitionHistoryPanel">
+                  <div
+                    class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                      <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
+                      <button type="button" id="clearCoalitionHistoryButton"
+                        class="btn btn-sm btn-outline-danger d-none"
+                        title="Elimina intera cronologia di questa coalizione">
+                        <i class="bi bi-trash3 me-1"></i>Svuota cronologia
+                      </button>
+                    </div>
+                    <div id="coalitionHistory" class="history-list flex-grow-1"></div>
+                    <div id="coalitionHistoryEmpty" class="text-secondary small text-center py-4 d-none">
+                      Nessuna modifica registrata.
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="col-12">
-                <h4 class="h6">Titolari</h4>
-                <div id="titularList" class="parliament-member-list"></div>
-              </div>
-              <div class="col-12">
-                <h4 class="h6">Sostituti</h4>
-                <div id="substituteList" class="parliament-member-list"></div>
-              </div>
             </div>
-          </div>
-          <div class="modal-footer justify-content-end">
-            <button type="button" class="btn btn-outline-secondary" id="cancelParliamentEditor">Annulla</button>
-            <button class="btn btn-primary" type="submit">Salva mandato</button>
-          </div>
-        </form>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+                coalizione</button></div>
+          </form>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="modal fade" id="memberModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <form id="memberForm">
+    <div class="editor-page d-none" id="partyStatuteEditor">
+      <div class="modal-dialog">
+        <div class="modal-content">
           <div class="modal-header">
             <div>
-              <p class="eyebrow text-secondary mb-1">Nomina parlamentare</p>
-              <h2 class="modal-title h4">Nuovo parlamentare</h2>
+              <p class="eyebrow text-secondary mb-1">Documento del partito</p>
+              <h2 class="modal-title h4">Statuto</h2>
+              <p class="text-secondary small mb-0" id="partyStatuteSubtitle"></p>
+            </div><button type="button" class="btn-close" id="closePartyStatuteEditor" aria-label="Chiudi"></button>
+          </div>
+          <form id="partyStatuteForm">
+            <div class="modal-body">
+              <div class="row g-3">
+                <aside class="party-statute-sidebar">
+                  <div><span class="form-label d-block">Partito</span><strong id="partyStatutePartyName"></strong></div>
+                  <div><span class="form-label d-block">Status</span><span id="partyStatuteStatus" class="badge"></span>
+                  </div>
+                  <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
+                </aside>
+                <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello
+                    Statuto</label>
+                  <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello
+                      Statuto</label>
+                    <div class="google-document-editor-panel" id="partyStatuteGooglePanel">
+                      <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
+                      <div class="google-document-editor-copy flex-grow-1"><strong id="partyStatuteGoogleTitle">Collega
+                          uno statuto</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una
+                          pagina web o link esterno.</span><input type="url" id="partyStatuteGoogleUrl"
+                          class="form-control mt-2" required
+                          placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/statuto"></div>
+                      <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i
+                          class="bi bi-link-45deg me-1"></i>Salva e collega</button>
+                      <div class="google-document-editor-copy flex-grow-1"><strong id="partyStatuteGoogleTitle">Collega
+                          uno statuto</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una
+                          pagina web o link esterno.</span><input type="url" id="partyStatuteGoogleUrl"
+                          class="form-control mt-2" required
+                          placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/statuto"></div>
+                      <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i
+                          class="bi bi-link-45deg me-1"></i>Salva e collega</button>
+                    </div>
+                  </section>
+              </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                id="cancelPartyStatuteEditor">Chiudi</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="modal fade" id="companyModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form id="companyForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Archivio imprese</p>
+                <h2 class="modal-title h4">Nuova azienda</h2>
+              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="modal-body">
+              <div class="row g-4 align-items-stretch">
+                <div class="col-12 col-lg-7" id="companyFormColumn">
+                  <div class="row g-3">
+                    <div class="col-12"><label for="companyName" class="form-label">Nome dell’azienda</label><input
+                        id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A."></div>
+                    <div class="col-12">
+                      <div id="companyModalRegulationContainer" class="d-none"></div>
+                      <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc o una pagina web
+                        esterna per il regolamento.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-lg-5" id="companyHistoryPanel">
+                  <div
+                    class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                      <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
+                      <button type="button" id="clearCompanyHistoryButton" class="btn btn-sm btn-outline-danger d-none"
+                        title="Elimina intera cronologia di questa azienda">
+                        <i class="bi bi-trash3 me-1"></i>Svuota cronologia
+                      </button>
+                    </div>
+                    <div id="companyHistory" class="history-list flex-grow-1"></div>
+                    <div id="companyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
+                      Nessuna modifica registrata.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+                azienda</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="editor-page d-none" id="companyRegulationEditor">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Documento dell’azienda</p>
+              <h2 class="modal-title h4">Regolamento</h2>
+              <p class="text-secondary small mb-0" id="companyRegulationSubtitle"></p>
+            </div><button type="button" class="btn-close" id="closeCompanyRegulationEditor"
+              aria-label="Chiudi"></button>
+          </div>
+          <form id="companyRegulationForm">
+            <div class="modal-body">
+              <div class="row g-3">
+                <aside class="party-statute-sidebar">
+                  <div><span class="form-label d-block">Azienda</span><strong
+                      id="companyRegulationCompanyName"></strong>
+                  </div>
+                  <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
+                </aside>
+                <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link
+                    del Regolamento</label>
+                  <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link
+                      del Regolamento</label>
+                    <div class="google-document-editor-panel" id="companyRegulationGooglePanel">
+                      <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
+                      <div class="google-document-editor-copy flex-grow-1"><strong
+                          id="companyRegulationGoogleTitle">Collega un regolamento</strong><span>Puoi inserire un link
+                          di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input
+                          type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required
+                          placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/regolamento">
+                      </div>
+                      <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i
+                          class="bi bi-link-45deg me-1"></i>Salva e collega</button>
+                      <div class="google-document-editor-copy flex-grow-1"><strong
+                          id="companyRegulationGoogleTitle">Collega un regolamento</strong><span>Puoi inserire un link
+                          di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input
+                          type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required
+                          placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/regolamento">
+                      </div>
+                      <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i
+                          class="bi bi-link-45deg me-1"></i>Salva e collega</button>
+                    </div>
+                  </section>
+              </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                id="cancelCompanyRegulationEditor">Chiudi</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="modal fade" id="statuteHistoryModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Confronto storico</p>
+              <h2 class="modal-title h4" id="statuteHistoryTitle">Statuto</h2>
+              <p class="text-secondary small mb-0" id="statuteHistoryDate"></p>
             </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
           </div>
           <div class="modal-body">
+            <div class="diff-legend mb-3"><span><mark class="diff-removed">Testo rimosso</mark></span><span><mark
+                  class="diff-added">Testo aggiunto</mark></span></div>
             <div class="row g-3">
-              <div class="col-md-7"><label for="memberName" class="form-label">Nome e cognome</label><input
-                  id="memberName" class="form-control" required></div>
-              <div class="col-md-5"><label for="memberRole" class="form-label">Ruolo</label><select id="memberRole"
-                  class="form-select" required>
-                  <option value="titolare">Titolare</option>
-                  <option value="sostituto">Sostituto</option>
-                </select></div>
-              <div class="col-12"><label for="memberReplaces" class="form-label">Subentra a</label><select id="memberReplaces" class="form-select"><option value="">Nuova nomina</option></select><div class="form-text">Indica il membro dimesso a cui subentra questa nomina.</div></div>
-              <div class="col-md-6"><label for="oathDate" class="form-label">Data di giuramento</label><input
-                  id="oathDate" type="date" class="form-control" required></div>
-              <div class="col-md-6"><label for="resignationDate" class="form-label">Data dimissioni</label><input
-                  id="resignationDate" type="date" class="form-control"></div>
-              <div class="col-md-6"><label for="memberParty" class="form-label">Partito di appartenenza</label><select
-                  id="memberParty" class="form-select"><option value="">Nessun partito</option></select></div>
-              <div class="col-md-6"><label for="memberCoalition" class="form-label">Coalizione di
-                  appartenenza</label><select id="memberCoalition" class="form-select"><option value="">Nessuna coalizione</option></select></div>
-              <div class="col-12"><label for="memberAnnotations" class="form-label">Annotazioni</label><textarea
-                  id="memberAnnotations" class="form-control" rows="3"
-                  placeholder="Es. Presenze, deleghe, note di controllo..."></textarea></div>
-              <div id="memberExtraFields" class="row g-3"></div>
-              <div class="col-12">
-                <div class="form-text">La dimissione si registra con l’azione dedicata nella scheda del mandato.</div>
+              <div class="col-12 col-lg-6">
+                <h3 class="h6">Versione precedente</h3>
+                <div id="statutePreviousVersion" class="statute-version"></div>
+              </div>
+              <div class="col-12 col-lg-6">
+                <h3 class="h6">Versione successiva</h3>
+                <div id="statuteNextVersion" class="statute-version"></div>
               </div>
             </div>
           </div>
-          <div class="modal-footer justify-content-between">
-            <button type="button" class="btn btn-outline-primary d-none" id="undoResignationButton">
-              Annulla dimissioni
-            </button>
-            <div class="d-flex gap-2 ms-auto">
-              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button>
-              <button class="btn btn-primary" type="submit">Salva nomina</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal fade" id="parliamentModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form id="parliamentForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Archivio istituzionale</p>
+                <h2 class="modal-title h4">Nuovo mandato</h2>
+              </div>
             </div>
-          </div>
-        </form>
+            <div class="modal-body">
+              <div class="row g-3">
+                <div class="col-md-4"><label for="legislationNumber" class="form-label">Numero
+                    legislazione</label><input id="legislationNumber" class="form-control" required
+                    placeholder="Es. XVIII"></div>
+                <div class="col-md-4"><label for="mandateStart" class="form-label">Data inizio</label><input
+                    id="mandateStart" type="date" class="form-control" required></div>
+                <div class="col-md-4"><label for="mandateEnd" class="form-label">Data fine</label><input id="mandateEnd"
+                    type="date" class="form-control" required></div>
+                <div class="col-12"><label for="mandateStatus" class="form-label">Tag mandato</label><select
+                    id="mandateStatus" class="form-select" required>
+                    <option value="in corso">In corso</option>
+                    <option value="concluso">Concluso</option>
+                  </select></div>
+                <div class="col-12">
+                  <hr>
+                  <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                      <h3 class="h6 mb-1">Parlamentari</h3>
+                      <p class="text-secondary small mb-0">Titolari e sostituti restano nello storico anche dopo le
+                        dimissioni.</p>
+                    </div><button type="button" class="btn btn-sm btn-primary" id="addMemberButton">+ Nuova
+                      nomina</button>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <h4 class="h6">Titolari</h4>
+                  <div id="titularList" class="parliament-member-list"></div>
+                </div>
+                <div class="col-12">
+                  <h4 class="h6">Sostituti</h4>
+                  <div id="substituteList" class="parliament-member-list"></div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer justify-content-end">
+              <button type="button" class="btn btn-outline-secondary" id="cancelParliamentEditor">Annulla</button>
+              <button class="btn btn-primary" type="submit">Salva mandato</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="modal fade" id="usefulLinkModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="usefulLinkForm">
-      <div class="modal-header"><div><p class="eyebrow text-secondary mb-1">Link utili</p><h2 class="modal-title h4">Nuovo link</h2></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button></div>
-      <div class="modal-body vstack gap-3">
-        <div><label for="usefulLinkName" class="form-label">Nome</label><input id="usefulLinkName" class="form-control" maxlength="160" required></div>
-        <div><label for="usefulLinkUrl" class="form-label">Link</label><input id="usefulLinkUrl" class="form-control" type="url" maxlength="2048" placeholder="https://…" required><div class="form-text">Sono accettati indirizzi HTTP e HTTPS.</div></div>
+    <div class="modal fade" id="memberModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <form id="memberForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Nomina parlamentare</p>
+                <h2 class="modal-title h4">Nuovo parlamentare</h2>
+              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="modal-body">
+              <div class="row g-3">
+                <div class="col-md-7"><label for="memberName" class="form-label">Nome e cognome</label><input
+                    id="memberName" class="form-control" required></div>
+                <div class="col-md-5"><label for="memberRole" class="form-label">Ruolo</label><select id="memberRole"
+                    class="form-select" required>
+                    <option value="titolare">Titolare</option>
+                    <option value="sostituto">Sostituto</option>
+                  </select></div>
+                <div class="col-12"><label for="memberReplaces" class="form-label">Subentra a</label><select
+                    id="memberReplaces" class="form-select">
+                    <option value="">Nuova nomina</option>
+                  </select>
+                  <div class="form-text">Indica il membro dimesso a cui subentra questa nomina.</div>
+                </div>
+                <div class="col-md-6"><label for="oathDate" class="form-label">Data di giuramento</label><input
+                    id="oathDate" type="date" class="form-control" required></div>
+                <div class="col-md-6"><label for="resignationDate" class="form-label">Data dimissioni</label><input
+                    id="resignationDate" type="date" class="form-control"></div>
+                <div class="col-md-6"><label for="memberParty" class="form-label">Partito di appartenenza</label><select
+                    id="memberParty" class="form-select">
+                    <option value="">Nessun partito</option>
+                  </select></div>
+                <div class="col-md-6"><label for="memberCoalition" class="form-label">Coalizione di
+                    appartenenza</label><select id="memberCoalition" class="form-select">
+                    <option value="">Nessuna coalizione</option>
+                  </select></div>
+                <div class="col-12"><label for="memberAnnotations" class="form-label">Annotazioni</label><textarea
+                    id="memberAnnotations" class="form-control" rows="3"
+                    placeholder="Es. Presenze, deleghe, note di controllo..."></textarea></div>
+                <div id="memberExtraFields" class="row g-3"></div>
+                <div class="col-12">
+                  <div class="form-text">La dimissione si registra con l’azione dedicata nella scheda del mandato.</div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+              <button type="button" class="btn btn-outline-primary d-none" id="undoResignationButton">
+                Annulla dimissioni
+              </button>
+              <div class="d-flex gap-2 ms-auto">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button>
+                <button class="btn btn-primary" type="submit">Salva nomina</button>
+              </div>
+            </div>
+          </form>
+        </div>
       </div>
-      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva link</button></div>
-    </form></div></div>
-  </div>
-  <div class="toast-container position-fixed bottom-0 end-0 p-3">
-    <div id="appToast" class="toast" role="status">
-      <div class="toast-body"></div>
     </div>
-  </div>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
-  <script src="app-loader.php"></script>
-  <script src="tools/app-tools-loader.php"></script>
+    <div class="modal fade" id="usefulLinkModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <form id="usefulLinkForm">
+            <div class="modal-header">
+              <div>
+                <p class="eyebrow text-secondary mb-1">Link utili</p>
+                <h2 class="modal-title h4">Nuovo link</h2>
+              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+            <div class="modal-body vstack gap-3">
+              <div><label for="usefulLinkName" class="form-label">Nome</label><input id="usefulLinkName"
+                  class="form-control" maxlength="160" required></div>
+              <div><label for="usefulLinkUrl" class="form-label">Link</label><input id="usefulLinkUrl"
+                  class="form-control" type="url" maxlength="2048" placeholder="https://…" required>
+                <div class="form-text">Sono accettati indirizzi HTTP e HTTPS.</div>
+              </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+                data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+                link</button></div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+      <div id="appToast" class="toast" role="status">
+        <div class="toast-body"></div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
+    <script src="app-loader.php"></script>
+    <script src="tools/app-tools-loader.php"></script>
 </body>
 
 </html>

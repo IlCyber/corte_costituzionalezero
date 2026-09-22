@@ -477,6 +477,7 @@ img {
 }
 
 @media (min-width: 1400px) {
+
   #partyModal .modal-dialog,
   #coalitionModal .modal-dialog,
   #companyModal .modal-dialog,
@@ -1920,9 +1921,9 @@ img {
     flex-wrap: wrap;
   }
 
-  .party-card .card-footer > span:last-child,
-  .template-card .card-footer > span:last-child,
-  .parliament-card .card-footer > span:last-child {
+  .party-card .card-footer>span:last-child,
+  .template-card .card-footer>span:last-child,
+  .parliament-card .card-footer>span:last-child {
     flex-wrap: wrap;
     justify-content: flex-end;
   }
@@ -1933,7 +1934,7 @@ img {
     font-size: .95rem;
   }
 
-  #appView > .container-fluid {
+  #appView>.container-fluid {
     padding-top: 1.25rem !important;
     padding-bottom: 2rem !important;
   }
@@ -1947,11 +1948,11 @@ img {
     min-height: 2.75rem;
   }
 
-  .app-view > .d-flex:first-child {
+  .app-view>.d-flex:first-child {
     align-items: stretch !important;
   }
 
-  .app-view > .d-flex:first-child > .btn,
+  .app-view>.d-flex:first-child>.btn,
   .archive-search-row .search-box,
   .search-box {
     width: 100%;
@@ -1976,12 +1977,12 @@ img {
     flex-direction: column;
   }
 
-  .party-card .card-footer > span,
-  .coalition-card .card-footer > span,
-  .company-card .card-footer > span,
-  .template-card .card-footer > span,
-  .parliament-card .card-footer > span,
-  .odg-card .card-footer > span {
+  .party-card .card-footer>span,
+  .coalition-card .card-footer>span,
+  .company-card .card-footer>span,
+  .template-card .card-footer>span,
+  .parliament-card .card-footer>span,
+  .odg-card .card-footer>span {
     width: 100%;
     flex-wrap: wrap;
   }
@@ -2009,7 +2010,7 @@ img {
     gap: .75rem;
   }
 
-  .parliament-member > .d-flex {
+  .parliament-member>.d-flex {
     flex-wrap: wrap;
   }
 
