@@ -83,7 +83,7 @@ const state = {
   categories: readStorage(STORAGE_KEYS.categories, Object.keys(defaultCounters).map(name => ({ name }))),
   pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
   numberPadding: readStorage(STORAGE_KEYS.numberPadding, DEFAULT_NUMBER_PADDING),
-  googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '', statutes: '', regulations: '' }),
+  googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '' }),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
   coalitions: readStorage(STORAGE_KEYS.coalitions, []),
@@ -365,9 +365,8 @@ function extractGoogleDocId(urlOrId) {
   return '';
 }
 function openGoogleDocument(documentIdOrUrl, capability = 'documents.open_google') {
-  if (!capable(capability)) { showToast('Non hai il permesso di aprire questo documento Google.'); return; }
-  if (!remoteMode || !googleConnection.connected) { showToast('Collega un account Google dalle impostazioni prima di aprire documenti.'); return; }
-  if (!documentIdOrUrl) { showToast('Il documento non è ancora collegato a Google Documenti.'); return; }
+  if (!capable(capability)) { showToast('Non hai il permesso di aprire questo documento.'); return; }
+  if (!documentIdOrUrl) { showToast('Nessun documento o indirizzo collegato.'); return; }
   let url = String(documentIdOrUrl);
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     url = `https://docs.google.com/document/d/${encodeURIComponent(documentIdOrUrl)}/edit`;
@@ -472,7 +471,7 @@ function applyRemoteState(remoteState) {
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
   state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
   state.pageMargins = normalizePageMargins(state.pageMargins);
-  state.googleDriveFolders = { documents: '', statutes: '', regulations: '', ...(state.googleDriveFolders || {}) };
+  state.googleDriveFolders = { documents: '', ...(state.googleDriveFolders || {}) };
   normalizeCounters();
   normalizeStoredNumbers();
   state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
@@ -670,8 +669,8 @@ function formCapability(form) {
     memberForm: editingMemberId ? ['parliament.members.edit', 'parliament.members.change_role', 'parliament.members.change_resignation_date', 'parliament.members.undo_resignation'] : 'parliament.members.create',
     usefulLinkForm: `useful_links.${editingUsefulLinkId ? 'edit' : 'create'}`,
     interpretationForm: `interpretations.${window.editingInterpretationId ? 'edit' : 'create'}`,
-    partyStatuteForm: state.parties.find(item => item.id === editingPartyId)?.googleStatuteDocumentId ? 'party_statutes.change_link' : 'party_statutes.link',
-    companyRegulationForm: state.companies.find(item => item.id === editingCompanyId)?.googleRegulationDocumentId ? 'company_regulations.change_link' : 'company_regulations.link',
+    partyStatuteForm: (state.parties.find(item => item.id === editingPartyId)?.googleStatuteDocumentId || state.parties.find(item => item.id === editingPartyId)?.statuteUrl || state.parties.find(item => item.id === editingPartyId)?.googleUrl) ? 'party_statutes.change_link' : 'party_statutes.link',
+    companyRegulationForm: (state.companies.find(item => item.id === editingCompanyId)?.googleRegulationDocumentId || state.companies.find(item => item.id === editingCompanyId)?.regulationUrl || state.companies.find(item => item.id === editingCompanyId)?.googleUrl) ? 'company_regulations.change_link' : 'company_regulations.link',
     googleDriveFoldersForm: 'settings.google_folders.edit',
     categoryForm: 'settings.categories.create', numberingForm: 'settings.counters.edit',
     pageMarginsForm: 'settings.page_margins.edit', partyFieldForm: 'settings.party_fields.create',
@@ -1886,7 +1885,8 @@ function renderParties() {
   grid.innerHTML = parties.map(party => {
     const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
     const dateFormatted = formatDate((party.updatedAt || party.createdAt || '').slice(0, 10));
-    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${hasStatute ? `Statuto registrato · Aggiornato il ${dateFormatted}` : 'Statuto da collegare'}</p><dl class="party-facts mb-0">${state.partyFields.map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(party.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('parties.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${hasStatute && capable('party_statutes.download_pdf') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}${Boolean(party.googleStatuteDocumentId) && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}${capable(hasStatute ? 'party_statutes.view' : 'party_statutes.link') ? `<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}">${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button>` : ''}</span></div></article></div>`;
+    const isGoogleDoc = Boolean(party.googleStatuteDocumentId);
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card card border-0 shadow-sm" data-open-party="${party.id}" tabindex="0" role="button"><div class="card-body p-4"><div class="d-flex justify-content-between align-items-start gap-2 mb-3"><h2 class="h5 mb-0">${escapeHtml(party.name)}</h2><span class="badge ${statusClass(party.status)}">${statusLabel(party.status)}</span></div><p class="text-secondary small mb-3">${hasStatute ? `Statuto registrato · Aggiornato il ${dateFormatted}` : 'Statuto da collegare'}</p><dl class="party-facts mb-0">${state.partyFields.map(field => `<div><dt>${escapeHtml(field.name)}</dt><dd>${escapeHtml(party.fields?.[field.id] || '—')}</dd></div>`).join('')}</dl></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(party.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('parties.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="parties" data-entity-id="${party.id}">Cestino</button>` : ''}${isGoogleDoc && capable('party_statutes.download_pdf') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-statute-pdf="${party.id}">Scarica PDF</button>` : ''}${hasStatute && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}${capable(hasStatute ? 'party_statutes.view' : 'party_statutes.link') ? `<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}">${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button>` : ''}</span></div></article></div>`;
   }).join('');
   document.getElementById('emptyParties').classList.toggle('d-none', parties.length > 0);
   document.getElementById('partyCount').textContent = parties.length;
@@ -1933,7 +1933,8 @@ function renderCompanies() {
   grid.innerHTML = companies.map(company => {
     const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
     const dateFormatted = formatDate((company.updatedAt || company.createdAt || '').slice(0, 10));
-    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${hasRegulation ? `Regolamento registrato · Aggiornato il ${dateFormatted}` : 'Regolamento da collegare'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(company.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('companies.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${hasRegulation && capable('company_regulations.download_pdf') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}${Boolean(company.googleRegulationDocumentId) && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}${capable(hasRegulation ? 'company_regulations.view' : 'company_regulations.link') ? `<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}">${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button>` : ''}</span></div></article></div>`;
+    const isGoogleDoc = Boolean(company.googleRegulationDocumentId);
+    return `<div class="col-12 col-md-6 col-xl-4"><article class="party-card company-card card border-0 shadow-sm" data-open-company="${company.id}" tabindex="0" role="button"><div class="card-body p-4"><h2 class="h5 mb-3">${escapeHtml(company.name)}</h2><p class="text-secondary small mb-0">${hasRegulation ? `Regolamento registrato · Aggiornato il ${dateFormatted}` : 'Regolamento da collegare'}</p></div><div class="card-footer bg-white border-0 px-4 pb-4 d-flex justify-content-between align-items-center gap-2"><span class="small text-secondary">${(company.history || []).length} modifiche registrate</span><span class="d-flex gap-2">${capable('companies.trash') ? `<button type="button" class="btn btn-sm btn-outline-danger" data-trash-item="companies" data-entity-id="${company.id}">Cestino</button>` : ''}${isGoogleDoc && capable('company_regulations.download_pdf') ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-download-regulation-pdf="${company.id}">Scarica PDF</button>` : ''}${hasRegulation && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}${capable(hasRegulation ? 'company_regulations.view' : 'company_regulations.link') ? `<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}">${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button>` : ''}</span></div></article></div>`;
   }).join('');
   document.getElementById('emptyCompanies').classList.toggle('d-none', companies.length > 0);
   document.getElementById('companyCount').textContent = companies.length;
@@ -2331,12 +2332,8 @@ function refreshDocumentTemplateOptions(category = '') {
 
 function renderSettings() {
   const categories = categoryNames();
-  const folderInputs = {
-    documents: document.getElementById('googleDocumentsFolderId'),
-    statutes: document.getElementById('googleStatutesFolderId'),
-    regulations: document.getElementById('googleRegulationsFolderId')
-  };
-  Object.entries(folderInputs).forEach(([key, input]) => { if (input) input.value = state.googleDriveFolders?.[key] || ''; });
+  const folderInput = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
+  if (folderInput) folderInput.value = state.googleDriveFolders?.documents || '';
   document.getElementById('googleDriveFoldersCard')?.classList.toggle('d-none', !capable('settings.google_folders.edit'));
   ['top', 'right', 'bottom', 'left'].forEach(side => { const input = document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`); if (input) input.value = state.pageMargins[side]; });
   const padding = numberPadding();
@@ -2344,7 +2341,7 @@ function renderSettings() {
   document.getElementById('numberingForm').innerHTML = `<div class="row align-items-center g-2 mb-3 pb-3 border-bottom"><div class="col"><label class="form-label mb-0" for="numberPaddingInput">Cifre del progressivo</label><div class="form-text">Gli zeri iniziali sono aggiunti in automatico: ${escapeHtml(paddingExample)}…</div></div><div class="col-auto"><input class="form-control" id="numberPaddingInput" type="number" min="1" max="12" value="${padding}" style="width:6.5rem"></div></div>`
     + categories.map(category => `<div class="row align-items-center g-2 mb-3"><div class="col"><label class="form-label mb-0" for="counter-${encodeURIComponent(category)}">${escapeHtml(category)}</label><div class="form-text">Formato: ${escapeHtml(category)} ${escapeHtml(padNumber('1', padding))}/anno</div></div><div class="col-auto"><input class="form-control counter-input" id="counter-${encodeURIComponent(category)}" data-category="${escapeHtml(category)}" type="text" inputmode="numeric" pattern="[0-9]+" value="${escapeHtml(nextNumber(category))}"></div></div>`).join('')
     + '<button class="btn btn-primary mt-2" type="submit">Salva numerazione</button>';
-  document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between align-items-center gap-2 border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template${state.documents.some(document => document.category === category) ? ` · ${state.documents.filter(document => document.category === category).length} documenti` : ''}</small></span><span class="d-flex align-items-center gap-2"><strong>${nextNumber(category)}</strong><button type="button" class="btn btn-sm btn-outline-danger" data-delete-category="${escapeHtml(category)}" title="Elimina categoria">Elimina</button></span></span>`).join('');
+  document.getElementById('categoryList').innerHTML = categories.map(category => `<span class="d-flex justify-content-between align-items-center gap-2 border-bottom pb-2"><span>${escapeHtml(category)}<small class="d-block text-secondary">${state.templates.filter(template => template.category === category).length} template${state.documents.some(document => document.category === category) ? ` · ${state.documents.filter(document => document.category === category) ? state.documents.filter(document => document.category === category).length : 0} documenti` : ''}</small></span><span class="d-flex align-items-center gap-2"><strong>${nextNumber(category)}</strong><button type="button" class="btn btn-sm btn-outline-danger" data-delete-category="${escapeHtml(category)}" title="Elimina categoria">Elimina</button></span></span>`).join('');
   document.getElementById('partyFieldList').innerHTML = state.partyFields.length ? state.partyFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nei nuovi partiti</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-party-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome, lo status e lo Statuto sono sempre disponibili.</p>';
   const coalitionFieldList = document.getElementById('coalitionFieldList');
   if (coalitionFieldList) coalitionFieldList.innerHTML = state.coalitionFields.length ? state.coalitionFields.map(field => `<div class="d-flex justify-content-between align-items-center border-bottom pb-2"><span>${escapeHtml(field.name)}<small class="d-block text-secondary">Obbligatorio nelle nuove coalizioni</small></span><button type="button" class="btn btn-sm btn-outline-danger" data-remove-coalition-field="${field.id}" title="Rimuovi campo">Rimuovi</button></div>`).join('') : '<p class="text-secondary small mb-0">Nessun campo configurato. Il nome e lo status sono sempre disponibili.</p>';
@@ -2358,16 +2355,111 @@ function renderPartyFields(party = null) {
   let html = state.partyFields.map(field => `<div class="col-12 col-md-6"><label class="form-label" for="party-field-${field.id}">${escapeHtml(field.name)}</label><input id="party-field-${field.id}" class="form-control party-field-input" data-field-id="${field.id}" required value="${escapeHtml(party?.fields?.[field.id] || '')}"></div>`).join('');
   if (party) {
     const hasStatute = Boolean(party.googleStatuteDocumentId || party.googleUrl || party.statuteUrl);
-    html += `<div class="col-12 mt-3"><div class="p-3 border rounded bg-light d-flex justify-content-between align-items-center"><div><strong class="d-block">Statuto del partito</strong><span class="text-secondary small">${hasStatute ? 'Statuto salvato e collegato su Google Documenti' : 'Nessuno statuto ancora collegato'}</span></div><div class="d-flex gap-2">${Boolean(party.googleStatuteDocumentId) && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}"><i class="bi ${hasStatute ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button></div></div></div>`;
+    const isGoogle = Boolean(party.googleStatuteDocumentId);
+    const statusText = isGoogle ? 'Statuto Google collegato' : (hasStatute ? 'Statuto web collegato' : 'Nessuno statuto ancora collegato');
+    html += `<div class="col-12 mt-3"><div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center"><div><strong class="d-block">Statuto del partito</strong><span class="text-secondary small">${escapeHtml(statusText)}</span></div><div class="d-flex gap-2">${hasStatute && capable('party_statutes.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-party-statute="${party.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasStatute ? 'btn-primary' : 'btn-outline-primary'}" data-open-party-statute="${party.id}"><i class="bi ${hasStatute ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasStatute ? 'Vedi statuto' : 'Collega statuto'}</button></div></div></div>`;
   }
   fields.innerHTML = html;
 }
 
 function renderPartyHistory(party = null) {
   const panel = document.getElementById('partyHistoryPanel');
-  const history = party?.history || [];
-  panel.classList.toggle('d-none', !party || history.length === 0 || !capable('parties.view_history'));
-  document.getElementById('partyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Statuto' || entry.label === 'Statuto Google' ? `<button type="button" class="history-entry history-version" data-open-statute-history="${party.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}${entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : ''}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
+  const list = document.getElementById('partyHistory');
+  const empty = document.getElementById('partyHistoryEmpty');
+  const clearBtn = document.getElementById('clearPartyHistoryButton');
+  if (!panel || !list) return;
+
+  if (!party || !capable('parties.view_history')) {
+    panel.classList.add('d-none');
+    return;
+  }
+  panel.classList.remove('d-none');
+
+  const history = Array.isArray(party.history) ? party.history : [];
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !capable('parties.edit'));
+    clearBtn.dataset.partyId = party.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  const canEdit = capable('parties.edit');
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const isStatute = entry.label === 'Statuto' || entry.label === 'Statuto Google';
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const modifier = entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : '';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-party-history="${party.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    if (isStatute && (entry.previousStatute !== undefined || entry.nextStatute !== undefined)) {
+      return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+        <button type="button" class="history-version-btn flex-grow-1 text-start" data-open-statute-history="${party.id}" data-history-index="${index}">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+          <span class="d-block small text-primary mt-1"><i class="bi bi-file-diff me-1"></i>Apri confronto versioni</span>
+        </button>
+        ${deleteBtnHtml}
+      </div>`;
+    }
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deletePartyHistoryItem(partyId, index) {
+  if (!capable('parties.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const party = state.parties.find(item => item.id === partyId);
+  const idx = Number(index);
+  if (!party || !Array.isArray(party.history) || idx < 0 || idx >= party.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia del partito?')) return;
+
+  party.history.splice(idx, 1);
+  party.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.parties, state.parties);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderPartyHistory(party);
+  renderParties();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearPartyHistory(partyId) {
+  if (!capable('parties.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const party = state.parties.find(item => item.id === partyId);
+  if (!party || !Array.isArray(party.history) || party.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia del partito «${party.name}»? L'operazione non può essere annullata.`)) return;
+
+  party.history = [];
+  party.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.parties, state.parties);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderPartyHistory(party);
+  renderParties();
+  showToast('Cronologia del partito svuotata.');
 }
 
 function renderCompanyHistory(company = null) {
@@ -2431,20 +2523,23 @@ function openPartyEditor(partyId = '') {
 async function openPartyStatuteEditor(partyId, changeLink = false) {
   const party = state.parties.find(item => item.id === partyId);
   if (!party) return;
-  const docUrl = party.googleUrl || party.statuteUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(party.googleStatuteDocumentId)}/edit` : null);
-  if (docUrl && !changeLink) { openGoogleDocument(docUrl, 'party_statutes.view'); return; }
+  const docUrl = party.statuteUrl || party.googleUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(party.googleStatuteDocumentId)}/edit` : null);
+  if (docUrl && !changeLink) {
+    if (!capable('party_statutes.view')) { showToast('Non hai il permesso di visualizzare lo statuto.'); return; }
+    window.open(docUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
   const requiredCapability = docUrl ? 'party_statutes.change_link' : 'party_statutes.link';
   if (!capable(requiredCapability)) { showToast(docUrl ? 'Non hai il permesso di modificare il collegamento dello statuto.' : 'Non hai il permesso di collegare lo statuto.'); return; }
-  if (!remoteMode || !googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
   editingPartyId = party.id;
   document.getElementById('partyStatutePartyName').textContent = party.name;
-  document.getElementById('partyStatuteSubtitle').textContent = docUrl ? 'Sostituisci il collegamento con un altro Google Doc presente nella cartella Statuti.' : 'Inserisci il link di un Google Doc già presente nella cartella Statuti.';
+  document.getElementById('partyStatuteSubtitle').textContent = docUrl ? 'Modifica il link dello Statuto (Google Documenti o pagina web esterna).' : 'Inserisci il link dello Statuto (Google Documenti o pagina web esterna).';
   const status = document.getElementById('partyStatuteStatus');
   status.textContent = statusLabel(party.status);
   status.className = `badge ${statusClass(party.status)}`;
   document.getElementById('partyStatuteGoogleUrl').value = docUrl || '';
-  document.getElementById('partyStatuteGoogleTitle').textContent = docUrl ? 'Sostituisci il link dello statuto' : 'Collega uno statuto esistente';
-  document.getElementById('openPartyStatuteGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Verifica e sostituisci' : 'Verifica e collega'}`;
+  document.getElementById('partyStatuteGoogleTitle').textContent = docUrl ? 'Modifica il link dello statuto' : 'Collega uno statuto';
+  document.getElementById('openPartyStatuteGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   const showLinkEditor = () => showEditorScreen('partyStatuteEditor');
   const partyModal = document.getElementById('partyModal');
   if (partyModal.classList.contains('show')) {
@@ -2462,8 +2557,10 @@ function openCompanyEditor(companyId = '') {
   if (regContainer) {
     if (company) {
       const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
+      const isGoogle = Boolean(company.googleRegulationDocumentId);
+      const regText = isGoogle ? 'Regolamento Google collegato' : (hasRegulation ? 'Regolamento web collegato' : 'Nessun regolamento ancora collegato');
       regContainer.classList.remove('d-none');
-      regContainer.innerHTML = `<div class="p-3 border rounded bg-light d-flex justify-content-between align-items-center mb-3"><div><strong class="d-block">Regolamento aziendale</strong><span class="text-secondary small">${hasRegulation ? 'Regolamento salvato e collegato su Google Documenti' : 'Nessun regolamento ancora collegato'}</span></div><div class="d-flex gap-2">${Boolean(company.googleRegulationDocumentId) && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}"><i class="bi ${hasRegulation ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button></div></div>`;
+      regContainer.innerHTML = `<div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center mb-3"><div><strong class="d-block">Regolamento aziendale</strong><span class="text-secondary small">${escapeHtml(regText)}</span></div><div class="d-flex gap-2">${hasRegulation && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}"><i class="bi ${hasRegulation ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button></div></div>`;
     } else {
       regContainer.classList.add('d-none');
       regContainer.innerHTML = '';
@@ -2478,17 +2575,20 @@ function openCompanyEditor(companyId = '') {
 async function openCompanyRegulationEditor(companyId, changeLink = false) {
   const company = state.companies.find(item => item.id === companyId);
   if (!company) return;
-  const docUrl = company.googleUrl || company.regulationUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(company.googleRegulationDocumentId)}/edit` : null);
-  if (docUrl && !changeLink) { openGoogleDocument(docUrl, 'company_regulations.view'); return; }
+  const docUrl = company.regulationUrl || company.googleUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${encodeURIComponent(company.googleRegulationDocumentId)}/edit` : null);
+  if (docUrl && !changeLink) {
+    if (!capable('company_regulations.view')) { showToast('Non hai il permesso di visualizzare il regolamento.'); return; }
+    window.open(docUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
   const requiredCapability = docUrl ? 'company_regulations.change_link' : 'company_regulations.link';
   if (!capable(requiredCapability)) { showToast(docUrl ? 'Non hai il permesso di modificare il collegamento del regolamento.' : 'Non hai il permesso di collegare il regolamento.'); return; }
-  if (!remoteMode || !googleConnection.connected) { showToast('Collega prima un account Google dalle impostazioni.'); return; }
   editingCompanyId = company.id;
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
-  document.getElementById('companyRegulationSubtitle').textContent = docUrl ? 'Sostituisci il collegamento con un altro Google Doc presente nella cartella Regolamenti.' : 'Inserisci il link di un Google Doc già presente nella cartella Regolamenti.';
+  document.getElementById('companyRegulationSubtitle').textContent = docUrl ? 'Modifica il link del Regolamento (Google Documenti o pagina web esterna).' : 'Inserisci il link del Regolamento (Google Documenti o pagina web esterna).';
   document.getElementById('companyRegulationGoogleUrl').value = docUrl || '';
-  document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Sostituisci il link del regolamento' : 'Collega un regolamento esistente';
-  document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Verifica e sostituisci' : 'Verifica e collega'}`;
+  document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Modifica il link del regolamento' : 'Collega un regolamento';
+  document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
   const showLinkEditor = () => showEditorScreen('companyRegulationEditor');
   const companyModal = document.getElementById('companyModal');
   if (companyModal.classList.contains('show')) {
@@ -2506,27 +2606,48 @@ async function saveCompanyRegulation(event) {
   event.preventDefault();
   const company = state.companies.find(item => item.id === editingCompanyId);
   if (!company) return;
+  const rawUrl = document.getElementById('companyRegulationGoogleUrl').value.trim();
+  if (!rawUrl) { showToast('Inserisci un link valido per il regolamento.'); return; }
+  let url = rawUrl;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const docId = extractGoogleDocId(url);
+    url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
+  }
   try {
-    const previousDocumentId = company.googleRegulationDocumentId || '';
-    const replacing = Boolean(previousDocumentId);
-    const linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'company_regulations', entityId: company.id, url: document.getElementById('companyRegulationGoogleUrl').value.trim() }) });
-    if (previousDocumentId && previousDocumentId !== linked.id) {
+    const previousUrl = company.regulationUrl || company.googleUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${company.googleRegulationDocumentId}/edit` : '');
+    const replacing = Boolean(previousUrl);
+    let linked = null;
+    if (remoteMode) {
+      linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'company_regulations', entityId: company.id, url }) });
+    }
+    const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
+    const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
+    const docName = linked?.name || null;
+    const finalUrl = linked?.url || url;
+
+    if (company.googleRegulationDocumentId && company.googleRegulationDocumentId !== docId) {
       company.googleLatestText = '';
       company.googleModifiedBy = null;
     }
-    company.googleRegulationDocumentId = linked.id;
-    company.googleRegulationName = linked.name;
-    company.googleDocumentName = linked.name;
-    company.googleUrl = linked.url;
-    company.regulationUrl = linked.url;
-    company.regulation = 'Regolamento Google collegato';
-    company.googleModifiedTime = linked.modifiedTime || null;
+    company.googleRegulationDocumentId = isGoogle ? docId : null;
+    company.googleRegulationName = docName;
+    company.googleDocumentName = docName;
+    company.googleUrl = finalUrl;
+    company.regulationUrl = finalUrl;
+    company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
+    company.googleModifiedTime = linked?.modifiedTime || null;
     company.updatedAt = new Date().toISOString();
+    if (!Array.isArray(company.history)) company.history = [];
+    company.history.push({
+      label: isGoogle ? 'Regolamento Google' : 'Regolamento',
+      from: previousUrl || 'Nessun regolamento',
+      to: finalUrl,
+      at: new Date().toISOString()
+    });
     writeStorage(STORAGE_KEYS.companies, state.companies);
     if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('companies'); }
     closeCompanyRegulationEditor();
     renderCompanies();
-    openGoogleDocument(linked.id, 'company_regulations.view');
     showToast(replacing ? 'Collegamento del regolamento aggiornato.' : 'Regolamento collegato.');
   } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
 }
@@ -2593,27 +2714,48 @@ async function savePartyStatute(event) {
   event.preventDefault();
   const party = state.parties.find(item => item.id === editingPartyId);
   if (!party) return;
+  const rawUrl = document.getElementById('partyStatuteGoogleUrl').value.trim();
+  if (!rawUrl) { showToast('Inserisci un link valido per lo statuto.'); return; }
+  let url = rawUrl;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const docId = extractGoogleDocId(url);
+    url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
+  }
   try {
-    const previousDocumentId = party.googleStatuteDocumentId || '';
-    const replacing = Boolean(previousDocumentId);
-    const linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'party_statutes', entityId: party.id, url: document.getElementById('partyStatuteGoogleUrl').value.trim() }) });
-    if (previousDocumentId && previousDocumentId !== linked.id) {
+    const previousUrl = party.statuteUrl || party.googleUrl || (party.googleStatuteDocumentId ? `https://docs.google.com/document/d/${party.googleStatuteDocumentId}/edit` : '');
+    const replacing = Boolean(previousUrl);
+    let linked = null;
+    if (remoteMode) {
+      linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'party_statutes', entityId: party.id, url }) });
+    }
+    const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
+    const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
+    const docName = linked?.name || null;
+    const finalUrl = linked?.url || url;
+
+    if (party.googleStatuteDocumentId && party.googleStatuteDocumentId !== docId) {
       party.googleLatestText = '';
       party.googleModifiedBy = null;
     }
-    party.googleStatuteDocumentId = linked.id;
-    party.googleStatuteName = linked.name;
-    party.googleDocumentName = linked.name;
-    party.googleUrl = linked.url;
-    party.statuteUrl = linked.url;
-    party.statute = 'Statuto Google collegato';
-    party.googleModifiedTime = linked.modifiedTime || null;
+    party.googleStatuteDocumentId = isGoogle ? docId : null;
+    party.googleStatuteName = docName;
+    party.googleDocumentName = docName;
+    party.googleUrl = finalUrl;
+    party.statuteUrl = finalUrl;
+    party.statute = isGoogle ? 'Statuto Google collegato' : 'Statuto esterno collegato';
+    party.googleModifiedTime = linked?.modifiedTime || null;
     party.updatedAt = new Date().toISOString();
+    if (!Array.isArray(party.history)) party.history = [];
+    party.history.push({
+      label: isGoogle ? 'Statuto Google' : 'Statuto',
+      from: previousUrl || 'Nessuno statuto',
+      to: finalUrl,
+      at: new Date().toISOString()
+    });
     writeStorage(STORAGE_KEYS.parties, state.parties);
     if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('parties'); }
     closePartyStatuteEditor();
     renderParties();
-    openGoogleDocument(linked.id, 'party_statutes.view');
     showToast(replacing ? 'Collegamento dello statuto aggiornato.' : 'Statuto collegato.');
   } catch (error) { showToast(error.message || 'Impossibile collegare lo statuto.'); }
 }
@@ -3237,19 +3379,17 @@ async function initialize() {
   if (coalitionFieldList) coalitionFieldList.addEventListener('click', event => { const button = event.target.closest('[data-remove-coalition-field]'); if (!button) return; if (!capable('settings.coalition_fields.delete')) { showToast('Non hai il permesso di eliminare campi delle coalizioni.'); return; } const fieldId = button.dataset.removeCoalitionField; state.coalitionFields = state.coalitionFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); renderSettings(); renderCoalitions(); showToast('Informazione minima rimossa.'); });
   document.getElementById('googleDriveFoldersForm')?.addEventListener('submit', async event => {
     event.preventDefault();
-    const folders = {
-      documents: document.getElementById('googleDocumentsFolderId').value.trim(),
-      statutes: document.getElementById('googleStatutesFolderId').value.trim(),
-      regulations: document.getElementById('googleRegulationsFolderId').value.trim()
-    };
-    if (Object.values(folders).some(id => !/^[a-zA-Z0-9_-]{5,}$/.test(id)) || new Set(Object.values(folders)).size !== 3) { showToast('Inserisci tre ID di cartella Drive validi e diversi tra loro.'); return; }
+    const input = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
+    const documents = input ? input.value.trim() : '';
+    if (!/^[a-zA-Z0-9_-]{5,}$/.test(documents)) { showToast('Inserisci un ID di cartella Drive valido.'); return; }
+    const folders = { documents };
     try {
       if (remoteMode) await apiRequest('google_validate_folders', { method: 'POST', body: JSON.stringify({ folders }) });
       state.googleDriveFolders = folders;
       writeStorage(STORAGE_KEYS.googleDriveFolders, folders);
       if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('settings'); }
-      showToast('Cartelle Google verificate e salvate.');
-    } catch (error) { showToast(error.message || 'Impossibile verificare le cartelle Google.'); }
+      showToast('Cartella Google verificata e salvata.');
+    } catch (error) { showToast(error.message || 'Impossibile verificare la cartella Google.'); }
   });
   document.getElementById('numberingForm').addEventListener('submit', event => {
     event.preventDefault();
@@ -3298,7 +3438,7 @@ async function initialize() {
     editor.style.borderRadius = '.375rem';
     editor.style.width = '100%';
   });
-  document.addEventListener('click', event => { const numberButton = event.target.closest('[data-edit-document-number]'); if (numberButton) { event.stopPropagation(); editDocumentNumber(numberButton.dataset.editDocumentNumber); return; } const usefulLinkEdit = event.target.closest('[data-edit-useful-link]'); if (usefulLinkEdit) { event.stopPropagation(); openUsefulLinkModal(usefulLinkEdit.dataset.editUsefulLink); return; } const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && !event.target.closest('button')) { openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const relinkCompanyRegulationButton = event.target.closest('[data-relink-company-regulation]'); if (relinkCompanyRegulationButton) { event.stopImmediatePropagation(); openCompanyRegulationEditor(relinkCompanyRegulationButton.dataset.relinkCompanyRegulation, true); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const relinkPartyStatuteButton = event.target.closest('[data-relink-party-statute]'); if (relinkPartyStatuteButton) { event.stopImmediatePropagation(); openPartyStatuteEditor(relinkPartyStatuteButton.dataset.relinkPartyStatute, true); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
+  document.addEventListener('click', event => { const numberButton = event.target.closest('[data-edit-document-number]'); if (numberButton) { event.stopPropagation(); editDocumentNumber(numberButton.dataset.editDocumentNumber); return; } const clearPartyHistoryBtn = event.target.closest('#clearPartyHistoryButton'); if (clearPartyHistoryBtn) { event.stopPropagation(); clearPartyHistory(clearPartyHistoryBtn.dataset.partyId || editingPartyId); return; } const deletePartyHistoryBtn = event.target.closest('[data-delete-party-history]'); if (deletePartyHistoryBtn) { event.stopPropagation(); deletePartyHistoryItem(deletePartyHistoryBtn.dataset.deletePartyHistory, deletePartyHistoryBtn.dataset.historyIndex); return; } const usefulLinkEdit = event.target.closest('[data-edit-useful-link]'); if (usefulLinkEdit) { event.stopPropagation(); openUsefulLinkModal(usefulLinkEdit.dataset.editUsefulLink); return; } const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && !event.target.closest('button')) { openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const relinkCompanyRegulationButton = event.target.closest('[data-relink-company-regulation]'); if (relinkCompanyRegulationButton) { event.stopImmediatePropagation(); openCompanyRegulationEditor(relinkCompanyRegulationButton.dataset.relinkCompanyRegulation, true); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const relinkPartyStatuteButton = event.target.closest('[data-relink-party-statute]'); if (relinkPartyStatuteButton) { event.stopImmediatePropagation(); openPartyStatuteEditor(relinkPartyStatuteButton.dataset.relinkPartyStatute, true); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
   document.addEventListener('keydown', event => { const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
   document.getElementById('documentDate').value = today();
   document.querySelectorAll('#documentModal, #templateModal, #parliamentModal').forEach(element => { element.classList.remove('modal', 'fade'); element.classList.add('editor-page', 'd-none'); });

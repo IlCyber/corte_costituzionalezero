@@ -372,13 +372,11 @@
           <div class="col-12 col-xl-7">
             <div class="card border-0 shadow-sm mb-4 d-none" id="googleDriveFoldersCard">
               <div class="card-body p-4">
-                <h2 class="h5 mb-1">Cartelle Google Drive</h2>
-                <p class="text-secondary small mb-4">Configura tre cartelle distinte. Statuti e regolamenti devono già esistere nella rispettiva cartella; il sito crea nuovi file soltanto in «Documenti sito».</p>
+                <h2 class="h5 mb-1">Cartella Google Drive</h2>
+                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
                 <form id="googleDriveFoldersForm" class="row g-3">
                   <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
-                  <div class="col-12"><label for="googleStatutesFolderId" class="form-label">ID cartella Statuti</label><input id="googleStatutesFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella degli statuti esistenti"></div>
-                  <div class="col-12"><label for="googleRegulationsFolderId" class="form-label">ID cartella Regolamenti</label><input id="googleRegulationsFolderId" class="form-control font-monospace" required autocomplete="off" placeholder="ID della cartella dei regolamenti esistenti"></div>
-                  <div class="col-12"><div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il salvataggio verifica che le cartelle esistano e siano accessibili all’account Google collegato.</div><button class="btn btn-primary" type="submit">Verifica e salva cartelle</button></div>
+                  <div class="col-12"><div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div><button class="btn btn-primary" type="submit">Verifica e salva cartella</button></div>
                 </form>
               </div>
             </div>
@@ -552,7 +550,7 @@
     </div>
   </div>
   <div class="modal fade" id="partyModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
       <div class="modal-content">
         <form id="partyForm">
           <div class="modal-header">
@@ -562,24 +560,38 @@
             </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
           </div>
           <div class="modal-body">
-            <div class="row g-3">
-              <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
-                  id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div>
-              <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select id="partyStatus"
-                  class="form-select" required>
-                  <option value="attivo">Attivo</option>
-                  <option value="eliminato">Eliminato</option>
-                  <option value="confluito">Confluito</option>
-                  <option value="cancellato">Cancellato</option>
-                </select></div>
-              <div class="col-12">
-                <h3 class="h6 mb-1">Informazioni minime</h3>
-                <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+            <div class="row g-4 align-items-stretch">
+              <div class="col-12 col-lg-7">
+                <div class="row g-3">
+                  <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
+                      id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione"></div>
+                  <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select id="partyStatus"
+                      class="form-select" required>
+                      <option value="attivo">Attivo</option>
+                      <option value="eliminato">Eliminato</option>
+                      <option value="confluito">Confluito</option>
+                      <option value="cancellato">Cancellato</option>
+                    </select></div>
+                  <div class="col-12">
+                    <h3 class="h6 mb-1">Informazioni minime</h3>
+                    <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+                  </div>
+                  <div id="partyFields" class="row g-3"></div>
+                </div>
               </div>
-              <div id="partyFields" class="row g-3"></div>
-              <div class="col-12 d-none" id="partyHistoryPanel">
-                <h3 class="h6 mb-2">Storico modifiche</h3>
-                <div id="partyHistory" class="history-list"></div>
+              <div class="col-12 col-lg-5" id="partyHistoryPanel">
+                <div class="party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
+                  <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                    <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
+                    <button type="button" id="clearPartyHistoryButton" class="btn btn-sm btn-outline-danger d-none" title="Elimina intera cronologia di questo partito">
+                      <i class="bi bi-trash3 me-1"></i>Svuota cronologia
+                    </button>
+                  </div>
+                  <div id="partyHistory" class="history-list flex-grow-1"></div>
+                  <div id="partyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
+                    Nessuna modifica registrata.
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -651,11 +663,11 @@
                 </div>
                 <div><span class="form-label d-block">Documento</span><span>Statuto</span></div>
               </aside>
-              <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello Statuto su Google Documenti</label>
+              <section class="party-statute-canvas"><label for="partyStatuteGoogleUrl" class="form-label">Link dello Statuto</label>
                 <div class="google-document-editor-panel" id="partyStatuteGooglePanel">
                   <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
-                  <div class="google-document-editor-copy flex-grow-1"><strong id="partyStatuteGoogleTitle">Collega uno statuto esistente</strong><span>Il file deve trovarsi nella cartella «Statuti» configurata nelle Impostazioni.</span><input type="url" id="partyStatuteGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit"></div>
-                  <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Verifica e collega</button>
+                  <div class="google-document-editor-copy flex-grow-1"><strong id="partyStatuteGoogleTitle">Collega uno statuto</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input type="url" id="partyStatuteGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/statuto"></div>
+                  <button type="submit" id="openPartyStatuteGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Salva e collega</button>
                 </div>
               </section>
             </div>
@@ -679,7 +691,7 @@
           <div class="modal-body"><label for="companyName" class="form-label">Nome dell’azienda</label><input
               id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A.">
             <div id="companyModalRegulationContainer" class="mt-3 d-none"></div>
-            <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc già presente nella cartella Regolamenti.</p>
+            <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc o una pagina web esterna per il regolamento.</p>
             <div class="d-none" id="companyHistoryPanel">
               <h3 class="h6 mt-4 mb-2">Storico modifiche</h3>
               <div id="companyHistory" class="history-list"></div>
@@ -710,11 +722,11 @@
                 </div>
                 <div><span class="form-label d-block">Documento</span><span>Regolamento</span></div>
               </aside>
-              <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link del Regolamento su Google Documenti</label>
+              <section class="party-statute-canvas"><label for="companyRegulationGoogleUrl" class="form-label">Link del Regolamento</label>
                 <div class="google-document-editor-panel" id="companyRegulationGooglePanel">
                   <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
-                  <div class="google-document-editor-copy flex-grow-1"><strong id="companyRegulationGoogleTitle">Collega un regolamento esistente</strong><span>Il file deve trovarsi nella cartella «Regolamenti» configurata nelle Impostazioni.</span><input type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit"></div>
-                  <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Verifica e collega</button>
+                  <div class="google-document-editor-copy flex-grow-1"><strong id="companyRegulationGoogleTitle">Collega un regolamento</strong><span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span><input type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/regolamento"></div>
+                  <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i class="bi bi-link-45deg me-1"></i>Salva e collega</button>
                 </div>
               </section>
             </div>

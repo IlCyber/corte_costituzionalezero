@@ -8,6 +8,7 @@ const DB_USER = 'BOH';
 const DB_PASSWORD = 'BOH';
 const SESSION_NAME = 'BOH';
 const MAX_STATE_BYTES = 'BOH';
+/* Cartella Google Drive principale (facoltativa se configurata dall'interfaccia web nelle Impostazioni). */
 const GOOGLE_DRIVE_FOLDER_ID = 'BOH';
 const GOOGLE_CLIENT_ID = 'BOH';
 const GOOGLE_CLIENT_SECRET = 'BOH';
