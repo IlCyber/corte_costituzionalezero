@@ -152,8 +152,6 @@ function sanitizeInlineStyle(string $style): string
         if ($property === 'font-size' && preg_match('/^(?:[89]|[1-8][0-9]|9[0-6])px$/', $value)) $safe[] = 'font-size:' . $value;
         if ($property === 'position' && in_array($value, ['absolute', 'relative', 'static'], true)) $safe[] = 'position:' . $value;
         if (($property === 'left' || $property === 'top') && preg_match('/^\d+(?:\.\d+)?px$/', $value)) $safe[] = $property . ':' . $value;
-        if ($property === 'position' && in_array($value, ['absolute', 'relative', 'static'], true)) $safe[] = 'position:' . $value;
-        if (($property === 'left' || $property === 'top') && preg_match('/^\d+(?:\.\d+)?px$/', $value)) $safe[] = $property . ':' . $value;
         if ($property === 'font-family' && preg_match('/^(Georgia|Raleway|Pinyon Script|Arial|Helvetica|Verdana|Tahoma|Garamond|Impact|"Times New Roman"|\'Times New Roman\'|"Trebuchet MS"|\'Trebuchet MS\'|"Courier New"|\'Courier New\'|"Lucida Console"|\'Lucida Console\'|"Palatino Linotype"|\'Palatino Linotype\'|"Book Antiqua"|\'Book Antiqua\'|"Comic Sans MS"|\'Comic Sans MS\')$/', $value)) $safe[] = 'font-family:' . $value;
         if ($property === 'font-weight' && preg_match('/^(normal|bold|[1-9]00)$/', $value)) $safe[] = 'font-weight:' . $value;
         if ($property === 'font-style' && in_array($value, ['normal', 'italic'], true)) $safe[] = 'font-style:' . $value;
