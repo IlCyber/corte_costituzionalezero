@@ -441,18 +441,10 @@
                 <h2 class="h5 mb-1">Cartella Google Drive</h2>
                 <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in
                   cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
-                <h2 class="h5 mb-1">Cartella Google Drive</h2>
-                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in
-                  cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
                 <form id="googleDriveFoldersForm" class="row g-3">
                   <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti
                       sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required
                       autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
-                  <div class="col-12">
-                    <div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il
-                      salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div>
-                    <button class="btn btn-primary" type="submit">Verifica e salva cartella</button>
-                  </div>
                   <div class="col-12">
                     <div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il
                       salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div>
@@ -593,101 +585,97 @@
   </div>
   <div class="modal fade" id="templateModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <form id="templateForm">
-            <div class="modal-header">
-              <div>
-                <p class="eyebrow text-secondary mb-1">Redazione</p>
-                <h2 class="modal-title h4">Nuovo template</h2>
-              </div>
-              <div class="d-flex align-items-center ms-auto gap-2">
-                <button type="submit" class="btn btn-primary">Salva template</button>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-              </div>
+      <div class="modal-content">
+        <form id="templateForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Redazione</p>
+              <h2 class="modal-title h4">Nuovo template</h2>
             </div>
-            <div class="modal-body">
-              <div class="row g-3">
-                <div class="col-md-6"><label for="templateName" class="form-label">Nome template</label><input
-                    id="templateName" class="form-control" required placeholder="Es. Sentenza ordinaria"></div>
-                <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
-                    id="templateCategory" class="form-select" required></select></div>
-                <div class="col-12"><label class="form-label">Struttura del contenuto</label>
-                  <div class="google-document-editor-panel">
-                    <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
-                    </div>
-                    <div class="google-document-editor-copy"><strong>Template Google Documenti</strong><span>Il
-                        contenuto
-                        viene scritto nell’editor ufficiale di Google dopo il salvataggio.</span></div>
+            <div class="d-flex align-items-center ms-auto gap-2">
+              <button type="submit" class="btn btn-primary">Salva template</button>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+            </div>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-6"><label for="templateName" class="form-label">Nome template</label><input
+                  id="templateName" class="form-control" required placeholder="Es. Sentenza ordinaria"></div>
+              <div class="col-md-6"><label for="templateCategory" class="form-label">Categoria</label><select
+                  id="templateCategory" class="form-select" required></select></div>
+              <div class="col-12"><label class="form-label">Struttura del contenuto</label>
+                <div class="google-document-editor-panel">
+                  <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i>
                   </div>
-                </div>
-                <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine
-                    predefinita</label><input id="templateImage" type="file" accept="image/*" class="form-control">
-                  <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
-                    template.</div>
+                  <div class="google-document-editor-copy"><strong>Template Google Documenti</strong><span>Il
+                      contenuto
+                      viene scritto nell’editor ufficiale di Google dopo il salvataggio.</span></div>
                 </div>
               </div>
+              <div class="col-12" style="display: none"><label for="templateImage" class="form-label">Immagine
+                  predefinita</label><input id="templateImage" type="file" accept="image/*" class="form-control">
+                <div class="form-text">L'immagine verrà salvata nel browser e proposta per i documenti basati sul
+                  template.</div>
+              </div>
             </div>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
     </div>
   </div>
   <div class="modal fade" id="partyModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-          <form id="partyForm">
-            <div class="modal-header">
-              <div>
-                <p class="eyebrow text-secondary mb-1">Archivio politico</p>
-                <h2 class="modal-title h4">Nuovo partito</h2>
-              </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-            </div>
-            <div class="modal-body">
-              <div class="row g-4 align-items-stretch">
-                <div class="col-12 col-lg-7" id="partyFormColumn">
-                  <div class="row g-3">
-                    <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
-                        id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione">
-                    </div>
-                    <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select
-                        id="partyStatus" class="form-select" required>
-                        <option value="attivo">Attivo</option>
-                        <option value="eliminato">Eliminato</option>
-                        <option value="confluito">Confluito</option>
-                        <option value="cancellato">Cancellato</option>
-                      </select></div>
-                    <div class="col-12">
-                      <h3 class="h6 mb-1">Informazioni minime</h3>
-                      <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
-                    </div>
-                    <div id="partyFields" class="row g-3"></div>
+      <div class="modal-content">
+        <form id="partyForm">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow text-secondary mb-1">Archivio politico</p>
+              <h2 class="modal-title h4">Nuovo partito</h2>
+            </div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-4 align-items-stretch">
+              <div class="col-12 col-lg-7" id="partyFormColumn">
+                <div class="row g-3">
+                  <div class="col-md-8"><label for="partyName" class="form-label">Nome del partito</label><input
+                      id="partyName" class="form-control" required placeholder="Es. Partito della Costituzione">
                   </div>
+                  <div class="col-md-4"><label for="partyStatus" class="form-label">Status</label><select
+                      id="partyStatus" class="form-select" required>
+                      <option value="attivo">Attivo</option>
+                      <option value="eliminato">Eliminato</option>
+                      <option value="confluito">Confluito</option>
+                      <option value="cancellato">Cancellato</option>
+                    </select></div>
+                  <div class="col-12">
+                    <h3 class="h6 mb-1">Informazioni minime</h3>
+                    <p class="text-secondary small mb-0">I campi sono definiti nelle impostazioni.</p>
+                  </div>
+                  <div id="partyFields" class="row g-3"></div>
                 </div>
-                <div class="col-12 col-lg-5" id="partyHistoryPanel">
-                  <div
-                    class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
-                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
-                      <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
-                      <button type="button" id="clearPartyHistoryButton" class="btn btn-sm btn-outline-danger d-none"
-                        title="Elimina intera cronologia di questo partito">
-                        <i class="bi bi-trash3 me-1"></i>Svuota cronologia
-                      </button>
-                    </div>
-                    <div id="partyHistory" class="history-list flex-grow-1"></div>
-                    <div id="partyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
-                      Nessuna modifica registrata.
-                    </div>
+              </div>
+              <div class="col-12 col-lg-5" id="partyHistoryPanel">
+                <div
+                  class="entity-history-card party-history-card p-3 border rounded bg-light h-100 d-flex flex-column">
+                  <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                    <h3 class="h6 mb-0 text-nowrap"><i class="bi bi-clock-history me-1"></i>Storico modifiche</h3>
+                    <button type="button" id="clearPartyHistoryButton" class="btn btn-sm btn-outline-danger d-none"
+                      title="Elimina intera cronologia di questo partito">
+                      <i class="bi bi-trash3 me-1"></i>Svuota cronologia
+                    </button>
+                  </div>
+                  <div id="partyHistory" class="history-list flex-grow-1"></div>
+                  <div id="partyHistoryEmpty" class="text-secondary small text-center py-4 d-none">
+                    Nessuna modifica registrata.
                   </div>
                 </div>
               </div>
             </div>
-            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
-                data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
-                partito</button></div>
-          </form>
-        </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary"
+              data-bs-dismiss="modal">Annulla</button><button class="btn btn-primary" type="submit">Salva
+              partito</button></div>
+        </form>
       </div>
     </div>
   </div>
