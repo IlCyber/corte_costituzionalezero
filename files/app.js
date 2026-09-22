@@ -3108,65 +3108,45 @@ async function saveCompanyRegulation(event) {
     const finalUrl = linked?.url || url;
 
     if (company.googleRegulationDocumentId && company.googleRegulationDocumentId !== docId) {
-      const rawUrl = document.getElementById('companyRegulationGoogleUrl').value.trim();
-      if (!rawUrl) { showToast('Inserisci un link valido per il regolamento.'); return; }
-      let url = rawUrl;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        const docId = extractGoogleDocId(url);
-        url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
-      }
-      try {
-        const previousUrl = company.regulationUrl || company.googleUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${company.googleRegulationDocumentId}/edit` : '');
-        const replacing = Boolean(previousUrl);
-        let linked = null;
-        if (remoteMode) {
-          linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'company_regulations', entityId: company.id, url }) });
-        }
-        const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
-        const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
-        const docName = linked?.name || null;
-        const finalUrl = linked?.url || url;
-
-        if (company.googleRegulationDocumentId && company.googleRegulationDocumentId !== docId) {
-          company.googleLatestText = '';
-          company.googleModifiedBy = null;
-        }
-        company.googleRegulationDocumentId = isGoogle ? docId : null;
-        company.googleRegulationName = docName;
-        company.googleDocumentName = docName;
-        company.googleUrl = finalUrl;
-        company.regulationUrl = finalUrl;
-        company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
-        company.googleModifiedTime = linked?.modifiedTime || null;
-        company.googleRegulationDocumentId = isGoogle ? docId : null;
-        company.googleRegulationName = docName;
-        company.googleDocumentName = docName;
-        company.googleUrl = finalUrl;
-        company.regulationUrl = finalUrl;
-        company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
-        company.googleModifiedTime = linked?.modifiedTime || null;
-        company.updatedAt = new Date().toISOString();
-        if (!Array.isArray(company.history)) company.history = [];
-        company.history.push({
-          label: isGoogle ? 'Regolamento Google' : 'Regolamento',
-          from: previousUrl || 'Nessun regolamento',
-          to: finalUrl,
-          at: new Date().toISOString()
-        });
-        if (!Array.isArray(company.history)) company.history = [];
-        company.history.push({
-          label: isGoogle ? 'Regolamento Google' : 'Regolamento',
-          from: previousUrl || 'Nessun regolamento',
-          to: finalUrl,
-          at: new Date().toISOString()
-        });
-        writeStorage(STORAGE_KEYS.companies, state.companies);
-        if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('companies'); }
-        closeCompanyRegulationEditor();
-        renderCompanies();
-        showToast(replacing ? 'Collegamento del regolamento aggiornato.' : 'Regolamento collegato.');
-      } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
+      company.googleLatestText = '';
+      company.googleModifiedBy = null;
     }
+    company.googleRegulationDocumentId = isGoogle ? docId : null;
+    company.googleRegulationName = docName;
+    company.googleDocumentName = docName;
+    company.googleUrl = finalUrl;
+    company.regulationUrl = finalUrl;
+    company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
+    company.googleModifiedTime = linked?.modifiedTime || null;
+    company.googleRegulationDocumentId = isGoogle ? docId : null;
+    company.googleRegulationName = docName;
+    company.googleDocumentName = docName;
+    company.googleUrl = finalUrl;
+    company.regulationUrl = finalUrl;
+    company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
+    company.googleModifiedTime = linked?.modifiedTime || null;
+    company.updatedAt = new Date().toISOString();
+    if (!Array.isArray(company.history)) company.history = [];
+    company.history.push({
+      label: isGoogle ? 'Regolamento Google' : 'Regolamento',
+      from: previousUrl || 'Nessun regolamento',
+      to: finalUrl,
+      at: new Date().toISOString()
+    });
+    if (!Array.isArray(company.history)) company.history = [];
+    company.history.push({
+      label: isGoogle ? 'Regolamento Google' : 'Regolamento',
+      from: previousUrl || 'Nessun regolamento',
+      to: finalUrl,
+      at: new Date().toISOString()
+    });
+    writeStorage(STORAGE_KEYS.companies, state.companies);
+    if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('companies'); }
+    closeCompanyRegulationEditor();
+    renderCompanies();
+    showToast(replacing ? 'Collegamento del regolamento aggiornato.' : 'Regolamento collegato.');
+  } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
+}
   } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
 }
 
