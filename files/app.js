@@ -3147,8 +3147,6 @@ async function saveCompanyRegulation(event) {
     showToast(replacing ? 'Collegamento del regolamento aggiornato.' : 'Regolamento collegato.');
   } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
 }
-  } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
-}
 
 function openCompanyHistory(companyId, historyIndex) {
   if (!capable('company_regulations.view_history')) { showToast('Non hai il permesso di confrontare le versioni dei regolamenti.'); return; }
