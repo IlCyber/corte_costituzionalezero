@@ -1970,7 +1970,7 @@ async function deleteCoalitionHistoryItem(coalitionId, index) {
   writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
   if (remoteMode) {
     clearTimeout(remoteSaveTimer);
-    await saveRemoteState('coalitions');
+    await saveRemoteState('parties');
   }
   renderCoalitionHistory(coalition);
   renderCoalitions();
@@ -1991,7 +1991,7 @@ async function clearCoalitionHistory(coalitionId) {
   writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
   if (remoteMode) {
     clearTimeout(remoteSaveTimer);
-    await saveRemoteState('coalitions');
+    await saveRemoteState('parties');
   }
   renderCoalitionHistory(coalition);
   renderCoalitions();
