@@ -483,6 +483,7 @@ function capabilitiesForStateMutation(array $before, array $after): array
             if (($old['status'] ?? null) !== ($item['status'] ?? null)) $need('coalitions.change_status');
             if (valuesDiffer($old['parties'] ?? [], $item['parties'] ?? [])) $need('coalitions.manage_parties');
             if (valuesDiffer($old['history'] ?? [], $item['history'] ?? [])) $need('coalitions.edit');
+            if (valuesDiffer($old['history'] ?? [], $item['history'] ?? [])) $need('coalitions.edit');
             if (valuesDiffer(withoutFields($old, ['status', 'parties', 'history', 'updatedAt']), withoutFields($item, ['status', 'parties', 'history', 'updatedAt']))) $need('coalitions.edit');
         }
     }
@@ -636,6 +637,14 @@ function stateForUser(PDO $pdo, int $userId): ?array
     unset($record);
     if (!hasCapability($pdo, $userId, 'composition.members.view', false)) foreach ($state['courtCompositions'] ?? [] as &$record) $record['members'] = [];
     unset($record);
+
+    $canCoalitionHistory = hasCapability($pdo, $userId, 'coalitions.view_history', false) || hasCapability($pdo, $userId, 'coalitions.view', false);
+    foreach ($state['coalitions'] ?? [] as &$coalition) {
+        if (!$canCoalitionHistory) {
+            $coalition['history'] = [];
+        }
+    }
+    unset($coalition);
 
     $canCoalitionHistory = hasCapability($pdo, $userId, 'coalitions.view_history', false) || hasCapability($pdo, $userId, 'coalitions.view', false);
     foreach ($state['coalitions'] ?? [] as &$coalition) {
@@ -2263,6 +2272,71 @@ if ($action === 'save_state' && $method === 'POST') {
             foreach ($decodedState[$stateKey] ?? [] as &$record) if (isset($existingById[(string) ($record['id'] ?? '')])) $record['members'] = $existingById[(string) $record['id']]['members'] ?? [];
             unset($record);
         }
+        // Gli storici non visibili all'utente restano intatti durante la modifica.
+        // Gli storici visibili possono essere modificati o eliminati dall'utente autorizzato.
+        $canCoalitionHist = hasCapability($pdo, $userId, 'coalitions.view_history', false) || hasCapability($pdo, $userId, 'coalitions.view', false);
+        $existingById = itemsById($existingState['coalitions'] ?? []);
+        foreach ($decodedState['coalitions'] ?? [] as &$record) {
+            $existingHistory = is_array($existingById[(string) ($record['id'] ?? '')]['history'] ?? null) ? $existingById[(string) ($record['id'] ?? '')]['history'] : [];
+            $incomingHistory = is_array($record['history'] ?? null) ? $record['history'] : [];
+            $incomingEncoded = array_fill_keys(array_map(static fn (mixed $entry): string => (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $incomingHistory), true);
+            $finalHistory = $incomingHistory;
+            foreach ($existingHistory as $entry) {
+                $userCouldSeeThis = $canCoalitionHist;
+                if (!$userCouldSeeThis) {
+                    $encoded = (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if (!isset($incomingEncoded[$encoded])) {
+                        $finalHistory[] = $entry;
+                    }
+                }
+            }
+            $record['history'] = array_values($finalHistory);
+        }
+        unset($record);
+
+        $canPartyHist = hasCapability($pdo, $userId, 'parties.view_history', false);
+        $canStatuteHist = hasCapability($pdo, $userId, 'party_statutes.view_history', false);
+        $existingById = itemsById($existingState['parties'] ?? []);
+        foreach ($decodedState['parties'] ?? [] as &$record) {
+            $existingHistory = is_array($existingById[(string) ($record['id'] ?? '')]['history'] ?? null) ? $existingById[(string) ($record['id'] ?? '')]['history'] : [];
+            $incomingHistory = is_array($record['history'] ?? null) ? $record['history'] : [];
+            $incomingEncoded = array_fill_keys(array_map(static fn (mixed $entry): string => (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $incomingHistory), true);
+            $finalHistory = $incomingHistory;
+            foreach ($existingHistory as $entry) {
+                $isStatute = in_array((string) ($entry['label'] ?? ''), ['Statuto', 'Statuto Google'], true);
+                $userCouldSeeThis = $isStatute ? $canStatuteHist : $canPartyHist;
+                if (!$userCouldSeeThis) {
+                    $encoded = (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if (!isset($incomingEncoded[$encoded])) {
+                        $finalHistory[] = $entry;
+                    }
+                }
+            }
+            $record['history'] = array_values($finalHistory);
+        }
+        unset($record);
+
+        $canCompanyHist = hasCapability($pdo, $userId, 'companies.view_history', false);
+        $canRegHist = hasCapability($pdo, $userId, 'company_regulations.view_history', false);
+        $existingById = itemsById($existingState['companies'] ?? []);
+        foreach ($decodedState['companies'] ?? [] as &$record) {
+            $existingHistory = is_array($existingById[(string) ($record['id'] ?? '')]['history'] ?? null) ? $existingById[(string) ($record['id'] ?? '')]['history'] : [];
+            $incomingHistory = is_array($record['history'] ?? null) ? $record['history'] : [];
+            $incomingEncoded = array_fill_keys(array_map(static fn (mixed $entry): string => (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $incomingHistory), true);
+            $finalHistory = $incomingHistory;
+            foreach ($existingHistory as $entry) {
+                $isRegulation = in_array((string) ($entry['label'] ?? ''), ['Regolamento', 'Regolamento Google'], true);
+                $userCouldSeeThis = $isRegulation ? $canRegHist : $canCompanyHist;
+                if (!$userCouldSeeThis) {
+                    $encoded = (string) json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    if (!isset($incomingEncoded[$encoded])) {
+                        $finalHistory[] = $entry;
+                    }
+                }
+            }
+            $record['history'] = array_values($finalHistory);
+        }
+        unset($record);
         // Gli storici non visibili all'utente restano intatti durante la modifica.
         // Gli storici visibili possono essere modificati o eliminati dall'utente autorizzato.
         $canCoalitionHist = hasCapability($pdo, $userId, 'coalitions.view_history', false) || hasCapability($pdo, $userId, 'coalitions.view', false);
