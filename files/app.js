@@ -4095,6 +4095,4 @@ function startGoogleNameWatcher() {
 
       document.addEventListener('DOMContentLoaded', initialize);
       } catch (error) { console.error(error); }
-    }
-  }
-}
+      document.addEventListener('DOMContentLoaded', initialize);
