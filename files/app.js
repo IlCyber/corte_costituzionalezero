@@ -1996,6 +1996,93 @@ async function clearCoalitionHistory(coalitionId) {
   renderCoalitionHistory(coalition);
   renderCoalitions();
   showToast('Cronologia della coalizione svuotata.');
+  const list = document.getElementById('coalitionHistory');
+  const empty = document.getElementById('coalitionHistoryEmpty');
+  const clearBtn = document.getElementById('clearCoalitionHistoryButton');
+  const formCol = document.getElementById('coalitionFormColumn');
+  if (!panel || !list) return;
+
+  const canView = capable('coalitions.view_history') || capable('coalitions.view');
+  if (!coalition || !canView) {
+    panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
+    return;
+  }
+  panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
+
+  const history = Array.isArray(coalition.history) ? coalition.history : [];
+  const canEdit = capable('coalitions.edit');
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !canEdit);
+    clearBtn.dataset.coalitionId = coalition.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-coalition-history="${coalition.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deleteCoalitionHistoryItem(coalitionId, index) {
+  if (!capable('coalitions.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const coalition = state.coalitions.find(item => item.id === coalitionId);
+  const idx = Number(index);
+  if (!coalition || !Array.isArray(coalition.history) || idx < 0 || idx >= coalition.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia della coalizione?')) return;
+
+  coalition.history.splice(idx, 1);
+  coalition.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderCoalitionHistory(coalition);
+  renderCoalitions();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearCoalitionHistory(coalitionId) {
+  if (!capable('coalitions.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const coalition = state.coalitions.find(item => item.id === coalitionId);
+  if (!coalition || !Array.isArray(coalition.history) || coalition.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia della coalizione «${coalition.name}»? L'operazione non può essere annullata.`)) return;
+
+  coalition.history = [];
+  coalition.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderCoalitionHistory(coalition);
+  renderCoalitions();
+  showToast('Cronologia della coalizione svuotata.');
 }
 
 function renderCoalitions() {
@@ -2562,10 +2649,208 @@ async function clearPartyHistory(partyId) {
   renderPartyHistory(party);
   renderParties();
   showToast('Cronologia del partito svuotata.');
+  const list = document.getElementById('partyHistory');
+  const empty = document.getElementById('partyHistoryEmpty');
+  const clearBtn = document.getElementById('clearPartyHistoryButton');
+  const formCol = document.getElementById('partyFormColumn');
+  if (!panel || !list) return;
+
+  if (!party || !capable('parties.view_history')) {
+    panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
+    return;
+  }
+  panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
+
+  const history = Array.isArray(party.history) ? party.history : [];
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !capable('parties.edit'));
+    clearBtn.dataset.partyId = party.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  const canEdit = capable('parties.edit');
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const isStatute = entry.label === 'Statuto' || entry.label === 'Statuto Google';
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const modifier = entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : '';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-party-history="${party.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    if (isStatute && (entry.previousStatute !== undefined || entry.nextStatute !== undefined)) {
+      return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+        <button type="button" class="history-version-btn flex-grow-1 text-start" data-open-statute-history="${party.id}" data-history-index="${index}">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+          <span class="d-block small text-primary mt-1"><i class="bi bi-file-diff me-1"></i>Apri confronto versioni</span>
+        </button>
+        ${deleteBtnHtml}
+      </div>`;
+    }
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deletePartyHistoryItem(partyId, index) {
+  if (!capable('parties.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const party = state.parties.find(item => item.id === partyId);
+  const idx = Number(index);
+  if (!party || !Array.isArray(party.history) || idx < 0 || idx >= party.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia del partito?')) return;
+
+  party.history.splice(idx, 1);
+  party.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.parties, state.parties);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderPartyHistory(party);
+  renderParties();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearPartyHistory(partyId) {
+  if (!capable('parties.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const party = state.parties.find(item => item.id === partyId);
+  if (!party || !Array.isArray(party.history) || party.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia del partito «${party.name}»? L'operazione non può essere annullata.`)) return;
+
+  party.history = [];
+  party.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.parties, state.parties);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('parties');
+  }
+  renderPartyHistory(party);
+  renderParties();
+  showToast('Cronologia del partito svuotata.');
 }
 
 function renderCompanyHistory(company = null) {
   const panel = document.getElementById('companyHistoryPanel');
+  const list = document.getElementById('companyHistory');
+  const empty = document.getElementById('companyHistoryEmpty');
+  const clearBtn = document.getElementById('clearCompanyHistoryButton');
+  const formCol = document.getElementById('companyFormColumn');
+  if (!panel || !list) return;
+
+  if (!company || !capable('companies.view_history')) {
+    panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
+    return;
+  }
+  panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
+
+  const history = Array.isArray(company.history) ? company.history : [];
+  const canEdit = capable('companies.edit') || capable('company_regulations.edit');
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !canEdit);
+    clearBtn.dataset.companyId = company.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const isRegulation = entry.label === 'Regolamento' || entry.label === 'Regolamento Google';
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const modifier = entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : '';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-company-history="${company.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    if (isRegulation && (entry.previousStatute !== undefined || entry.nextStatute !== undefined)) {
+      return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+        <button type="button" class="history-version-btn flex-grow-1 text-start" data-open-company-history="${company.id}" data-history-index="${index}">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+          <span class="d-block small text-primary mt-1"><i class="bi bi-file-diff me-1"></i>Apri confronto versioni</span>
+        </button>
+        ${deleteBtnHtml}
+      </div>`;
+    }
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deleteCompanyHistoryItem(companyId, index) {
+  if (!capable('companies.edit') && !capable('company_regulations.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const company = state.companies.find(item => item.id === companyId);
+  const idx = Number(index);
+  if (!company || !Array.isArray(company.history) || idx < 0 || idx >= company.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia dell’azienda?')) return;
+
+  company.history.splice(idx, 1);
+  company.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.companies, state.companies);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('companies');
+  }
+  renderCompanyHistory(company);
+  renderCompanies();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearCompanyHistory(companyId) {
+  if (!capable('companies.edit') && !capable('company_regulations.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const company = state.companies.find(item => item.id === companyId);
+  if (!company || !Array.isArray(company.history) || company.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia dell’azienda «${company.name}»? L'operazione non può essere annullata.`)) return;
+
+  company.history = [];
+  company.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.companies, state.companies);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('companies');
+  }
+  renderCompanyHistory(company);
+  renderCompanies();
+  showToast('Cronologia dell’azienda svuotata.');
   const list = document.getElementById('companyHistory');
   const empty = document.getElementById('companyHistoryEmpty');
   const clearBtn = document.getElementById('clearCompanyHistoryButton');
