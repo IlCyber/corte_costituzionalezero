@@ -85,6 +85,7 @@ function applicationCapabilityCatalog(): array
         ['coalitions.view', 'Visualizzare coalizioni', 'view'],
         ['coalitions.create', 'Creare coalizioni', 'create'],
         ['coalitions.edit', 'Modificare coalizioni', 'edit'],
+        ['coalitions.view_history', 'Consultare storico coalizioni', 'view'],
         ['coalitions.change_status', 'Cambiare stato delle coalizioni', 'approve'],
         ['coalitions.manage_parties', 'Cambiare i partiti aderenti', 'edit'],
         ['coalitions.trash', 'Spostare coalizioni nel cestino', 'delete', true],
