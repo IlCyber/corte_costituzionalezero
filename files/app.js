@@ -1901,10 +1901,93 @@ function renderCoalitionFields(coalition = null) {
 
 function renderCoalitionHistory(coalition = null) {
   const panel = document.getElementById('coalitionHistoryPanel');
-  const history = coalition?.history || [];
-  if (panel) panel.classList.toggle('d-none', !coalition || history.length === 0);
-  const historyList = document.getElementById('coalitionHistory');
-  if (historyList) historyList.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at ? entry.at.slice(0, 10) : '')}</span></div>`).join('');
+  const list = document.getElementById('coalitionHistory');
+  const empty = document.getElementById('coalitionHistoryEmpty');
+  const clearBtn = document.getElementById('clearCoalitionHistoryButton');
+  const formCol = document.getElementById('coalitionFormColumn');
+  if (!panel || !list) return;
+
+  const canView = capable('coalitions.view_history') || capable('coalitions.view');
+  if (!coalition || !canView) {
+    panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
+    return;
+  }
+  panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
+
+  const history = Array.isArray(coalition.history) ? coalition.history : [];
+  const canEdit = capable('coalitions.edit');
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !canEdit);
+    clearBtn.dataset.coalitionId = coalition.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-coalition-history="${coalition.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deleteCoalitionHistoryItem(coalitionId, index) {
+  if (!capable('coalitions.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const coalition = state.coalitions.find(item => item.id === coalitionId);
+  const idx = Number(index);
+  if (!coalition || !Array.isArray(coalition.history) || idx < 0 || idx >= coalition.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia della coalizione?')) return;
+
+  coalition.history.splice(idx, 1);
+  coalition.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('coalitions');
+  }
+  renderCoalitionHistory(coalition);
+  renderCoalitions();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearCoalitionHistory(coalitionId) {
+  if (!capable('coalitions.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const coalition = state.coalitions.find(item => item.id === coalitionId);
+  if (!coalition || !Array.isArray(coalition.history) || coalition.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia della coalizione «${coalition.name}»? L'operazione non può essere annullata.`)) return;
+
+  coalition.history = [];
+  coalition.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.coalitions, state.coalitions);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('coalitions');
+  }
+  renderCoalitionHistory(coalition);
+  renderCoalitions();
+  showToast('Cronologia della coalizione svuotata.');
 }
 
 function renderCoalitions() {
@@ -2367,13 +2450,16 @@ function renderPartyHistory(party = null) {
   const list = document.getElementById('partyHistory');
   const empty = document.getElementById('partyHistoryEmpty');
   const clearBtn = document.getElementById('clearPartyHistoryButton');
+  const formCol = document.getElementById('partyFormColumn');
   if (!panel || !list) return;
 
   if (!party || !capable('parties.view_history')) {
     panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
     return;
   }
   panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
 
   const history = Array.isArray(party.history) ? party.history : [];
   if (clearBtn) {
@@ -2464,9 +2550,105 @@ async function clearPartyHistory(partyId) {
 
 function renderCompanyHistory(company = null) {
   const panel = document.getElementById('companyHistoryPanel');
-  const history = company?.history || [];
-  panel.classList.toggle('d-none', !company || history.length === 0 || !capable('companies.view_history'));
-  document.getElementById('companyHistory').innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => entry.label === 'Regolamento' || entry.label === 'Regolamento Google' ? `<button type="button" class="history-entry history-version" data-open-company-history="${company.id}" data-history-index="${index}"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}${entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : ''}</span><span class="d-block small text-primary mt-1">Apri confronto versioni</span></button>` : `<div class="history-entry"><strong>${escapeHtml(entry.label)}</strong><span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${formatDate(entry.at.slice(0, 10))}</span></div>`).join('');
+  const list = document.getElementById('companyHistory');
+  const empty = document.getElementById('companyHistoryEmpty');
+  const clearBtn = document.getElementById('clearCompanyHistoryButton');
+  const formCol = document.getElementById('companyFormColumn');
+  if (!panel || !list) return;
+
+  if (!company || !capable('companies.view_history')) {
+    panel.classList.add('d-none');
+    if (formCol) formCol.className = 'col-12';
+    return;
+  }
+  panel.classList.remove('d-none');
+  if (formCol) formCol.className = 'col-12 col-lg-7';
+
+  const history = Array.isArray(company.history) ? company.history : [];
+  const canEdit = capable('companies.edit') || capable('company_regulations.edit');
+  if (clearBtn) {
+    clearBtn.classList.toggle('d-none', history.length === 0 || !canEdit);
+    clearBtn.dataset.companyId = company.id;
+  }
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    list.classList.add('d-none');
+    if (empty) empty.classList.remove('d-none');
+    return;
+  }
+
+  if (empty) empty.classList.add('d-none');
+  list.classList.remove('d-none');
+
+  list.innerHTML = history.map((entry, index) => ({ entry, index })).reverse().map(({ entry, index }) => {
+    const isRegulation = entry.label === 'Regolamento' || entry.label === 'Regolamento Google';
+    const dateStr = entry.at ? formatDate(entry.at.slice(0, 10)) : 'Data non registrata';
+    const modifier = entry.googleModifiedBy ? ` · ${escapeHtml(entry.googleModifiedBy)}` : '';
+    const deleteBtnHtml = canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-delete-history-item" data-delete-company-history="${company.id}" data-history-index="${index}" title="Elimina questa voce dalla cronologia"><i class="bi bi-trash"></i></button>` : '';
+
+    if (isRegulation && (entry.previousStatute !== undefined || entry.nextStatute !== undefined)) {
+      return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+        <button type="button" class="history-version-btn flex-grow-1 text-start" data-open-company-history="${company.id}" data-history-index="${index}">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+          <span class="d-block small text-primary mt-1"><i class="bi bi-file-diff me-1"></i>Apri confronto versioni</span>
+        </button>
+        ${deleteBtnHtml}
+      </div>`;
+    }
+
+    return `<div class="history-entry history-entry-row d-flex justify-content-between align-items-center gap-2">
+      <div class="flex-grow-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="d-block small text-secondary">${escapeHtml(entry.from || '—')} → ${escapeHtml(entry.to || '—')} · ${dateStr}${modifier}</span>
+      </div>
+      ${deleteBtnHtml}
+    </div>`;
+  }).join('');
+}
+
+async function deleteCompanyHistoryItem(companyId, index) {
+  if (!capable('companies.edit') && !capable('company_regulations.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const company = state.companies.find(item => item.id === companyId);
+  const idx = Number(index);
+  if (!company || !Array.isArray(company.history) || idx < 0 || idx >= company.history.length) return;
+  if (!confirm('Vuoi eliminare questa voce dalla cronologia dell’azienda?')) return;
+
+  company.history.splice(idx, 1);
+  company.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.companies, state.companies);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('companies');
+  }
+  renderCompanyHistory(company);
+  renderCompanies();
+  showToast('Voce della cronologia eliminata.');
+}
+
+async function clearCompanyHistory(companyId) {
+  if (!capable('companies.edit') && !capable('company_regulations.edit')) {
+    showToast('Non hai il permesso di modificare la cronologia.');
+    return;
+  }
+  const company = state.companies.find(item => item.id === companyId);
+  if (!company || !Array.isArray(company.history) || company.history.length === 0) return;
+  if (!confirm(`Sei sicuro di voler eliminare interamente la cronologia dell’azienda «${company.name}»? L'operazione non può essere annullata.`)) return;
+
+  company.history = [];
+  company.updatedAt = new Date().toISOString();
+  writeStorage(STORAGE_KEYS.companies, state.companies);
+  if (remoteMode) {
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('companies');
+  }
+  renderCompanyHistory(company);
+  renderCompanies();
+  showToast('Cronologia dell’azienda svuotata.');
 }
 
 function diffStatuteText(previousText, nextText) {
@@ -3438,7 +3620,55 @@ async function initialize() {
     editor.style.borderRadius = '.375rem';
     editor.style.width = '100%';
   });
-  document.addEventListener('click', event => { const numberButton = event.target.closest('[data-edit-document-number]'); if (numberButton) { event.stopPropagation(); editDocumentNumber(numberButton.dataset.editDocumentNumber); return; } const clearPartyHistoryBtn = event.target.closest('#clearPartyHistoryButton'); if (clearPartyHistoryBtn) { event.stopPropagation(); clearPartyHistory(clearPartyHistoryBtn.dataset.partyId || editingPartyId); return; } const deletePartyHistoryBtn = event.target.closest('[data-delete-party-history]'); if (deletePartyHistoryBtn) { event.stopPropagation(); deletePartyHistoryItem(deletePartyHistoryBtn.dataset.deletePartyHistory, deletePartyHistoryBtn.dataset.historyIndex); return; } const usefulLinkEdit = event.target.closest('[data-edit-useful-link]'); if (usefulLinkEdit) { event.stopPropagation(); openUsefulLinkModal(usefulLinkEdit.dataset.editUsefulLink); return; } const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && !event.target.closest('button')) { openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const relinkCompanyRegulationButton = event.target.closest('[data-relink-company-regulation]'); if (relinkCompanyRegulationButton) { event.stopImmediatePropagation(); openCompanyRegulationEditor(relinkCompanyRegulationButton.dataset.relinkCompanyRegulation, true); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const relinkPartyStatuteButton = event.target.closest('[data-relink-party-statute]'); if (relinkPartyStatuteButton) { event.stopImmediatePropagation(); openPartyStatuteEditor(relinkPartyStatuteButton.dataset.relinkPartyStatute, true); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
+  document.addEventListener('click', event => {
+    const numberButton = event.target.closest('[data-edit-document-number]');
+    if (numberButton) {
+      event.stopPropagation();
+      editDocumentNumber(numberButton.dataset.editDocumentNumber);
+      return;
+    }
+    const clearPartyHistoryBtn = event.target.closest('#clearPartyHistoryButton');
+    if (clearPartyHistoryBtn) {
+      event.stopPropagation();
+      clearPartyHistory(clearPartyHistoryBtn.dataset.partyId || editingPartyId);
+      return;
+    }
+    const deletePartyHistoryBtn = event.target.closest('[data-delete-party-history]');
+    if (deletePartyHistoryBtn) {
+      event.stopPropagation();
+      deletePartyHistoryItem(deletePartyHistoryBtn.dataset.deletePartyHistory, deletePartyHistoryBtn.dataset.historyIndex);
+      return;
+    }
+    const clearCoalitionHistoryBtn = event.target.closest('#clearCoalitionHistoryButton');
+    if (clearCoalitionHistoryBtn) {
+      event.stopPropagation();
+      clearCoalitionHistory(clearCoalitionHistoryBtn.dataset.coalitionId || editingCoalitionId);
+      return;
+    }
+    const deleteCoalitionHistoryBtn = event.target.closest('[data-delete-coalition-history]');
+    if (deleteCoalitionHistoryBtn) {
+      event.stopPropagation();
+      deleteCoalitionHistoryItem(deleteCoalitionHistoryBtn.dataset.deleteCoalitionHistory, deleteCoalitionHistoryBtn.dataset.historyIndex);
+      return;
+    }
+    const clearCompanyHistoryBtn = event.target.closest('#clearCompanyHistoryButton');
+    if (clearCompanyHistoryBtn) {
+      event.stopPropagation();
+      clearCompanyHistory(clearCompanyHistoryBtn.dataset.companyId || editingCompanyId);
+      return;
+    }
+    const deleteCompanyHistoryBtn = event.target.closest('[data-delete-company-history]');
+    if (deleteCompanyHistoryBtn) {
+      event.stopPropagation();
+      deleteCompanyHistoryItem(deleteCompanyHistoryBtn.dataset.deleteCompanyHistory, deleteCompanyHistoryBtn.dataset.historyIndex);
+      return;
+    }
+    const usefulLinkEdit = event.target.closest('[data-edit-useful-link]');
+    if (usefulLinkEdit) {
+      event.stopPropagation();
+      openUsefulLinkModal(usefulLinkEdit.dataset.editUsefulLink);
+      return;
+    } const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && !event.target.closest('button')) { openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const editTemplateButton = event.target.closest('[data-edit-template]'); if (editTemplateButton) { event.stopPropagation(); openTemplateEditor(editTemplateButton.dataset.editTemplate); return; } const deleteTemplateButton = event.target.closest('[data-delete-template]'); if (deleteTemplateButton) { event.stopPropagation(); deleteTemplate(deleteTemplateButton.dataset.deleteTemplate); return; } const downloadButton = event.target.closest('[data-download-pdf]'); if (downloadButton) { event.stopPropagation(); downloadDocumentPdf(downloadButton.dataset.downloadPdf); return; } const downloadTemplateButton = event.target.closest('[data-download-template-pdf]'); if (downloadTemplateButton) { event.stopPropagation(); downloadTemplatePdf(downloadTemplateButton.dataset.downloadTemplatePdf); return; } const downloadStatuteButton = event.target.closest('[data-download-statute-pdf]'); if (downloadStatuteButton) { event.stopPropagation(); downloadPartyStatutePdf(downloadStatuteButton.dataset.downloadStatutePdf); return; } const downloadRegulationButton = event.target.closest('[data-download-regulation-pdf]'); if (downloadRegulationButton) { event.stopPropagation(); downloadCompanyRegulationPdf(downloadRegulationButton.dataset.downloadRegulationPdf); return; } const printButton = event.target.closest('[data-print-document]'); if (printButton) { event.stopPropagation(); printDocument(printButton.dataset.printDocument); return; } const useButton = event.target.closest('[data-use-template]'); if (useButton) { openDocumentModal(useButton.dataset.useTemplate); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry) { event.stopPropagation(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry) { event.stopPropagation(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const relinkCompanyRegulationButton = event.target.closest('[data-relink-company-regulation]'); if (relinkCompanyRegulationButton) { event.stopImmediatePropagation(); openCompanyRegulationEditor(relinkCompanyRegulationButton.dataset.relinkCompanyRegulation, true); return; } const companyRegulationButton = event.target.closest('[data-open-company-regulation]'); if (companyRegulationButton) { event.stopPropagation(); openCompanyRegulationEditor(companyRegulationButton.dataset.openCompanyRegulation); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard) { openCompanyEditor(companyCard.dataset.openCompany); return; } const parliamentAction = event.target.closest('[data-open-parliament-action]'); if (parliamentAction) { event.stopPropagation(); openParliamentEditor(parliamentAction.dataset.openParliamentAction); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard) { openParliamentEditor(parliamentCard.dataset.openParliament); return; } const resignButton = event.target.closest('[data-resign-member]'); if (resignButton) { event.stopPropagation(); resignMember(resignButton.dataset.resignMember); return; } const editMemberButton = event.target.closest('[data-edit-member]'); if (editMemberButton) { event.stopPropagation(); openMemberEditor(editMemberButton.dataset.editMember); return; } const nominationButton = event.target.closest('[data-new-nomination]'); if (nominationButton) { event.stopPropagation(); openMemberEditor('', nominationButton.dataset.newNomination); return; } const relinkPartyStatuteButton = event.target.closest('[data-relink-party-statute]'); if (relinkPartyStatuteButton) { event.stopImmediatePropagation(); openPartyStatuteEditor(relinkPartyStatuteButton.dataset.relinkPartyStatute, true); return; } const partyStatuteButton = event.target.closest('[data-open-party-statute]'); if (partyStatuteButton) { event.stopPropagation(); openPartyStatuteEditor(partyStatuteButton.dataset.openPartyStatute); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard) { openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row) openDocumentEditor(row.dataset.openDocument); });
   document.addEventListener('keydown', event => { const usefulLinkRow = event.target.closest('[data-open-useful-link]'); if (usefulLinkRow && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openUsefulLink(usefulLinkRow.dataset.openUsefulLink); return; } const parliamentCard = event.target.closest('[data-open-parliament]'); if (parliamentCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openParliamentEditor(parliamentCard.dataset.openParliament); return; } const companyHistoryEntry = event.target.closest('[data-open-company-history]'); if (companyHistoryEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyHistory(companyHistoryEntry.dataset.openCompanyHistory, companyHistoryEntry.dataset.historyIndex); return; } const historyEntry = event.target.closest('[data-open-statute-history]'); if (historyEntry && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openStatuteHistory(historyEntry.dataset.openStatuteHistory, historyEntry.dataset.historyIndex); return; } const companyCard = event.target.closest('[data-open-company]'); if (companyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openCompanyEditor(companyCard.dataset.openCompany); return; } const partyCard = event.target.closest('[data-open-party]'); if (partyCard && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openPartyEditor(partyCard.dataset.openParty); return; } const row = event.target.closest('[data-open-document]'); if (row && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openDocumentEditor(row.dataset.openDocument); } });
   document.getElementById('documentDate').value = today();
   document.querySelectorAll('#documentModal, #templateModal, #parliamentModal').forEach(element => { element.classList.remove('modal', 'fade'); element.classList.add('editor-page', 'd-none'); });
