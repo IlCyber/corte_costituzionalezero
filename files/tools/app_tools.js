@@ -7,10 +7,10 @@
  * tools: sia la scheda "Tools" dentro index.html, sia le singole pagine della
  * cartella tools (es. formattazione.html), che restano puro HTML come index.
  *
- * Viene caricato da tools/app-tools-loader.php, che aggiunge automaticamente
- * una versione basata sulla data di modifica del file: a ogni modifica cambia
- * l'URL e il browser scarica la copia nuova senza dover mai svuotare la cache
- * a mano (stesso meccanismo usato per app.js).
+ * Viene caricato da tools/app-tools-loader.php, che usa il manifest globale
+ * degli asset pubblici: a ogni modifica di CSS, JS o pagine HTML cambia la
+ * versione e il browser scarica la copia nuova senza dover mai svuotare la
+ * cache a mano (stesso meccanismo usato per app.js).
  *
  * Per aggiungere un nuovo tool: crea la pagina HTML nella cartella tools,
  * includi <script src="app-tools-loader.php"></script> e aggiungi una riga
@@ -83,7 +83,7 @@ function openTool(id) {
   const tool = TOOLS_CATALOG.find(item => item.id === id);
   const url = normalizeToolPath(tool?.file);
   if (!url) { toolsShowToast('Tool non valido.'); return; }
-  window.location.href = url;
+  window.location.href = typeof window.czVersionedAssetUrl === 'function' ? window.czVersionedAssetUrl(url) : url;
 }
 
 function renderTools() {

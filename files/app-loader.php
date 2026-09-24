@@ -1,14 +1,28 @@
 <?php
 declare(strict_types=1);
 
-// Questo endpoint viene sempre riconvalidato e rimanda al file JavaScript con
-// una versione ricavata automaticamente dalla sua data di modifica. Quando
-// app.js cambia, cambia anche l'URL e il browser non può riusare la vecchia cache.
-$asset = __DIR__ . '/app.js';
-$version = is_file($asset) ? (string) filemtime($asset) : (string) time();
+require_once __DIR__ . '/private/asset_cache.php';
 
-header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-header('Pragma: no-cache');
-header('Expires: 0');
-header('Location: app.js?v=' . rawurlencode($version), true, 302);
+$manifest = cz_asset_cache_public_manifest(__DIR__);
+$manifestVersion = cz_asset_cache_manifest_version($manifest);
+
+// Modalità redirect generica: app-loader.php?asset=styles.css rimanda sempre
+// alla risorsa locale con una versione basata sul contenuto del file. Può essere
+// usata per CSS, pagine HTML, immagini o altri asset pubblici presenti nel
+// manifest, senza esporre la cartella private/.
+if (isset($_GET['asset'])) {
+    cz_asset_cache_redirect((string) $_GET['asset'], $manifest, $manifestVersion);
+    exit;
+}
+
+cz_asset_cache_headers();
+
+echo cz_asset_cache_loader_script([
+    'assets' => cz_asset_cache_versions($manifest),
+    'version' => $manifestVersion,
+    'storageKey' => 'cz_asset_cache_manifest_v2',
+    'reloadParam' => 'cz_cache_v',
+    'rootBase' => './',
+    'entrySrc' => 'app.js',
+]);
 exit;

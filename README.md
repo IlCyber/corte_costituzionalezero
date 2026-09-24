@@ -31,7 +31,8 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - [index.html](index.html): interfaccia.
 - [styles.css](styles.css): stile responsive.
 - [app.js](app.js): logica dell'interfaccia, fallback locale e sincronizzazione API.
-- [app-loader.php](app-loader.php): assegna automaticamente ad `app.js` una versione basata sulla data di modifica, evitando cache obsolete.
+- [app-loader.php](app-loader.php): crea un manifest versionato di CSS, JavaScript, HTML e altri asset pubblici; svuota/aggiorna le cache del browser e carica sempre le copie aggiornate.
+- [private/asset_cache.php](private/asset_cache.php): helper condiviso dai loader per generare versioni, redirect sicuri e refresh degli asset.
 - [api.php](api.php): autenticazione, richieste utenti, ruoli, permessi, sessione e persistenza con PDO.
 - [private/config.php](private/config.php): configurazione MySQL non esposta direttamente al browser.
 - [database.sql](database.sql): query per utenti, ruoli, permessi, richieste, log e archivio MySQL 8.0.
@@ -193,7 +194,7 @@ VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin',
 5. Creare un progetto Google Cloud, abilitare Google Drive API e Google Docs API e creare un client OAuth 2.0 di tipo applicazione web. Nella schermata consenso OAuth pubblicare l'app in stato **In produzione**: se il progetto esterno resta in stato **Test**, Google fa scadere i refresh token dopo 7 giorni e nessuna modifica applicativa può evitarlo. In produzione il collegamento usa un refresh token offline, viene rinnovato automaticamente e resta valido finché l'utente non revoca l'accesso, non cambia condizioni di sicurezza dell'account o non lascia il collegamento inutilizzato per il periodo previsto da Google.
 6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` e `GOOGLE_WEBHOOK_URI` in `private/config.php`. `GOOGLE_DRIVE_FOLDER_ID` è mantenuto solo come migrazione facoltativa della vecchia cartella documenti. L’URI di redirect deve puntare esattamente a `api.php?action=google_callback` ed essere registrato tra gli URI autorizzati del client Google (stesso protocollo HTTPS, dominio e percorso). Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
-8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
+8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php`, la cartella `tools/` e la cartella `private/` (incluso `private/asset_cache.php`). Il file SQL può essere rimosso dal sito dopo l'importazione.
 9. Accedere al sito, usare **Collega account Google**, quindi aprire **Impostazioni → Cartelle Google Drive** e salvare gli ID delle due cartelle **Documenti sito** e **Regolamenti aziende**. L’account autorizzato deve avere accesso a entrambe.
 7. Se Altervista consente di tenere file fuori dalla cartella pubblica, spostare lì `private/config.php`; in alternativa mantenerlo come file PHP non collegato pubblicamente e usare le protezioni già disponibili nel pannello Altervista.
 8. Aprire l'URL HTTPS del sito e accedere con l'utente creato.

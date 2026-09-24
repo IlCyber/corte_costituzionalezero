@@ -1,15 +1,24 @@
 <?php
 declare(strict_types=1);
 
-// Stesso meccanismo di files/app-loader.php: l'endpoint viene sempre
-// riconvalidato e rimanda ad app_tools.js con una versione ricavata dalla data
-// di modifica del file. Quando app_tools.js cambia, cambia anche l'URL e il
-// browser non può riusare la vecchia cache: non serve mai svuotarla a mano.
-$asset = __DIR__ . '/app_tools.js';
-$version = is_file($asset) ? (string) filemtime($asset) : (string) time();
+require_once dirname(__DIR__) . '/private/asset_cache.php';
 
-header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-header('Pragma: no-cache');
-header('Expires: 0');
-header('Location: app_tools.js?v=' . rawurlencode($version), true, 302);
+$root = dirname(__DIR__);
+$manifest = cz_asset_cache_public_manifest($root);
+$manifestVersion = cz_asset_cache_manifest_version($manifest);
+
+// Anche il loader dei tools partecipa allo stesso sistema di cache-busting del
+// loader principale: quando cambia qualunque asset pubblico (CSS, JS o HTML),
+// la pagina viene ricaricata con una versione nuova e app_tools.js viene servito
+// con l'hash del contenuto corrente.
+cz_asset_cache_headers();
+
+echo cz_asset_cache_loader_script([
+    'assets' => cz_asset_cache_versions($manifest),
+    'version' => $manifestVersion,
+    'storageKey' => 'cz_asset_cache_manifest_v2',
+    'reloadParam' => 'cz_cache_v',
+    'rootBase' => '../',
+    'entrySrc' => 'app_tools.js',
+]);
 exit;
