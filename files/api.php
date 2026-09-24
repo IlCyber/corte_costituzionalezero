@@ -191,13 +191,11 @@ function sanitizeState(array $state): array
     $legacyDocumentsFolder = defined('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID')
         ? (string) GOOGLE_DRIVE_FOLDER_ID
         : '';
-    $candidate = trim((string) ($folders['documents'] ?? $legacyDocumentsFolder));
+    $documentsCandidate = trim((string) ($folders['documents'] ?? $legacyDocumentsFolder));
+    $regulationsCandidate = trim((string) ($folders['regulations'] ?? ''));
     $state['googleDriveFolders'] = [
-        'documents' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $candidate) ? $candidate : '',
-    ];
-    $candidate = trim((string) ($folders['documents'] ?? $legacyDocumentsFolder));
-    $state['googleDriveFolders'] = [
-        'documents' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $candidate) ? $candidate : '',
+        'documents' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $documentsCandidate) ? $documentsCandidate : '',
+        'regulations' => preg_match('/^[a-zA-Z0-9_-]{5,}$/', $regulationsCandidate) ? $regulationsCandidate : '',
     ];
 
     foreach ($state['documents'] ?? [] as &$document) {
@@ -496,7 +494,12 @@ function capabilitiesForStateMutation(array $before, array $after): array
         if (array_diff_key($oldItems, $newItems)) throw new RuntimeException('Gli elementi possono essere rimossi soltanto tramite il cestino.');
         foreach ($newItems as $id => $item) {
             $old = $oldItems[$id] ?? null;
-            if (!$old) { $need($createCapability); continue; }
+            if (!$old) {
+                $need($createCapability);
+                $hasInitialDocument = !empty($item[$documentField]) || !empty($item['statuteUrl']) || !empty($item['regulationUrl']) || !empty($item['googleUrl']);
+                if ($hasInitialDocument) $need($linkedCreate);
+                continue;
+            }
             if (!valuesDiffer($old, $item)) continue;
             $googleFields = [$documentField, 'googleUrl', 'statuteUrl', 'regulationUrl', 'statute', 'regulation', 'googleStatuteName', 'googleRegulationName', 'googleDocumentName', 'googleModifiedTime', 'googleModifiedBy', 'googleLatestText'];
             $generalIgnored = array_merge($googleFields, ['history', 'updatedAt']);
@@ -865,22 +868,26 @@ function googleConfigured(): bool
     return !configPlaceholder('GOOGLE_CLIENT_ID') && !configPlaceholder('GOOGLE_CLIENT_SECRET') && !configPlaceholder('GOOGLE_REDIRECT_URI');
 }
 
-/** @return array{documents:string} */
-/** @return array{documents:string} */
+/** @return array{documents:string, regulations:string} */
 function googleDriveFolders(PDO $pdo): array
 {
     $state = rawSiteState($pdo) ?: [];
     $folders = is_array($state['googleDriveFolders'] ?? null) ? $state['googleDriveFolders'] : [];
-    $legacyDocumentsFolder = defined('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID') ? (string) GOOGLE_DRIVE_FOLDER_ID : '';
+    $legacyDocumentsFolder = defined('GOOGLE_DRIVE_FOLDER_ID') && !configPlaceholder('GOOGLE_DRIVE_FOLDER_ID')
+        ? (string) GOOGLE_DRIVE_FOLDER_ID
+        : '';
     return [
         'documents' => validGoogleId($folders['documents'] ?? $legacyDocumentsFolder),
+        'regulations' => validGoogleId($folders['regulations'] ?? null),
     ];
 }
 
 function googleFolderForScope(PDO $pdo, string $scope): string
 {
-    return googleDriveFolders($pdo)['documents'] ?? '';
-    return googleDriveFolders($pdo)['documents'] ?? '';
+    $folders = googleDriveFolders($pdo);
+    return $scope === 'company_regulations'
+        ? ($folders['regulations'] ?? '')
+        : ($folders['documents'] ?? '');
 }
 
 /**
@@ -1100,6 +1107,76 @@ function googleDocumentIdFromInput(mixed $value): string
     $input = trim((string) $value);
     if (preg_match('~docs\.google\.com/document/d/([a-zA-Z0-9_-]+)~i', $input, $match)) return validGoogleId($match[1]);
     return validGoogleId($input);
+}
+
+/**
+ * Recupera e verifica un Google Documento nella cartella prevista. Il controllo
+ * dei genitori è lato server: un URL valido non basta a trasformare un file
+ * Drive qualsiasi in un regolamento aziendale.
+ *
+ * @return array<string, mixed>
+ */
+function googleDocumentInFolder(PDO $pdo, int $userId, string $documentId, string $folderId): array
+{
+    if ($folderId === '') respond(['error' => 'Configura prima la cartella Google Drive «Regolamenti aziende» nelle Impostazioni.'], 409);
+    $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query([
+        'fields' => 'id,name,mimeType,trashed,webViewLink,modifiedTime,parents',
+        'supportsAllDrives' => 'true',
+    ]));
+    if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) {
+        respond(['error' => 'Il link non indica un Google Documento valido e accessibile.'], 422);
+    }
+    $parents = array_map('strval', is_array($file['parents'] ?? null) ? $file['parents'] : []);
+    if (!in_array($folderId, $parents, true)) {
+        respond(['error' => 'Il Google Documento selezionato non appartiene alla cartella «Regolamenti aziende» configurata.'], 422);
+    }
+    return $file;
+}
+
+/** @return array{documentId:string, url:string} */
+function companyRegulationLinkData(array $company): array
+{
+    $url = trim((string) ($company['regulationUrl'] ?? $company['googleUrl'] ?? ''));
+    return [
+        'documentId' => validGoogleId($company['googleRegulationDocumentId'] ?? null),
+        'url' => $url,
+    ];
+}
+
+/**
+ * Impedisce di aggirare google_document_link con una chiamata diretta a
+ * save_state. I collegamenti storici non modificati restano leggibili, mentre
+ * ogni collegamento nuovo o sostituito deve essere un Google Doc nella cartella
+ * aziendale dedicata.
+ */
+function validateCompanyRegulationStateMutation(PDO $pdo, int $userId, array $before, array $after): void
+{
+    $beforeById = itemsById($before['companies'] ?? []);
+    $companies = is_array($after['companies'] ?? null) ? $after['companies'] : [];
+    $folderId = validGoogleId($after['googleDriveFolders']['regulations'] ?? null) ?: googleFolderForScope($pdo, 'company_regulations');
+    $linkedByDocument = [];
+    foreach ($companies as $company) {
+        if (!is_array($company) || !isset($company['id'])) continue;
+        $data = companyRegulationLinkData($company);
+        if ($data['documentId'] !== '') $linkedByDocument[$data['documentId']][] = (string) $company['id'];
+    }
+
+    foreach ($companies as $company) {
+        if (!is_array($company) || !isset($company['id'])) continue;
+        $companyId = (string) $company['id'];
+        $previous = isset($beforeById[$companyId]) ? companyRegulationLinkData($beforeById[$companyId]) : ['documentId' => '', 'url' => ''];
+        $current = companyRegulationLinkData($company);
+        $changed = $previous['documentId'] !== $current['documentId'] || $previous['url'] !== $current['url'];
+        if (!$changed || ($current['documentId'] === '' && $current['url'] === '')) continue;
+
+        if ($current['documentId'] === '' || googleDocumentIdFromInput($current['url']) !== $current['documentId']) {
+            respond(['error' => 'I regolamenti aziendali devono usare il link di un Google Documento nella cartella «Regolamenti aziende».'], 422);
+        }
+        if (count($linkedByDocument[$current['documentId']] ?? []) > 1) {
+            respond(['error' => 'Questo Google Documento è già collegato a un’altra azienda.'], 409);
+        }
+        googleDocumentInFolder($pdo, $userId, $current['documentId'], $folderId);
+    }
 }
 
 function googleDocumentBelongsToResource(array $state, string $documentId, string $resource): bool
@@ -1532,21 +1609,25 @@ if ($action === 'google_validate_folders' && $method === 'POST') {
     $userId = authenticatedUserId();
     $pdo = database();
     requireCsrf($pdo);
-    requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare la cartella Google Drive.');
-    requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare la cartella Google Drive.');
+    requireCapability($pdo, $userId, 'settings.google_folders.edit', 'Non hai il permesso di configurare le cartelle Google Drive.');
     $folders = requestBody()['folders'] ?? null;
-    if (!is_array($folders)) respond(['error' => 'Dati cartella Google non validi.'], 422);
-    $folderId = validGoogleId($folders['documents'] ?? null);
-    if ($folderId === '') respond(['error' => 'Inserisci l’ID della cartella Google Drive «Documenti sito».'], 422);
-    $folder = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($folderId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed', 'supportsAllDrives' => 'true']));
-    if (($folder['mimeType'] ?? '') !== 'application/vnd.google-apps.folder' || !empty($folder['trashed'])) respond(['error' => 'L’ID indicato non corrisponde a una cartella Drive accessibile.'], 422);
-    respond(['ok' => true, 'folders' => ['documents' => ['id' => $folderId, 'name' => (string) ($folder['name'] ?? '')]]]);
-    if (!is_array($folders)) respond(['error' => 'Dati cartella Google non validi.'], 422);
-    $folderId = validGoogleId($folders['documents'] ?? null);
-    if ($folderId === '') respond(['error' => 'Inserisci l’ID della cartella Google Drive «Documenti sito».'], 422);
-    $folder = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($folderId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed', 'supportsAllDrives' => 'true']));
-    if (($folder['mimeType'] ?? '') !== 'application/vnd.google-apps.folder' || !empty($folder['trashed'])) respond(['error' => 'L’ID indicato non corrisponde a una cartella Drive accessibile.'], 422);
-    respond(['ok' => true, 'folders' => ['documents' => ['id' => $folderId, 'name' => (string) ($folder['name'] ?? '')]]]);
+    if (!is_array($folders)) respond(['error' => 'Dati delle cartelle Google non validi.'], 422);
+
+    $labels = ['documents' => 'Documenti sito', 'regulations' => 'Regolamenti aziende'];
+    $validated = [];
+    foreach ($labels as $key => $label) {
+        $folderId = validGoogleId($folders[$key] ?? null);
+        if ($folderId === '') respond(['error' => 'Inserisci l’ID della cartella Google Drive «' . $label . '».'], 422);
+        $folder = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($folderId) . '?' . http_build_query([
+            'fields' => 'id,name,mimeType,trashed',
+            'supportsAllDrives' => 'true',
+        ]));
+        if (($folder['mimeType'] ?? '') !== 'application/vnd.google-apps.folder' || !empty($folder['trashed'])) {
+            respond(['error' => 'L’ID indicato per «' . $label . '» non corrisponde a una cartella Drive accessibile.'], 422);
+        }
+        $validated[$key] = ['id' => $folderId, 'name' => (string) ($folder['name'] ?? '')];
+    }
+    respond(['ok' => true, 'folders' => $validated]);
 }
 
 if ($action === 'google_document_link' && $method === 'POST') {
@@ -1559,15 +1640,14 @@ if ($action === 'google_document_link' && $method === 'POST') {
     $scopeConfig = [
         'party_statutes' => ['collection' => 'parties', 'field' => 'googleStatuteDocumentId', 'urlField' => 'statuteUrl', 'link' => 'party_statutes.link', 'change' => 'party_statutes.change_link'],
         'company_regulations' => ['collection' => 'companies', 'field' => 'googleRegulationDocumentId', 'urlField' => 'regulationUrl', 'link' => 'company_regulations.link', 'change' => 'company_regulations.change_link'],
-        'party_statutes' => ['collection' => 'parties', 'field' => 'googleStatuteDocumentId', 'urlField' => 'statuteUrl', 'link' => 'party_statutes.link', 'change' => 'party_statutes.change_link'],
-        'company_regulations' => ['collection' => 'companies', 'field' => 'googleRegulationDocumentId', 'urlField' => 'regulationUrl', 'link' => 'company_regulations.link', 'change' => 'company_regulations.change_link'],
     ][$scope] ?? null;
     if (!is_array($scopeConfig) || $entityId === '') respond(['error' => 'Tipo di collegamento non valido.'], 422);
-    if (!is_array($scopeConfig) || $entityId === '') respond(['error' => 'Tipo di collegamento non valido.'], 422);
+
     $siteState = rawSiteState($pdo) ?: [];
     $entities = itemsById($siteState[$scopeConfig['collection']] ?? []);
     $entity = $entities[$entityId] ?? null;
     if (!is_array($entity)) respond(['error' => 'Elemento da collegare non trovato.'], 404);
+
     $currentDocumentId = validGoogleId($entity[$scopeConfig['field']] ?? null);
     $currentUrl = trim((string) ($entity[$scopeConfig['urlField']] ?? $entity['googleUrl'] ?? ''));
     $hasCurrent = $currentDocumentId !== '' || $currentUrl !== '';
@@ -1576,16 +1656,18 @@ if ($action === 'google_document_link' && $method === 'POST') {
 
     $rawInput = trim((string) ($body['url'] ?? $body['documentId'] ?? ''));
     if ($rawInput === '') respond(['error' => 'Inserisci un link valido.'], 422);
-
     $documentId = googleDocumentIdFromInput($rawInput);
-    $isGoogleDoc = $documentId !== '' && (str_contains($rawInput, 'docs.google.com') || !preg_match('~^https?://~i', $rawInput));
 
-    if ($isGoogleDoc && googleConfigured() && googleConnectionExists($pdo, $userId)) {
+    // Un regolamento aziendale non può essere un URL esterno, né un Google Doc
+    // appartenente a una cartella diversa da quella configurata.
+    if ($scope === 'company_regulations') {
+        if (!googleConfigured()) respond(['error' => 'Google OAuth non configurato in private/config.php.'], 503);
+        if (!googleConnectionExists($pdo, $userId)) respond(['error' => 'Collega prima un account Google per verificare il regolamento.'], 409);
+        if ($documentId === '') respond(['error' => 'Inserisci il link di un Google Documento valido.'], 422);
         if ($currentDocumentId !== '' && $documentId === $currentDocumentId) respond(['error' => 'Il link inserito coincide con quello già collegato.'], 422);
         $existingReferences = googleLinkedDocuments($siteState)[$documentId] ?? [];
         if ($documentId !== $currentDocumentId && !empty($existingReferences)) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
-        $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed,webViewLink,modifiedTime', 'supportsAllDrives' => 'true']));
-        if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documenti valido e accessibile.'], 422);
+        $file = googleDocumentInFolder($pdo, $userId, $documentId, googleFolderForScope($pdo, 'company_regulations'));
         googleWatchDocument($pdo, $userId, $documentId);
         auditLog($pdo, $hasCurrent ? 'google_document_link_changed' : 'google_document_linked', $hasCurrent ? 'warning' : 'info', $userId, ['document_id' => $documentId, 'previous_document_id' => $currentDocumentId ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
         respond([
@@ -1595,66 +1677,25 @@ if ($action === 'google_document_link' && $method === 'POST') {
             'url' => (string) ($file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit')),
             'modifiedTime' => $file['modifiedTime'] ?? null,
         ]);
-    } else {
-        $targetUrl = $rawInput;
-        if ($documentId !== '' && !preg_match('~^https?://~i', $targetUrl)) {
-            $targetUrl = 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit';
-        }
-        if (!preg_match('~^https?://~i', $targetUrl) || filter_var($targetUrl, FILTER_VALIDATE_URL) === false) {
-            respond(['error' => 'Inserisci un indirizzo web valido (http:// o https://).'], 422);
-        }
-        auditLog($pdo, $hasCurrent ? 'external_link_changed' : 'external_link_linked', 'info', $userId, ['url' => $targetUrl, 'previous_url' => $currentUrl ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
-        respond([
-            'isGoogleDoc' => false,
-            'id' => null,
-            'name' => null,
-            'url' => $targetUrl,
-            'modifiedTime' => null,
-        ]);
     }
-    $currentUrl = trim((string) ($entity[$scopeConfig['urlField']] ?? $entity['googleUrl'] ?? ''));
-    $hasCurrent = $currentDocumentId !== '' || $currentUrl !== '';
-    $requiredCapability = $hasCurrent ? $scopeConfig['change'] : $scopeConfig['link'];
-    requireCapability($pdo, $userId, $requiredCapability, $hasCurrent ? 'Non hai il permesso di sostituire questo collegamento.' : 'Non hai il permesso di collegare questo documento.');
 
-    $rawInput = trim((string) ($body['url'] ?? $body['documentId'] ?? ''));
-    if ($rawInput === '') respond(['error' => 'Inserisci un link valido.'], 422);
-
-    $documentId = googleDocumentIdFromInput($rawInput);
     $isGoogleDoc = $documentId !== '' && (str_contains($rawInput, 'docs.google.com') || !preg_match('~^https?://~i', $rawInput));
-
     if ($isGoogleDoc && googleConfigured() && googleConnectionExists($pdo, $userId)) {
         if ($currentDocumentId !== '' && $documentId === $currentDocumentId) respond(['error' => 'Il link inserito coincide con quello già collegato.'], 422);
         $existingReferences = googleLinkedDocuments($siteState)[$documentId] ?? [];
         if ($documentId !== $currentDocumentId && !empty($existingReferences)) respond(['error' => 'Questo Google Doc è già collegato a un altro elemento del sito.'], 409);
         $file = googleRequest($pdo, $userId, 'GET', 'https://www.googleapis.com/drive/v3/files/' . rawurlencode($documentId) . '?' . http_build_query(['fields' => 'id,name,mimeType,trashed,webViewLink,modifiedTime', 'supportsAllDrives' => 'true']));
-        if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documenti valido e accessibile.'], 422);
+        if (($file['mimeType'] ?? '') !== 'application/vnd.google-apps.document' || !empty($file['trashed'])) respond(['error' => 'Il link non indica un Google Documento valido e accessibile.'], 422);
         googleWatchDocument($pdo, $userId, $documentId);
         auditLog($pdo, $hasCurrent ? 'google_document_link_changed' : 'google_document_linked', $hasCurrent ? 'warning' : 'info', $userId, ['document_id' => $documentId, 'previous_document_id' => $currentDocumentId ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
-        respond([
-            'isGoogleDoc' => true,
-            'id' => $documentId,
-            'name' => (string) ($file['name'] ?? ''),
-            'url' => (string) ($file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit')),
-            'modifiedTime' => $file['modifiedTime'] ?? null,
-        ]);
-    } else {
-        $targetUrl = $rawInput;
-        if ($documentId !== '' && !preg_match('~^https?://~i', $targetUrl)) {
-            $targetUrl = 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit';
-        }
-        if (!preg_match('~^https?://~i', $targetUrl) || filter_var($targetUrl, FILTER_VALIDATE_URL) === false) {
-            respond(['error' => 'Inserisci un indirizzo web valido (http:// o https://).'], 422);
-        }
-        auditLog($pdo, $hasCurrent ? 'external_link_changed' : 'external_link_linked', 'info', $userId, ['url' => $targetUrl, 'previous_url' => $currentUrl ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
-        respond([
-            'isGoogleDoc' => false,
-            'id' => null,
-            'name' => null,
-            'url' => $targetUrl,
-            'modifiedTime' => null,
-        ]);
+        respond(['isGoogleDoc' => true, 'id' => $documentId, 'name' => (string) ($file['name'] ?? ''), 'url' => (string) ($file['webViewLink'] ?? ('https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit')), 'modifiedTime' => $file['modifiedTime'] ?? null]);
     }
+
+    $targetUrl = $rawInput;
+    if ($documentId !== '' && !preg_match('~^https?://~i', $targetUrl)) $targetUrl = 'https://docs.google.com/document/d/' . rawurlencode($documentId) . '/edit';
+    if (!preg_match('~^https?://~i', $targetUrl) || filter_var($targetUrl, FILTER_VALIDATE_URL) === false) respond(['error' => 'Inserisci un indirizzo web valido (http:// o https://).'], 422);
+    auditLog($pdo, $hasCurrent ? 'external_link_changed' : 'external_link_linked', 'info', $userId, ['url' => $targetUrl, 'previous_url' => $currentUrl ?: null, 'scope' => $scope, 'entity_id' => $entityId]);
+    respond(['isGoogleDoc' => false, 'id' => null, 'name' => null, 'url' => $targetUrl, 'modifiedTime' => null]);
 }
 
 if ($action === 'google_drive_files' && $method === 'GET') {
@@ -2409,6 +2450,7 @@ if ($action === 'save_state' && $method === 'POST') {
     if (empty($_SESSION['is_primary_admin'])) {
         foreach ($required as $capability) requireCapability($pdo, $userId, $capability, 'Non hai la capacità richiesta per questa modifica.');
     }
+    validateCompanyRegulationStateMutation($pdo, $userId, $existingState, $decodedState);
     $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
     $query->execute([$userId, json_encode($decodedState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
     auditLog($pdo, 'state_capabilities_applied', 'info', $userId, ['capabilities' => $required]);

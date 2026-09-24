@@ -1,4 +1,4 @@
-﻿const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', numberPadding: 'cz_number_padding', googleDriveFolders: 'cz_google_drive_folders', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', usefulLinks: 'cz_useful_links', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
+const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', numberPadding: 'cz_number_padding', googleDriveFolders: 'cz_google_drive_folders', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', usefulLinks: 'cz_useful_links', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
 // Cifre dei progressivi: 5 produce 00001, 00002, ... ed è configurabile dalle impostazioni.
 const DEFAULT_NUMBER_PADDING = 5;
 const defaultCounters = { Sentenze: '00001', Ordinanze: '00001', Decreti: '00001', 'Documenti generali': '00001' };
@@ -83,7 +83,7 @@ const state = {
   categories: readStorage(STORAGE_KEYS.categories, Object.keys(defaultCounters).map(name => ({ name }))),
   pageMargins: normalizePageMargins(readStorage(STORAGE_KEYS.pageMargins, defaultPageMargins)),
   numberPadding: readStorage(STORAGE_KEYS.numberPadding, DEFAULT_NUMBER_PADDING),
-  googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '' }),
+  googleDriveFolders: readStorage(STORAGE_KEYS.googleDriveFolders, { documents: '', regulations: '' }),
   parties: readStorage(STORAGE_KEYS.parties, []),
   partyFields: readStorage(STORAGE_KEYS.partyFields, []),
   coalitions: readStorage(STORAGE_KEYS.coalitions, []),
@@ -473,7 +473,7 @@ function applyRemoteState(remoteState) {
   Object.keys(state).forEach(key => { if (Object.prototype.hasOwnProperty.call(remoteState, key)) state[key] = remoteState[key]; });
   state.trash = Array.isArray(remoteState.trash) ? remoteState.trash : [];
   state.pageMargins = normalizePageMargins(state.pageMargins);
-  state.googleDriveFolders = { documents: '', ...(state.googleDriveFolders || {}) };
+  state.googleDriveFolders = { documents: '', regulations: '', ...(state.googleDriveFolders || {}) };
   normalizeCounters();
   normalizeStoredNumbers();
   state.parliamentSettings = normalizeParliamentSettings(state.parliamentSettings, defaultParliamentSettings);
@@ -726,6 +726,7 @@ function permissionForStorageKey(key) {
     cz_categories: 'settings',
     cz_page_margins: 'settings',
     cz_number_padding: 'settings',
+    cz_google_drive_folders: 'settings',
     cz_parties: 'parties',
     cz_party_fields: 'parties',
     cz_coalitions: 'parties',
@@ -2508,8 +2509,10 @@ function refreshDocumentTemplateOptions(category = '') {
 
 function renderSettings() {
   const categories = categoryNames();
-  const folderInput = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
-  if (folderInput) folderInput.value = state.googleDriveFolders?.documents || '';
+  const documentsFolderInput = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
+  const regulationsFolderInput = document.getElementById('googleRegulationsFolderId');
+  if (documentsFolderInput) documentsFolderInput.value = state.googleDriveFolders?.documents || '';
+  if (regulationsFolderInput) regulationsFolderInput.value = state.googleDriveFolders?.regulations || '';
   document.getElementById('googleDriveFoldersCard')?.classList.toggle('d-none', !capable('settings.google_folders.edit'));
   ['top', 'right', 'bottom', 'left'].forEach(side => { const input = document.getElementById(`pageMargin${side[0].toUpperCase()}${side.slice(1)}`); if (input) input.value = state.pageMargins[side]; });
   const padding = numberPadding();
@@ -3032,9 +3035,8 @@ function openCompanyEditor(companyId = '') {
     if (company) {
       const hasRegulation = Boolean(company.googleRegulationDocumentId || company.googleUrl || company.regulationUrl);
       const isGoogle = Boolean(company.googleRegulationDocumentId);
-      const regText = isGoogle ? 'Regolamento Google collegato' : (hasRegulation ? 'Regolamento web collegato' : 'Nessun regolamento ancora collegato');
+      const regText = isGoogle ? 'Regolamento Google collegato' : (hasRegulation ? 'Collegamento precedente da sostituire' : 'Nessun regolamento ancora collegato');
       regContainer.classList.remove('d-none');
-      regContainer.innerHTML = `<div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center mb-3"><div><strong class="d-block">Regolamento aziendale</strong><span class="text-secondary small">${escapeHtml(regText)}</span></div><div class="d-flex gap-2">${hasRegulation && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}"><i class="bi ${hasRegulation ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button></div></div>`;
       regContainer.innerHTML = `<div class="p-3 border rounded bg-white shadow-sm d-flex justify-content-between align-items-center mb-3"><div><strong class="d-block">Regolamento aziendale</strong><span class="text-secondary small">${escapeHtml(regText)}</span></div><div class="d-flex gap-2">${hasRegulation && capable('company_regulations.change_link') ? `<button type="button" class="btn btn-sm btn-outline-primary" data-relink-company-regulation="${company.id}">Cambia link</button>` : ''}<button type="button" class="btn btn-sm ${hasRegulation ? 'btn-primary' : 'btn-outline-primary'}" data-open-company-regulation="${company.id}"><i class="bi ${hasRegulation ? 'bi-box-arrow-up-right me-1' : 'bi-plus-lg me-1'}"></i>${hasRegulation ? 'Vedi regolamento' : 'Collega regolamento'}</button></div></div>`;
     } else {
       regContainer.classList.add('d-none');
@@ -3057,13 +3059,28 @@ async function openCompanyRegulationEditor(companyId, changeLink = false) {
     return;
   }
   const requiredCapability = docUrl ? 'company_regulations.change_link' : 'company_regulations.link';
-  if (!capable(requiredCapability)) { showToast(docUrl ? 'Non hai il permesso di modificare il collegamento del regolamento.' : 'Non hai il permesso di collegare il regolamento.'); return; }
+  if (!capable(requiredCapability)) {
+    showToast(docUrl ? 'Non hai il permesso di modificare il collegamento del regolamento.' : 'Non hai il permesso di collegare il regolamento.');
+    return;
+  }
+  if (!remoteMode || !googleConnection.connected) {
+    showToast('Collega un account Google prima di collegare un regolamento aziendale.');
+    return;
+  }
+  // L'ID della cartella è visibile solo a chi può consultare le impostazioni.
+  // La verifica effettiva della configurazione e dell'appartenenza del file è
+  // comunque sempre eseguita dal backend, così il solo permesso di collegare
+  // regolamenti resta sufficiente per completare questa azione.
   editingCompanyId = company.id;
   document.getElementById('companyRegulationCompanyName').textContent = company.name;
-  document.getElementById('companyRegulationSubtitle').textContent = docUrl ? 'Modifica il link del Regolamento (Google Documenti o pagina web esterna).' : 'Inserisci il link del Regolamento (Google Documenti o pagina web esterna).';
-  document.getElementById('companyRegulationGoogleUrl').value = docUrl || '';
-  document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Modifica il link del regolamento' : 'Collega un regolamento';
-  document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Salva e sostituisci' : 'Salva e collega'}`;
+  document.getElementById('companyRegulationSubtitle').textContent = docUrl
+    ? 'Sostituisci il collegamento con un Google Documento della cartella «Regolamenti aziende».'
+    : 'Inserisci il link di un Google Documento della cartella «Regolamenti aziende».';
+  document.getElementById('companyRegulationGoogleUrl').value = company.googleRegulationDocumentId
+    ? `https://docs.google.com/document/d/${encodeURIComponent(company.googleRegulationDocumentId)}/edit`
+    : '';
+  document.getElementById('companyRegulationGoogleTitle').textContent = docUrl ? 'Sostituisci il regolamento' : 'Collega un regolamento';
+  document.getElementById('openCompanyRegulationGoogleButton').innerHTML = `<i class="bi bi-link-45deg me-1"></i>${docUrl ? 'Verifica e sostituisci' : 'Verifica e collega'}`;
   const showLinkEditor = () => showEditorScreen('companyRegulationEditor');
   const companyModal = document.getElementById('companyModal');
   if (companyModal.classList.contains('show')) {
@@ -3082,63 +3099,54 @@ async function saveCompanyRegulation(event) {
   const company = state.companies.find(item => item.id === editingCompanyId);
   if (!company) return;
   const rawUrl = document.getElementById('companyRegulationGoogleUrl').value.trim();
-  if (!rawUrl) { showToast('Inserisci un link valido per il regolamento.'); return; }
-  let url = rawUrl;
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    const docId = extractGoogleDocId(url);
-    url = docId ? `https://docs.google.com/document/d/${encodeURIComponent(docId)}/edit` : `https://${url}`;
+  const documentId = extractGoogleDocId(rawUrl);
+  if (!documentId) {
+    showToast('Inserisci il link di un Google Documento valido della cartella «Regolamenti aziende».');
+    return;
   }
+  if (!remoteMode || !googleConnection.connected) {
+    showToast('Collega un account Google prima di verificare il regolamento.');
+    return;
+  }
+
   try {
+    const url = `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
     const previousUrl = company.regulationUrl || company.googleUrl || (company.googleRegulationDocumentId ? `https://docs.google.com/document/d/${company.googleRegulationDocumentId}/edit` : '');
     const replacing = Boolean(previousUrl);
-    let linked = null;
-    if (remoteMode) {
-      linked = await apiRequest('google_document_link', { method: 'POST', body: JSON.stringify({ scope: 'company_regulations', entityId: company.id, url }) });
-    }
-    const isGoogle = linked ? Boolean(linked.isGoogleDoc) : Boolean(extractGoogleDocId(url));
-    const docId = linked?.id || (isGoogle ? extractGoogleDocId(url) : null);
-    const docName = linked?.name || null;
-    const finalUrl = linked?.url || url;
+    const linked = await apiRequest('google_document_link', {
+      method: 'POST',
+      body: JSON.stringify({ scope: 'company_regulations', entityId: company.id, url })
+    });
+    if (!linked?.isGoogleDoc || !linked.id) throw new Error('Il regolamento deve essere un Google Documento della cartella configurata.');
 
-    if (company.googleRegulationDocumentId && company.googleRegulationDocumentId !== docId) {
+    if (company.googleRegulationDocumentId && company.googleRegulationDocumentId !== linked.id) {
       company.googleLatestText = '';
       company.googleModifiedBy = null;
     }
-    company.googleRegulationDocumentId = isGoogle ? docId : null;
-    company.googleRegulationName = docName;
-    company.googleDocumentName = docName;
-    company.googleUrl = finalUrl;
-    company.regulationUrl = finalUrl;
-    company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
-    company.googleModifiedTime = linked?.modifiedTime || null;
-    company.googleRegulationDocumentId = isGoogle ? docId : null;
-    company.googleRegulationName = docName;
-    company.googleDocumentName = docName;
-    company.googleUrl = finalUrl;
-    company.regulationUrl = finalUrl;
-    company.regulation = isGoogle ? 'Regolamento Google collegato' : 'Regolamento esterno collegato';
-    company.googleModifiedTime = linked?.modifiedTime || null;
+    company.googleRegulationDocumentId = linked.id;
+    company.googleRegulationName = linked.name || null;
+    company.googleDocumentName = linked.name || null;
+    company.googleUrl = linked.url;
+    company.regulationUrl = linked.url;
+    company.regulation = 'Regolamento Google collegato';
+    company.googleModifiedTime = linked.modifiedTime || null;
     company.updatedAt = new Date().toISOString();
     if (!Array.isArray(company.history)) company.history = [];
     company.history.push({
-      label: isGoogle ? 'Regolamento Google' : 'Regolamento',
+      label: 'Regolamento Google',
       from: previousUrl || 'Nessun regolamento',
-      to: finalUrl,
-      at: new Date().toISOString()
-    });
-    if (!Array.isArray(company.history)) company.history = [];
-    company.history.push({
-      label: isGoogle ? 'Regolamento Google' : 'Regolamento',
-      from: previousUrl || 'Nessun regolamento',
-      to: finalUrl,
-      at: new Date().toISOString()
+      to: linked.url,
+      at: company.updatedAt
     });
     writeStorage(STORAGE_KEYS.companies, state.companies);
-    if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('companies'); }
+    clearTimeout(remoteSaveTimer);
+    await saveRemoteState('companies');
     closeCompanyRegulationEditor();
     renderCompanies();
-    showToast(replacing ? 'Collegamento del regolamento aggiornato.' : 'Regolamento collegato.');
-  } catch (error) { showToast(error.message || 'Impossibile collegare il regolamento.'); }
+    showToast(replacing ? 'Collegamento del regolamento verificato e aggiornato.' : 'Regolamento verificato e collegato.');
+  } catch (error) {
+    showToast(error.message || 'Impossibile collegare il regolamento.');
+  }
 }
 
 function openCompanyHistory(companyId, historyIndex) {
@@ -3861,17 +3869,22 @@ async function initialize() {
   if (coalitionFieldList) coalitionFieldList.addEventListener('click', event => { const button = event.target.closest('[data-remove-coalition-field]'); if (!button) return; if (!capable('settings.coalition_fields.delete')) { showToast('Non hai il permesso di eliminare campi delle coalizioni.'); return; } const fieldId = button.dataset.removeCoalitionField; state.coalitionFields = state.coalitionFields.filter(field => field.id !== fieldId); writeStorage(STORAGE_KEYS.coalitionFields, state.coalitionFields); renderSettings(); renderCoalitions(); showToast('Informazione minima rimossa.'); });
   document.getElementById('googleDriveFoldersForm')?.addEventListener('submit', async event => {
     event.preventDefault();
-    const input = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
-    const documents = input ? input.value.trim() : '';
-    if (!/^[a-zA-Z0-9_-]{5,}$/.test(documents)) { showToast('Inserisci un ID di cartella Drive valido.'); return; }
-    const folders = { documents };
+    const documentsInput = document.getElementById('googleDocumentsFolderId') || document.getElementById('googleDriveFolderId');
+    const regulationsInput = document.getElementById('googleRegulationsFolderId');
+    const documents = documentsInput ? documentsInput.value.trim() : '';
+    const regulations = regulationsInput ? regulationsInput.value.trim() : '';
+    if (![documents, regulations].every(id => /^[a-zA-Z0-9_-]{5,}$/.test(id))) {
+      showToast('Inserisci gli ID validi delle cartelle Documenti sito e Regolamenti aziende.');
+      return;
+    }
+    const folders = { documents, regulations };
     try {
       if (remoteMode) await apiRequest('google_validate_folders', { method: 'POST', body: JSON.stringify({ folders }) });
       state.googleDriveFolders = folders;
       writeStorage(STORAGE_KEYS.googleDriveFolders, folders);
       if (remoteMode) { clearTimeout(remoteSaveTimer); await saveRemoteState('settings'); }
-      showToast('Cartella Google verificata e salvata.');
-    } catch (error) { showToast(error.message || 'Impossibile verificare la cartella Google.'); }
+      showToast('Cartelle Google verificate e salvate.');
+    } catch (error) { showToast(error.message || 'Impossibile verificare le cartelle Google.'); }
   });
   document.getElementById('numberingForm').addEventListener('submit', event => {
     event.preventDefault();

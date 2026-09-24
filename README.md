@@ -20,7 +20,7 @@ Applicazione HTML/CSS/JavaScript per la gestione di un casellario digitale. L’
 - Template riutilizzabili.
 - ODG con stato Da valutare/Valutato.
 - Partiti con stato, campi configurabili, Statuto e storico versioni.
-- Aziende con Regolamento e storico versioni.
+- Aziende con Regolamento Google vincolato alla cartella Drive dedicata e storico versioni.
 - Parlamento con mandati, ruoli, nomine, giuramenti e dimissioni.
 - Governo e Composizione della Corte con periodi, ruoli, limiti e componenti.
 - Interpretazioni con valori base configurabili.
@@ -128,7 +128,7 @@ Il backend applica inoltre header di sicurezza HTTP, sessioni con cookie HttpOnl
 - Cercare per titolo, categoria o numero.
 - Riaprire una riga per modificare il documento.
 - Documenti, ODG e template vengono creati come Google Documenti nella cartella **Documenti sito** configurata. In archivio si apre un documento cliccando la relativa riga; per i template si usa **Modifica**.
-- Statuti e regolamenti non vengono creati dal sito: si collega l'URL di un Google Doc già esistente rispettivamente nella cartella **Statuti** o **Regolamenti**. Chi possiede il permesso dedicato può successivamente sostituire il link. Il backend verifica tipo di file, accessibilità, unicità e appartenenza alla cartella prima di accettarlo.
+- Statuti e regolamenti non vengono creati dal sito. Gli statuti possono essere collegati a un Google Doc o a un indirizzo esterno; i regolamenti aziendali accettano invece solo l'URL di un Google Doc già presente nella cartella **Regolamenti aziende**. Chi possiede il permesso dedicato può successivamente sostituire il link; per i regolamenti il backend verifica tipo di file, accessibilità, unicità e appartenenza alla cartella prima di accettarlo.
 - **Scarica PDF** usa l'export PDF di Google Drive; il browser non genera più PDF e non conserva il contenuto redazionale nello stato locale.
 - La sezione ODG usa la categoria automatica `ODG` e gli stati `Da valutare` / `Valutato`.
 
@@ -142,7 +142,7 @@ Ogni partito ha nome, stato, campi minimi configurabili e Statuto. Gli stati son
 
 ### Aziende
 
-Ogni azienda ha nome e Regolamento. Il Regolamento e modificabile in un editor dedicato e ogni versione viene conservata nello storico con confronto.
+Ogni azienda ha nome e Regolamento. Il Regolamento è un Google Doc già presente nella cartella Drive dedicata «Regolamenti aziende»: non sono ammessi link esterni né file provenienti da altre cartelle. Ogni versione viene conservata nello storico con confronto.
 
 ### Parlamento
 
@@ -194,7 +194,7 @@ VALUES ('admin@example.it', 'HASH_BCRYPT', 'Amministratore principale', 'admin',
 6. Impostare `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` e `GOOGLE_WEBHOOK_URI` in `private/config.php`. `GOOGLE_DRIVE_FOLDER_ID` è mantenuto solo come migrazione facoltativa della vecchia cartella documenti. L’URI di redirect deve puntare esattamente a `api.php?action=google_callback` ed essere registrato tra gli URI autorizzati del client Google (stesso protocollo HTTPS, dominio e percorso). Il webhook deve essere pubblico in HTTPS e puntare a `api.php?action=google_webhook`.
 7. Modificare le costanti `DB_HOST`, `DB_NAME`, `DB_USER` e `DB_PASSWORD` in `private/config.php`, non in `api.php`.
 8. Caricare `index.html`, `styles.css`, `app.js`, `app-loader.php`, `api.php` e la cartella `private/`. Il file SQL può essere rimosso dal sito dopo l'importazione.
-9. Accedere al sito, usare **Collega account Google**, quindi aprire **Impostazioni → Cartelle Google Drive** e salvare gli ID delle tre cartelle **Documenti sito**, **Statuti** e **Regolamenti**. L’account autorizzato deve avere accesso a tutte e tre.
+9. Accedere al sito, usare **Collega account Google**, quindi aprire **Impostazioni → Cartelle Google Drive** e salvare gli ID delle due cartelle **Documenti sito** e **Regolamenti aziende**. L’account autorizzato deve avere accesso a entrambe.
 7. Se Altervista consente di tenere file fuori dalla cartella pubblica, spostare lì `private/config.php`; in alternativa mantenerlo come file PHP non collegato pubblicamente e usare le protezioni già disponibili nel pannello Altervista.
 8. Aprire l'URL HTTPS del sito e accedere con l'utente creato.
 
@@ -202,7 +202,7 @@ Il browser deve comunicare con `api.php` sullo stesso dominio. Non inserire mai 
 
 ## Architettura Google Drive
 
-Il backend usa OAuth server-side per ogni utente. Il browser riceve solo l'ID del Google Doc e apre `docs.google.com`; client secret e refresh token non vengono mai inviati al browser. Gli ID delle tre cartelle sono impostazioni applicative, mentre ogni collegamento di statuto o regolamento viene verificato lato server contro la cartella prevista. Senza backend o senza account Google collegato le azioni documentali restano disabilitate.
+Il backend usa OAuth server-side per ogni utente. Il browser riceve solo l'ID del Google Doc e apre `docs.google.com`; client secret e refresh token non vengono mai inviati al browser. Gli ID delle cartelle sono impostazioni applicative. Ogni collegamento di regolamento aziendale viene verificato lato server contro la cartella «Regolamenti aziende». Senza backend o senza account Google collegato le azioni documentali restano disabilitate.
 
 ## Architettura dati
 

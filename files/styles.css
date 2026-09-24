@@ -2138,3 +2138,56 @@ img {
     box-shadow: none;
   }
 }
+
+
+/* ─── Modali: contenuto sempre raggiungibile ─────────────────────────────── */
+/*
+ * Le finestre con moduli lunghi devono restare interamente utilizzabili anche
+ * su notebook bassi, zoom elevato e telefoni in orizzontale. Header e footer
+ * rimangono visibili; il corpo della finestra acquisisce il proprio scroll.
+ * La regola esclude gli editor a pagina intera, che usano lo scroll della
+ * pagina per lavorare su documenti lunghi.
+ */
+.modal:not(.editor-page) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal:not(.editor-page) .modal-dialog {
+  max-height: calc(100dvh - 2rem);
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.modal:not(.editor-page) .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+}
+
+.modal:not(.editor-page) .modal-content > form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+}
+
+.modal:not(.editor-page) .modal-body {
+  flex: 1 1 auto;
+  min-height: 0 !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 575.98px) {
+  .modal:not(.editor-page) .modal-dialog,
+  .modal:not(.editor-page) .modal-content,
+  .modal:not(.editor-page) .modal-content > form {
+    max-height: calc(100dvh - 1rem);
+  }
+}

@@ -438,17 +438,22 @@
           <div class="col-12 col-xl-7">
             <div class="card border-0 shadow-sm mb-4 d-none" id="googleDriveFoldersCard">
               <div class="card-body p-4">
-                <h2 class="h5 mb-1">Cartella Google Drive</h2>
-                <p class="text-secondary small mb-4">Configura la cartella Google Drive principale («Documenti sito») in
-                  cui vengono archiviati i documenti, ODG e template creati dal sito.</p>
+                <h2 class="h5 mb-1">Cartelle Google Drive</h2>
+                <p class="text-secondary small mb-4">Configura la cartella «Documenti sito» per documenti, ODG e template,
+                  e la cartella dedicata «Regolamenti aziende». I regolamenti aziendali possono essere collegati solo
+                  se il relativo Google Doc appartiene a quest’ultima cartella.</p>
                 <form id="googleDriveFoldersForm" class="row g-3">
                   <div class="col-12"><label for="googleDocumentsFolderId" class="form-label">ID cartella Documenti
                       sito</label><input id="googleDocumentsFolderId" class="form-control font-monospace" required
                       autocomplete="off" placeholder="ID della cartella per decreti, ODG e template"></div>
+                  <div class="col-12"><label for="googleRegulationsFolderId" class="form-label">ID cartella
+                      Regolamenti aziende</label><input id="googleRegulationsFolderId" class="form-control font-monospace"
+                      required autocomplete="off" placeholder="ID della cartella che contiene i regolamenti aziendali"></div>
                   <div class="col-12">
                     <div class="form-text mb-3">L’ID è la parte dell’URL successiva a <code>/folders/</code>. Il
-                      salvataggio verifica che la cartella esista e sia accessibile all’account Google collegato.</div>
-                    <button class="btn btn-primary" type="submit">Verifica e salva cartella</button>
+                      salvataggio verifica che entrambe le cartelle esistano e siano accessibili all’account Google
+                      collegato.</div>
+                    <button class="btn btn-primary" type="submit">Verifica e salva cartelle</button>
                   </div>
                 </form>
               </div>
@@ -799,8 +804,8 @@
                       id="companyName" class="form-control" required placeholder="Es. Azienda Zero S.p.A."></div>
                   <div class="col-12">
                     <div id="companyModalRegulationContainer" class="d-none"></div>
-                    <p class="form-text mb-0">Dopo il salvataggio potrai collegare un Google Doc o una pagina web
-                      esterna per il regolamento.</p>
+                    <p class="form-text mb-0">Dopo il salvataggio potrai collegare il regolamento scegliendo un
+                      Google Doc contenuto nella cartella «Regolamenti aziende» configurata nelle Impostazioni.</p>
                   </div>
                 </div>
               </div>
@@ -853,9 +858,10 @@
                   <div class="google-document-editor-icon" aria-hidden="true"><i class="bi bi-link-45deg"></i></div>
                   <div class="google-document-editor-copy flex-grow-1">
                     <strong id="companyRegulationGoogleTitle">Collega un regolamento</strong>
-                    <span>Puoi inserire un link di Google Documenti oppure l’indirizzo di una pagina web o link esterno.</span>
+                    <span>Inserisci esclusivamente il link di un Google Documento presente nella cartella
+                      «Regolamenti aziende» configurata nelle Impostazioni.</span>
                     <input type="url" id="companyRegulationGoogleUrl" class="form-control mt-2" required
-                      placeholder="https://docs.google.com/document/d/…/edit o https://esempio.it/regolamento">
+                      autocomplete="off" placeholder="https://docs.google.com/document/d/…/edit">
                   </div>
                   <button type="submit" id="openCompanyRegulationGoogleButton" class="btn btn-primary"><i
                       class="bi bi-link-45deg me-1"></i>Salva e collega</button>
