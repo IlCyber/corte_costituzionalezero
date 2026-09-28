@@ -3,7 +3,22 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/private/asset_cache.php';
 
-$manifest = cz_asset_cache_public_manifest(__DIR__);
+// Manutenzione: app-loader.php?flush=1 svuota la cache del browser per questa
+// origine (Clear-Site-Data), dimentica il manifest locale e ricarica l'app.
+// Da usare a mano quando qualcosa resta bloccato su una versione vecchia.
+if (isset($_GET['flush'])) {
+    $manifest = cz_asset_cache_manifest(__DIR__, true);
+    cz_asset_cache_flush_headers();
+    echo cz_asset_cache_flush_script([
+        'storageKey' => 'cz_asset_cache_manifest_v2',
+        'flushEntry' => 'index.html',
+    ]);
+    exit;
+}
+
+// refresh=1 ignora la cache del manifest (dopo un upload di file nuovi).
+$forceRefresh = isset($_GET['refresh']);
+$manifest = cz_asset_cache_manifest(__DIR__, $forceRefresh);
 $manifestVersion = cz_asset_cache_manifest_version($manifest);
 
 // Modalità redirect generica: app-loader.php?asset=styles.css rimanda sempre

@@ -221,3 +221,33 @@ La soluzione e deliberatamente una prima fase: per archivi molto grandi sara opp
 - Limitare dimensione e tipo dei file immagine; in produzione salvarli sul filesystem e nel database conservare solo il percorso.
 - Fare backup del database e dei file caricati.
 - Aggiungere CSRF token se il sito viene esposto pubblicamente o usato da piu ruoli.
+
+## Cache degli asset (velocita e mobile)
+
+Ogni pagina carica gli script e gli stili tramite `app-loader.php` (e `tools/app-tools-loader.php` per la pagina Formattazione). Il loader serve l'asset con un numero di versione e imposta lunga scadenza: il browser lo tiene in cache e non lo scarica di nuovo. Quando un file cambia, la versione cambia e i browser scaricano la copia nuova una sola volta.
+
+- `private/asset_cache.php` costruisce un `manifest` (`private/asset-manifest.cache.json`) con la firma (percorso, data e dimensione) di ogni asset. La firma viene riletta al massimo ogni 3 secondi, non a ogni richiesta: su hosting condiviso questo evita lavoro inutile al disco. L'hash di un file intatto viene riusato; solo i file cambiati vengono ricalcolati. La scrittura del manifest e atomica (file temporaneo + rinomina).
+- Il loader JavaScript e compatibile anche con browser datati: non usa `document.write`, ricarica la pagina una sola volta (guardia in `sessionStorage`) e, se qualcosa non carica, riprova con un indirizzo semplice invece di restare in attesa. Questo risolve il «caricamento infinito» visto su alcuni telefonini.
+- `asset-watchdog.js` e una rete di sicurezza: se dopo 8 secondi l'applicazione non e ancora partita, inserisce direttamente lo script di ingresso; dopo 30 secondi mostra il pulsante «Ricarica». E parametrico (`data-entry`, `data-boot-flag`), quindi vale sia per l'app principale sia per la pagina Formattazione.
+
+Strumenti di manutenzione:
+
+- `index.html?flush=1` — svuota cache e storage del browser (usarlo dopo aggiornamenti se qualcosa sembra «bloccato alla vecchia versione»).
+- `index.html?refresh=1` — ignora la versione in cache una volta, senza cancellare nulla.
+
+## Salvataggio affidabile
+
+Ogni modifica viene programmata con un «motore di salvataggio» invece di essere inviata subito:
+
+- Le scritture sono raggruppate (debounce) e inviate in serie, mai sovrapposte.
+- Prima di ogni invio una copia dello stato viene scritta in `localStorage`; viene eliminata solo dopo la conferma del server.
+- Se il server non risponde si riprova automaticamente a intervalli crescenti; una scritta in alto («Salvataggio...», «Non salvato», «Nuovo tentativo tra...») mostra sempre la situazione reale.
+- Chiudere la pagina con modifiche non ancora inviate fa partire un ultimo invio di emergenza (beacon) e chiede conferma.
+- Se il salvataggio non era arrivato al server, al riavvio la copia locale mancata viene confrontata con quella del server: la piu recente vince e, se vince quella locale, viene riapplicata e reinviata.
+- Se una modifica cancellerebbe per sbaglio gran parte dell'archivio (molti documenti, partiti o nominati in un colpo solo), il server rifiuta con un avviso chiaro: bisogna confermare esplicitamente.
+
+Il server, inoltre, conserva gli ultimi 10 stati salvati nella tabella `site_state_backups` (i piu vecchi vengono eliminati automaticamente) e salta le scritture identiche alla precedente: un ripetuto clic su «Salvato» non consuma database.
+
+## Google Drive e autorizzazioni (scope)
+
+Collegare un file alle aziende richiede che l'account Google sia autorizzato anche ad aprire i file presenti nella cartella dei regolamenti. Se manca un permesso, il server ora risponde con un messaggio esplicito («Aggiorna autorizzazioni Google» invece di un generico errore), la pagina mostra il pulsante per ridare il consenso e l'elenco dei permessi mancanti. Gli stessi controlli valgono per tutte le azioni documentali (link regolamenti, documenti, generazione PDF eccetera).

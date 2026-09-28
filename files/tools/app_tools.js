@@ -934,12 +934,28 @@ ${documento.innerHTML}
    inizializza il tool corrispondente.
    ============================================================ */
 
-document.addEventListener('DOMContentLoaded', async () => {
+// Il loader inserisce questo script in modo dinamico: DOMContentLoaded potrebbe
+// essere già scattato (soprattutto su mobile), quindi si controlla readyState
+// prima di registrarsi, altrimenti l'avvio non avverrebbe mai. La guardia in
+// testa impedisce la doppia esecuzione se loader e watchdog inseriscono entrambi
+// una copia dello script.
+if (window.czToolsScriptLoaded) throw new Error('app_tools.js: seconda copia ignorata.');
+window.czToolsScriptLoaded = true;
+
+function czToolsInitialize() {
+  window.czToolsBooted = true;
   if (isToolPage()) {
-    const allowed = await bootstrapToolPage();
-    if (!allowed) return;
-    initFormattazioneTool();
+    bootstrapToolPage().then(allowed => {
+      if (!allowed) return;
+      initFormattazioneTool();
+    }).catch(error => console.error('Errore di avvio del tool:', error));
     return;
   }
   bindToolsListEvents();
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', czToolsInitialize);
+} else {
+  czToolsInitialize();
+}
