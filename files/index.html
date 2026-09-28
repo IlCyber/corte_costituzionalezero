@@ -100,6 +100,9 @@
             <li class="nav-item"><a class="nav-link" href="#usefulLinks" data-view-link="usefulLinks">Link utili</a>
             </li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view-link="settings">Impostazioni</a></li>
+            <li class="nav-item ms-lg-2 d-none" id="saveStatusItem" title="Stato del salvataggio online dell'archivio">
+              <span class="badge rounded-pill text-bg-success" id="saveStatusBadge">Salvato</span>
+            </li>
             <li class="nav-item dropdown ms-lg-3" id="googleAccountNavItem">
               <button class="btn btn-outline-secondary btn-sm dropdown-toggle" id="googleAccountNavButton" type="button"
                 data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-google me-1"
@@ -1052,6 +1055,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.6/purify.min.js"></script>
   <script src="app-loader.php"></script>
   <script src="tools/app-tools-loader.php"></script>
+  <script src="asset-watchdog.js" data-entry="app.js" data-boot-flag="czAppBooted"></script>
 </body>
 
 </html>

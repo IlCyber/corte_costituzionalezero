@@ -103,9 +103,13 @@ function respond(array $payload, int $status = 200): void
 
 function requestBody(): array
 {
+    // Memoizzato: php://input su alcuni ambienti è leggibile una volta sola, e
+    // requireCsrf() può averlo già consumato per cercare il token di fallback.
+    static $cached = null;
+    if ($cached !== null) return $cached;
     $raw = file_get_contents('php://input') ?: '{}';
     $payload = json_decode($raw, true);
-    return is_array($payload) ? $payload : [];
+    return $cached = (is_array($payload) ? $payload : []);
 }
 
 function clientIp(): string
@@ -132,6 +136,14 @@ function csrfToken(): string
 function requireCsrf(PDO $pdo): void
 {
     $provided = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    if (!$provided) {
+        // sendBeacon (usato per l'ultimo salvataggio durante la chiusura della
+        // pagina) non può impostare header personalizzati: il token doppio è
+        // accettato anche nel corpo JSON. Il segreto resta inattaccabile dai
+        // siti terzi, che non possono leggerlo per via della same-origin policy.
+        $body = requestBody();
+        $provided = is_string($body['csrfToken'] ?? null) ? $body['csrfToken'] : '';
+    }
     if (!$provided || empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $provided)) { auditLog($pdo, 'csrf_failed', 'critical'); respond(['error' => 'Richiesta non autorizzata.'], 419); }
 }
 
@@ -254,8 +266,20 @@ function ensureTrashPermissionColumns(PDO $pdo): void
 
 function ensureGoogleConnectionTable(PDO $pdo): void
 {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS google_connections (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, google_email VARCHAR(190) NOT NULL, refresh_token TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS google_connections (user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, google_email VARCHAR(190) NOT NULL, refresh_token TEXT NOT NULL, granted_scopes TEXT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    // Impianti installati prima dell'introduzione di granted_scopes: la colonna
+    // registra gli scope realmente concessi a ogni rinnovo del token, così si
+    // può avvisare l'utente quando il collegamento resta con permessi vecchi.
+    try {
+        $exists = $pdo->query("SHOW COLUMNS FROM google_connections LIKE 'granted_scopes'")->fetch();
+        if (!$exists) $pdo->exec('ALTER TABLE google_connections ADD COLUMN granted_scopes TEXT NULL AFTER refresh_token');
+    } catch (Throwable $error) {
+        error_log('google_connections migration failure: ' . $error->getMessage());
+    }
     $pdo->exec("CREATE TABLE IF NOT EXISTS google_watch_channels (channel_id VARCHAR(190) NOT NULL PRIMARY KEY, resource_id VARCHAR(190) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, document_id VARCHAR(190) NOT NULL, expiration BIGINT UNSIGNED NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY idx_google_watch_document (document_id), CONSTRAINT fk_google_watch_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    // Rete di sicurezza dei salvataggi: si conserva uno storico degli ultimi
+    // stati dell'archivio, così un salvataggio sbagliato non è irreversibile.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS site_state_backups (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id BIGINT UNSIGNED NOT NULL, state_json MEDIUMTEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY idx_state_backups_created (created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 
 function ensureApplicationPermissions(PDO $pdo): void
@@ -1009,7 +1033,70 @@ function googleAccessTokenOrNull(PDO $pdo, int $userId): ?string
     ]);
     if (empty($payload['access_token'])) return null;
     $tokenCache[$userId] = (string) $payload['access_token'];
+    // La risposta di Google elenca gli scope realmente concessi a questo
+    // refresh token: salvarli permette di accorgersi subito quando il
+    // collegamento è stato fatto con autorizzazioni vecchie o incomplete.
+    if (!empty($payload['scope']) && is_string($payload['scope'])) {
+        try {
+            $update = $pdo->prepare('UPDATE google_connections SET granted_scopes = ? WHERE user_id = ?');
+            $update->execute([$payload['scope'], $userId]);
+        } catch (Throwable $error) {
+            error_log('granted_scopes update failure: ' . $error->getMessage());
+        }
+    }
     return $tokenCache[$userId];
+}
+
+/**
+ * Scope richiesti dall'applicazione per funzionare interamente.
+ *
+ * @return array<int, string>
+ */
+function googleRequiredScopes(): array
+{
+    return [
+        'openid',
+        'email',
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/documents',
+    ];
+}
+
+/**
+ * Scope effettivamente concessi dall'ultimo rinnovo del token.
+ *
+ * @return array<int, string>
+ */
+function googleGrantedScopes(PDO $pdo, int $userId): array
+{
+    try {
+        $query = $pdo->prepare('SELECT granted_scopes FROM google_connections WHERE user_id = ? LIMIT 1');
+        $query->execute([$userId]);
+        $raw = (string) $query->fetchColumn();
+    } catch (Throwable $error) {
+        return [];
+    }
+    $granted = [];
+    foreach (preg_split('/\s+/', trim($raw)) ?: [] as $scope) {
+        $scope = trim((string) rawurldecode($scope));
+        if ($scope !== '') $granted[strtolower($scope)] = true;
+    }
+    return array_keys($granted);
+}
+
+/**
+ * Scope mancanti rispetto a quelli richiesti dall'applicazione.
+ *
+ * @return array<int, string>
+ */
+function googleMissingScopes(PDO $pdo, int $userId): array
+{
+    $granted = array_fill_keys(googleGrantedScopes($pdo, $userId), true);
+    $missing = [];
+    foreach (googleRequiredScopes() as $required) {
+        if (!isset($granted[strtolower($required)])) $missing[] = $required;
+    }
+    return $missing;
 }
 
 function googleAccessToken(PDO $pdo, int $userId): string
@@ -1058,6 +1145,19 @@ function googleRequest(PDO $pdo, int $userId, string $method, string $url, ?arra
         $details = json_decode((string) $response, true);
         $message = is_array($details) ? (string) ($details['error']['message'] ?? $details['error_description'] ?? '') : '';
         error_log('Google API failure [' . $status . '] ' . $method . ' ' . $url . ': ' . ($message ?: ($error ?: substr((string) $response, 0, 500))));
+        // Google risponde 403 «Request had insufficient authentication scopes»
+        // quando il refresh token conservato è stato concesso con uno o più
+        // scope mancanti (collegamenti fatti prima dell'aggiunta di drive o
+        // documents, o consensi parziali). Vale per OGNI chiamata Google:
+        // elenchi cartella, collegamenti, PDF, sincronizzazione nomi.
+        if ($status === 403 && stripos($message, 'insufficient') !== false && (stripos($message, 'scope') !== false || stripos($message, 'permission') !== false)) {
+            $missing = implode(', ', googleMissingScopes($pdo, $userId));
+            if ($allowFailure) return null;
+            respond([
+                'error' => 'Le autorizzazioni Google di questo collegamento sono incomplete' . ($missing !== '' ? ' (manca: ' . $missing . ')' : '') . '. Apri il menu Google in alto e usa «Aggiorna autorizzazioni» per ricollegare l’account e concedere quelle mancanti.',
+                'code' => 'google_scopes_insufficient',
+            ], 409);
+        }
         if ($allowFailure) return null;
         respond(['error' => $message !== '' ? 'Google: ' . $message : 'Google ha rifiutato la richiesta.'], 502);
     }
@@ -1564,8 +1664,11 @@ if ($action === 'google_callback' && $method === 'GET') {
         respond(['error' => 'Google non ha rilasciato l’accesso offline. Rimuovi l’autorizzazione dell’app dal tuo account Google e riprova.'], 502);
     }
 
-    $query = $pdo->prepare('INSERT INTO google_connections (user_id, google_email, refresh_token) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token = VALUES(refresh_token), updated_at = UTC_TIMESTAMP()');
-    $query->execute([$userId, (string) ($profile['email'] ?? ''), $refreshToken]);
+    // Si registrano anche gli scope concessi con questo consenso: serviranno a
+    // google_status per capire se il collegamento copre tutte le funzioni.
+    $grantedScopes = is_string($tokenPayload['scope'] ?? null) ? $tokenPayload['scope'] : '';
+    $query = $pdo->prepare('INSERT INTO google_connections (user_id, google_email, refresh_token, granted_scopes) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token = VALUES(refresh_token), granted_scopes = VALUES(granted_scopes), updated_at = UTC_TIMESTAMP()');
+    $query->execute([$userId, (string) ($profile['email'] ?? ''), $refreshToken, $grantedScopes]);
     unset($_SESSION['google_oauth_state']);
     // Il frontend rilegge subito lo stato dal backend: non servono parametri
     // nell'hash, che altrimenti rischiano di essere interpretati come parte
@@ -1587,11 +1690,17 @@ if ($action === 'google_status' && $method === 'GET') {
     // Verificare davvero il refresh token evita di mostrare un falso "Collegato"
     // e rende immediatamente disponibile il pulsante per autorizzare di nuovo.
     $connected = $hasStoredConnection && googleAccessTokenOrNull($pdo, $userId) !== null;
+    // Scope concessi vs scope richiesti: un collegamento funzionante ma con
+    // permessi vecchi fallisce poi su Drive/Documenti con 403 "insufficient
+    // authentication scopes": meglio segnalarlo subito, con il rimedio pronto.
+    $missingScopes = $hasStoredConnection ? googleMissingScopes($pdo, $userId) : [];
     respond([
         'connected' => $connected,
         'email' => $connection['google_email'] ?? null,
         'configured' => googleConfigured(),
         'reconnectRequired' => $hasStoredConnection && !$connected,
+        'scopesIncomplete' => $connected && !empty($missingScopes),
+        'missingScopes' => $missingScopes,
     ]);
 }
 
@@ -2451,8 +2560,54 @@ if ($action === 'save_state' && $method === 'POST') {
         foreach ($required as $capability) requireCapability($pdo, $userId, $capability, 'Non hai la capacità richiesta per questa modifica.');
     }
     validateCompanyRegulationStateMutation($pdo, $userId, $existingState, $decodedState);
+
+    // Rete di sicurezza anti-perdita: se il nuovo stato cancella di colpo la
+    // maggior parte dell'archivio (salvataggio parziale, client guasto, stato
+    // vuoto per errore) la richiesta viene rifiutata finché non viene confermata
+    // esplicitamente dal client. Le azioni dell'interfaccia modificano un
+    // elemento alla volta, quindi una caduta del 60%+ non è mai normale.
+    $countStateItems = static function (array $value): int {
+        $total = 0;
+        foreach (['documents', 'templates', 'parties', 'coalitions', 'companies', 'parliaments', 'governments', 'courtCompositions', 'interpretations', 'usefulLinks'] as $key) {
+            $total += is_array($value[$key] ?? null) ? count($value[$key]) : 0;
+        }
+        return $total;
+    };
+    $existingCount = $countStateItems($existingState);
+    $incomingCount = $countStateItems($decodedState);
+    if ($existingCount >= 20 && $incomingCount < (int) ceil($existingCount * 0.4) && empty($body['confirmMassChange'])) {
+        auditLog($pdo, 'state_mass_change_rejected', 'warning', $userId, ['existing' => $existingCount, 'incoming' => $incomingCount]);
+        respond([
+            'error' => "Il salvataggio annullerebbe gran parte dell'archivio (da {$existingCount} a {$incomingCount} elementi). Se è davvero intenzionale, conferma l'operazione.",
+            'code' => 'state_mass_change_rejected',
+        ], 409);
+    }
+
+    $encoded = json_encode($decodedState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded)) respond(['error' => 'Stato applicativo non codificabile.'], 422);
+    // Salva solo se è davvero cambiato: evita scritture e backup inutili.
+    $currentEncoded = '';
+    try {
+        $currentEncoded = (string) $pdo->query('SELECT state_json FROM site_state WHERE id = 1 LIMIT 1')->fetchColumn();
+    } catch (Throwable $error) {
+        $currentEncoded = '';
+    }
+    if ($currentEncoded === $encoded && $currentEncoded !== '') {
+        respond(['ok' => true, 'capabilities' => $required, 'unchanged' => true]);
+    }
+
+    // Backup dell'ultimo stato noto prima di sovrascrivere: le copie recenti
+    // restano recuperabili in caso di salvataggio sbagliato o parziale.
+    try {
+        $backup = $pdo->prepare('INSERT INTO site_state_backups (user_id, state_json) SELECT owner_user_id, state_json FROM site_state WHERE id = 1');
+        $backup->execute();
+        $pdo->exec('DELETE FROM site_state_backups WHERE id NOT IN (SELECT id FROM (SELECT id FROM site_state_backups ORDER BY id DESC LIMIT 10) AS keep)');
+    } catch (Throwable $error) {
+        error_log('State backup failure: ' . $error->getMessage());
+    }
+
     $query = $pdo->prepare('INSERT INTO site_state (id, owner_user_id, state_json, updated_at) VALUES (1, ?, ?, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), updated_at = UTC_TIMESTAMP()');
-    $query->execute([$userId, json_encode($decodedState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+    $query->execute([$userId, $encoded]);
     auditLog($pdo, 'state_capabilities_applied', 'info', $userId, ['capabilities' => $required]);
     respond(['ok' => true, 'capabilities' => $required]);
 }

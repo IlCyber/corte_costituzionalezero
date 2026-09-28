@@ -1,3 +1,11 @@
+// Guardia anti-doppione: il loader degli asset e il watchdog di sicurezza
+// possono entrambi inserire app.js (rete lenta, ripristino della connessione).
+// Se la copia è già in esecuzione la seconda si interrompe subito: si evita il
+// doppio binding degli eventi. (L'eccezione è voluta: è l'unico modo di fermare
+// uno script classico già avviato senza riscrivere tutto in un blocco.)
+if (window.czAppScriptLoaded) throw new Error('app.js: seconda copia ignorata.');
+window.czAppScriptLoaded = true;
+
 const STORAGE_KEYS = { documents: 'cz_documents', templates: 'cz_templates', counters: 'cz_counters', categories: 'cz_categories', pageMargins: 'cz_page_margins', numberPadding: 'cz_number_padding', googleDriveFolders: 'cz_google_drive_folders', parties: 'cz_parties', partyFields: 'cz_party_fields', coalitions: 'cz_coalitions', coalitionFields: 'cz_coalition_fields', companies: 'cz_companies', parliaments: 'cz_parliaments', parliamentSettings: 'cz_parliament_settings', governments: 'cz_governments', governmentSettings: 'cz_government_settings', courtCompositions: 'cz_court_compositions', compositionSettings: 'cz_composition_settings', interpretations: 'cz_interpretations', interpretationSettings: 'cz_interpretation_settings', usefulLinks: 'cz_useful_links', trash: 'cz_trash', demoSeeded: 'cz_demo_seeded', testMandateSeeded: 'cz_test_mandate_seeded', session: 'cz_session' };
 // Cifre dei progressivi: 5 produce 00001, 00002, ... ed è configurabile dalle impostazioni.
 const DEFAULT_NUMBER_PADDING = 5;
@@ -36,7 +44,6 @@ let savedEditorRange = null;
 const editorHistories = new WeakMap();
 let selectedEditorImage = null;
 let remoteMode = false;
-let remoteSaveTimer = null;
 let currentUser = null;
 let csrfToken = '';
 let googleConnection = { connected: false, configured: false, email: null };
@@ -159,8 +166,22 @@ function normalizeInstitutionSettings(settings, defaults) {
 function readStorage(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
+// Un localStorage pieno o disabilitato (modalità privata di alcuni browser
+// mobili) non deve mai bloccare l'applicazione: si prova a salvare e, se non è
+// possibile, l'utente viene avvisato una sola volta invece di perdere dati in
+// silenzio.
+let storageWriteWarningShown = false;
 function writeStorage(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error('Impossibile salvare in locale:', key, error);
+    if (!storageWriteWarningShown) {
+      storageWriteWarningShown = true;
+      try { showToast('Attenzione: la memoria del browser è piena o disattivata. I cambiamenti potrebbero non essere conservati.'); } catch { /* UI non pronta */ }
+    }
+    return;
+  }
   if (remoteMode) queueRemoteSave(permissionForStorageKey(key));
 }
 // Errore usato quando api.php non risponde o risponde senza JSON (PHP assente,
@@ -170,15 +191,32 @@ function writeStorage(key, value) {
 function backendUnavailableError() {
   const error = new Error('Il server non è raggiungibile o non è configurato correttamente: verifica che api.php venga eseguito da PHP e che private/config.php contenga i dati del database MySQL.');
   error.backendUnavailable = true;
+  error.retryable = true;
   return error;
 }
 async function apiRequest(action, options = {}) {
   let response;
+  // Timeout esplicito: senza di questo una richiesta appesa (tipico su rete
+  // mobile) lascerebbe la pagina in caricamento infinito. I salvataggi usano
+  // un timeout più lungo perché l'archivio può pesare alcuni megabyte.
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
   try {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
     if (csrfToken && options.method === 'POST') headers['X-CSRF-Token'] = csrfToken;
-    response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, { ...options, headers });
-  } catch {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeoutTimer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, { ...options, headers, signal: controller ? controller.signal : undefined });
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      const timeoutError = new Error('Il server non risponde entro il tempo atteso. Verifica la connessione e riprova.');
+      timeoutError.timeout = true;
+      timeoutError.retryable = true;
+      throw timeoutError;
+    }
     throw backendUnavailableError();
   }
   const contentType = response.headers.get('content-type') || '';
@@ -202,7 +240,19 @@ async function apiRequest(action, options = {}) {
     // BACKEND_UNAVAILABLE è il codice con cui api.php segnala un guasto proprio
     // (database non configurato o non raggiungibile): lo si riporta in forma leggibile.
     if (payload.error === 'BACKEND_UNAVAILABLE' || (!payload.error && response.status >= 500)) throw backendUnavailableError();
-    throw new Error(payload.error || 'Errore di comunicazione con il server.');
+    const error = new Error(payload.error || 'Errore di comunicazione con il server.');
+    error.code = payload.code || '';
+    error.status = response.status;
+    // I codici 4xx sono errori definitivi (permessi, validazione): inutili da
+    // ripetere. I 5xx e i guasti di rete valgono un nuovo tentativo.
+    error.retryable = response.status >= 500;
+    // Le autorizzazioni Google concesse in passato possono essere incomplete:
+    // lo si segnala subito nel menu dell'account così l'utente ricollega.
+    if (error.code === 'google_scopes_insufficient') {
+      googleConnection.scopesIncomplete = true;
+      try { renderGoogleConnectionSettings(); } catch { /* UI non pronta */ }
+    }
+    throw error;
   }
   return payload;
 }
@@ -252,11 +302,17 @@ function renderGoogleConnectionSettings() {
   }
 
   status.textContent = googleConnection.connected
-    ? `Collegato: ${googleConnection.email}. L’accesso viene rinnovato automaticamente.`
+    ? googleConnection.scopesIncomplete
+      ? `Collegato: ${googleConnection.email}, ma con autorizzazioni incomplete. Premi «Aggiorna autorizzazioni» per ricollegare l’account e concedere quelle mancanti.`
+      : `Collegato: ${googleConnection.email}. L’accesso viene rinnovato automaticamente.`
     : googleConnection.reconnectRequired
       ? 'L’autorizzazione Google non è più valida. Collega nuovamente l’account.'
       : 'Nessun account Google collegato. I documenti non sono disponibili.';
-  connect.classList.toggle('d-none', googleConnection.connected || !canConnect);
+  // Se le autorizzazioni concesse sono vecchie o incomplete il pulsante di
+  // collegamento resta visibile anche da account connesso: è la via d'uscita
+  // dall'errore «Request had insufficient authentication scopes».
+  connect.textContent = googleConnection.scopesIncomplete && googleConnection.connected ? 'Aggiorna autorizzazioni' : 'Collega Google';
+  connect.classList.toggle('d-none', (googleConnection.connected && !googleConnection.scopesIncomplete) || !canConnect);
   disconnect.classList.toggle('d-none', !googleConnection.connected || !canDisconnect);
   if (syncBtn) syncBtn.classList.toggle('d-none', !googleConnection.connected || !canSync);
 }
@@ -297,8 +353,16 @@ async function runGoogleNameSync(silent) {
   if (syncBtn && !silent) { syncBtn.disabled = true; syncBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Sincronizzazione...'; }
   try {
     // Le modifiche locali in coda partono prima, altrimenti il salvataggio
-    // ritardato sovrascriverebbe i nomi appena letti da Drive.
-    clearTimeout(remoteSaveTimer);
+    // ritardato sovrascriverebbe i nomi appena letti da Drive. Se l'invio non
+    // riesce (server irraggiungibile) la sincronizzazione viene rimandata: si
+    // preferisce conservare le modifiche non salvate piuttosto che perderle.
+    if (remoteSaveDirty) {
+      const savedNow = await flushRemoteSave('google-sync').catch(() => false);
+      if (!savedNow) {
+        if (!silent) showToast('Sincronizzazione Google rimandata: riprova dopo il salvataggio delle modifiche locali.');
+        return;
+      }
+    }
     const payload = await apiRequest('google_sync_names', { method: 'POST', body: '{}' });
     applyRemoteState(payload.state);
     refreshCurrentView();
@@ -466,6 +530,10 @@ async function downloadGooglePdf(documentId, filename = 'documento-google.pdf', 
   } catch (error) { showToast(error.message); }
 }
 function remoteStatePayload(permission = 'documents') {
+  // clientUpdatedAt viaggia dentro lo stato e permette, al riavvio, di capire
+  // se le modifiche locali non ancora salvate sono più recenti di quelle
+  // presenti sul server (recupero dopo un salvataggio fallito).
+  state.clientUpdatedAt = new Date().toISOString();
   return { permission, state: JSON.stringify(Object.fromEntries(Object.entries(state).filter(([key]) => key !== 'session'))) };
 }
 function applyRemoteState(remoteState) {
@@ -508,17 +576,249 @@ function applyRemoteState(remoteState) {
   (state.companies || []).forEach(company => { if (!company.googleRegulationName && company.googleDocumentName) company.googleRegulationName = company.googleDocumentName; });
 }
 async function saveRemoteState(permission = 'documents') {
-  await apiRequest('save_state', { method: 'POST', body: JSON.stringify(remoteStatePayload(permission)) });
+  // Sostituito dal motore di salvataggio affidabile: saveRemoteState resta
+  // come invio diretto per i punti che devono attendere la conclusione
+  // (logout, collegamenti Google) e passa dalla stessa coda serializzata.
+  return flushRemoteSave('direct', { permission, force: true });
 }
+
+/* ============================================================
+   MOTORE DI SALVATAGGIO AFFIDABILE
+   Ogni modifica passa da queueRemoteSave: la richiesta parte con un breve
+   ritardo (per raggruppare modifiche ravvicinate), viene salvata in uno
+   snapshot locale PRIMA di partire (se la scheda muore a metà invio il
+   prossimo avvio la recupera), viene ripetuta con backoff crescente se il
+   server non risponde, e all'uscita dalla pagina si tenta un invio finale
+   sincrono. L'indicatore in navbar mostra sempre lo stato reale.
+   Gli invii sono serializzati: chi attende saveRemoteState riceve l'esito
+   vero del proprio invio, senza sovrapposizioni.
+   ============================================================ */
+const REMOTE_SAVE_DEBOUNCE_MS = 400;
+const REMOTE_SAVE_TIMEOUT_MS = 60000;
+const REMOTE_SAVE_RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000, 120000];
+const PENDING_SAVE_KEY = 'cz_pending_remote_save_v1';
+let remoteSaveTimer = null;
+let remoteSaveRetryTimer = null;
+let remoteSaveDirty = false;
+let remoteSaveInFlight = false;
+let remoteSaveAttempts = 0;
+let remoteSaveCriticalWarned = false;
+let lastRemoteSavePermission = 'documents';
+let remoteSaveChain = Promise.resolve();
+
+function updateSaveStatusBadge(mode, delayMs = 0) {
+  const item = document.getElementById('saveStatusItem');
+  const badge = document.getElementById('saveStatusBadge');
+  if (!item || !badge) return;
+  if (!remoteMode) { item.classList.add('d-none'); return; }
+  item.classList.remove('d-none');
+  const statuses = {
+    saved: { text: 'Salvato', className: 'badge rounded-pill text-bg-success' },
+    pending: { text: 'Da salvare…', className: 'badge rounded-pill text-bg-warning' },
+    saving: { text: 'Salvataggio…', className: 'badge rounded-pill text-bg-info' },
+    retrying: { text: `Nuovo tentativo tra ${Math.max(1, Math.round(delayMs / 1000))}s`, className: 'badge rounded-pill text-bg-danger' },
+    error: { text: 'Non salvato', className: 'badge rounded-pill text-bg-danger' },
+  };
+  const current = statuses[mode] || statuses.saved;
+  badge.textContent = current.text;
+  badge.className = current.className;
+}
+
+function markRemoteSavePending() {
+  remoteSaveDirty = true;
+  updateSaveStatusBadge('pending');
+}
+
 function queueRemoteSave(permission = 'documents') {
+  lastRemoteSavePermission = permission;
+  markRemoteSavePending();
   clearTimeout(remoteSaveTimer);
-  remoteSaveTimer = setTimeout(() => {
-    saveRemoteState(permission).catch(error => {
-      console.error(error);
-      showToast(error.message || 'Non hai il permesso di salvare questa modifica.');
-    });
-  }, 250);
+  remoteSaveTimer = setTimeout(() => { flushRemoteSave('debounce'); }, REMOTE_SAVE_DEBOUNCE_MS);
 }
+
+function flushRemoteSave(reason = 'manual', options = {}) {
+  remoteSaveChain = remoteSaveChain.then(() => performRemoteSave(reason, options));
+  return remoteSaveChain;
+}
+
+async function performRemoteSave(reason, options) {
+  if (!remoteMode) return true;
+  // Un solo invio alla volta: le richieste concorrenti restano in coda nella
+  // catena e i retry partono da handleRemoteSaveFailure.
+  if (remoteSaveInFlight) return false;
+  if (!remoteSaveDirty && !options.force) return true;
+
+  clearTimeout(remoteSaveTimer);
+  clearTimeout(remoteSaveRetryTimer);
+  const permission = options.permission || lastRemoteSavePermission;
+  const payload = remoteStatePayload(permission);
+
+  // Snapshot PRIMA dell'invio: se la scheda si chiude durante la richiesta, al
+  // prossimo avvio le modifiche vengono recuperate e riinviate.
+  try {
+    localStorage.setItem(PENDING_SAVE_KEY, JSON.stringify({ permission, savedAt: state.clientUpdatedAt, state: payload.state, at: Date.now() }));
+  } catch { /* memoria piena: l'invio va comunque tentato */ }
+
+  remoteSaveInFlight = true;
+  updateSaveStatusBadge('saving');
+  try {
+    const body = { ...payload };
+    if (options.confirmMassChange) body.confirmMassChange = true;
+    await apiRequest('save_state', { method: 'POST', body: JSON.stringify(body), timeoutMs: REMOTE_SAVE_TIMEOUT_MS });
+    remoteSaveDirty = false;
+    remoteSaveAttempts = 0;
+    remoteSaveCriticalWarned = false;
+    try { localStorage.removeItem(PENDING_SAVE_KEY); } catch { /* non critico */ }
+    updateSaveStatusBadge('saved');
+    return true;
+  } catch (error) {
+    await handleRemoteSaveFailure(error, permission);
+    return false;
+  } finally {
+    remoteSaveInFlight = false;
+  }
+}
+
+async function handleRemoteSaveFailure(error, permission) {
+  console.error('Salvataggio remoto non riuscito:', error);
+  // Un rifiuto esplicito del server: la modifica cancellerebbe gran parte
+  // dell'archivio. Si chiede conferma una sola volta e si riprova.
+  if (error && error.code === 'state_mass_change_rejected') {
+    if (typeof confirm === 'function' && confirm(`${error.message}\n\nConfermi comunque il salvataggio?`)) {
+      remoteSaveDirty = true;
+      // Si riprova appena l'invio corrente si conclude: un secondo
+      // performRemoteSave annidato verrebbe rifiutato dal flag
+      // remoteSaveInFlight, ancora attivo dentro questo blocco.
+      setTimeout(function () { flushRemoteSave('confirm', { permission: permission, force: true, confirmMassChange: true }); }, 0);
+      return;
+    }
+    remoteSaveDirty = false;
+    try { localStorage.removeItem(PENDING_SAVE_KEY); } catch { /* non critico */ }
+    updateSaveStatusBadge('error');
+    showToast('Salvataggio annullato: l’archivio sul server è rimasto invariato.');
+    return;
+  }
+  const retryable = !error || error.retryable !== false;
+  if (!retryable) {
+    // Permessi o validazione: ripetere non serve. Le modifiche restano nel
+    // browser e il badge segnala il problema finché non cambia qualcosa.
+    updateSaveStatusBadge('error');
+    showToast(error.message || 'Non hai il permesso di salvare questa modifica.');
+    return;
+  }
+  // Le modifiche restano da inviare: il flag va tenuto (o rimesso) alto,
+  // così i tentativi ripartono e l'uscita dalla pagina resta protetta.
+  remoteSaveDirty = true;
+  const delayIndex = Math.min(remoteSaveAttempts, REMOTE_SAVE_RETRY_DELAYS_MS.length - 1);
+  const delay = REMOTE_SAVE_RETRY_DELAYS_MS[delayIndex];
+  remoteSaveAttempts += 1;
+  updateSaveStatusBadge('retrying', delay);
+  if (remoteSaveAttempts === 3 && !remoteSaveCriticalWarned) {
+    remoteSaveCriticalWarned = true;
+    showToast('Il salvataggio online non è riuscito: le modifiche sono al sicuro in questo browser e verranno inviate automaticamente appena il server torna raggiungibile.');
+  }
+  clearTimeout(remoteSaveRetryTimer);
+  remoteSaveRetryTimer = setTimeout(() => { flushRemoteSave('retry'); }, delay);
+}
+
+// Recupero al riavvio: se l'ultimo salvataggio non è mai arrivato al server,
+// la copia locale mancata viene confrontata con quella del server. La più
+// recente vince; se vince quella locale viene riapplicata e reinviata.
+function recoverPendingRemoteSave(remoteState) {
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem(PENDING_SAVE_KEY) || 'null'); } catch { pending = null; }
+  if (!pending || typeof pending.state !== 'string') return false;
+
+  const pendingAt = typeof pending.savedAt === 'string' ? pending.savedAt : '';
+  const serverAt = remoteState && typeof remoteState.clientUpdatedAt === 'string' ? remoteState.clientUpdatedAt : '';
+  if (serverAt && serverAt === pendingAt) {
+    // Lo snapshot locale è già arrivato a destinazione (invio d'emergenza
+    // riuscito all'uscita): si può dimenticare senza toccare nulla.
+    try { localStorage.removeItem(PENDING_SAVE_KEY); } catch { /* non critico */ }
+    return false;
+  }
+  try { localStorage.removeItem(PENDING_SAVE_KEY); } catch { /* non critico */ }
+
+  let pendingState = null;
+  try { pendingState = JSON.parse(pending.state); } catch { pendingState = null; }
+  if (!pendingState || typeof pendingState !== 'object') return false;
+
+  if (serverAt && pendingAt && serverAt > pendingAt) {
+    // Sul server c'è un salvataggio più recente (es. fatto da un altro
+    // dispositivo): le modifiche locali vecchie non devono sovrascriverlo.
+    showToast('Modifiche locali non salvate scartate: sul server risulta un archivio più recente.');
+    return false;
+  }
+  applyRemoteState(pendingState);
+  remoteSaveDirty = true;
+  lastRemoteSavePermission = typeof pending.permission === 'string' ? pending.permission : 'documents';
+  updateSaveStatusBadge('pending');
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(() => { flushRemoteSave('recovery'); }, REMOTE_SAVE_DEBOUNCE_MS);
+  showToast('Ripristinate le modifiche rimaste non salvate: verranno inviate di nuovo al server.');
+  return true;
+}
+
+// Invio d'emergenza in fase di uscita: deve partire in modo sincrono perché
+// dopo pagehide la pagina non vive abbastanza per una catena async. Il body
+// piccolo usa fetch keepalive; in alternativa sendBeacon (il token CSRF viaggia
+// nel corpo, il backend lo accetta); ultimo tentativo con XHR sincrono.
+function sendRemoteSaveBeacon() {
+  if (!remoteMode || !remoteSaveDirty || remoteSaveInFlight) return;
+  let payload;
+  try { payload = remoteStatePayload(lastRemoteSavePermission); } catch { return; }
+  const body = JSON.stringify(payload);
+  const url = `${API_URL}?action=save_state`;
+
+  // Snapshot di recupero: vale anche se l'invio d'emergenza non arrivasse mai.
+  try { localStorage.setItem(PENDING_SAVE_KEY, JSON.stringify({ permission: lastRemoteSavePermission, savedAt: state.clientUpdatedAt, state: payload.state, at: Date.now() })); } catch { /* memoria piena */ }
+
+  if (body.length <= 60000) {
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: csrfToken ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken } : { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+        credentials: 'same-origin',
+      });
+      remoteSaveDirty = false;
+      return;
+    } catch { /* si prova con le alternative */ }
+    try {
+      if (navigator.sendBeacon && navigator.sendBeacon(url, new Blob([JSON.stringify({ ...payload, csrfToken })], { type: 'application/json' }))) {
+        remoteSaveDirty = false;
+        return;
+      }
+    } catch { /* ultima spiaggia sotto */ }
+  }
+  // Archivio grande o beacon non disponibile: XHR sincrono (sconsigliato dai
+  // browser ma funzionante); se fallisce, lo snapshot copre il recupero.
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, false);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+    xhr.send(body);
+    remoteSaveDirty = false;
+  } catch { /* lo snapshot locale copre il recupero al prossimo avvio */ }
+}
+
+// Uscita dalla pagina o passaggio in background (su mobile pagehide spesso non
+// arriva: visibilitychange è l'ultimo momento affidabile per salvare).
+window.addEventListener('pagehide', sendRemoteSaveBeacon);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') sendRemoteSaveBeacon();
+});
+window.addEventListener('beforeunload', event => {
+  sendRemoteSaveBeacon();
+  if (remoteMode && remoteSaveDirty) {
+    // Il browser chiede conferma prima di chiudere: c'è lavoro non salvato.
+    event.preventDefault();
+    event.returnValue = '';
+    return '';
+  }
+});
 async function loadRemoteState() {
   try {
     const payload = await apiRequest('state');
@@ -526,6 +826,10 @@ async function loadRemoteState() {
     currentUser = payload.user || null;
     csrfToken = currentUser?.csrfToken || '';
     applyRemoteState(payload.state);
+    // Recupera eventuali modifiche rimaste non salvate da una sessione
+    // precedente: la copia più recente vince e viene reinviata al server.
+    recoverPendingRemoteSave(payload.state);
+    if (!remoteSaveDirty) updateSaveStatusBadge('saved');
     refreshGoogleConnectionStatus();
     return true;
   } catch {
@@ -539,6 +843,8 @@ async function loginRemote(username, password) {
   csrfToken = currentUser?.csrfToken || '';
   ensureUserManagementCard();
   applyRemoteState(payload.state);
+  recoverPendingRemoteSave(payload.state);
+  if (!remoteSaveDirty) updateSaveStatusBadge('saved');
   refreshGoogleConnectionStatus();
   ensureOdgCategory();
   return payload;
@@ -827,6 +1133,14 @@ function rerenderAfterTrashMutation() {
   if (view === 'trash') renderTrash();
   else setView(view, false);
 }
+// Le azioni server-authoritative (cestino, sincronizzazione nomi) restituiscono
+// lo stato ufficiale e sostituiscono quello locale: prima di chiederle le
+// modifiche pendenti devono essere salvate, altrimenti andrebbero perse.
+async function ensureRemoteSavedBeforeServerState() {
+  if (!remoteMode || !remoteSaveDirty) return true;
+  const saved = await flushRemoteSave('server-action').catch(() => false);
+  return saved === true;
+}
 async function moveToTrash(entityType, entityId, parentId = '') {
   const config = trashConfig(entityType);
   const collection = config ? state[config.storageKey] : null;
@@ -836,7 +1150,7 @@ async function moveToTrash(entityType, entityId, parentId = '') {
   if (!confirm('Spostare questo elemento nel cestino? Potrà essere ripristinato o eliminato definitivamente dal cestino.')) return;
   try {
     if (remoteMode) {
-      clearTimeout(remoteSaveTimer);
+      if (!(await ensureRemoteSavedBeforeServerState())) { showToast('Ci sono modifiche da salvare: riprova appena il salvataggio è completato.'); return; }
       const payload = await apiRequest('trash_item', { method: 'POST', body: JSON.stringify({ entityType, entityId, parentId }) });
       applyRemoteState(payload.state);
     } else {
@@ -856,7 +1170,7 @@ async function restoreTrashItem(trashId) {
   if (!entry || !config || !capable(trashCapability(entry.entityType, 'restore', entry.data))) { showToast('Non hai il permesso di ripristinare questo elemento.'); return; }
   try {
     if (remoteMode) {
-      clearTimeout(remoteSaveTimer);
+      if (!(await ensureRemoteSavedBeforeServerState())) { showToast('Ci sono modifiche da salvare: riprova appena il salvataggio è completato.'); return; }
       const payload = await apiRequest('restore_trash_item', { method: 'POST', body: JSON.stringify({ trashId }) });
       applyRemoteState(payload.state);
     } else {
@@ -875,7 +1189,7 @@ async function permanentlyDeleteTrashItem(trashId) {
   if (!confirm(`Eliminare definitivamente “${trashEntryTitle(entry)}”? Questa azione non può essere annullata.`)) return;
   try {
     if (remoteMode) {
-      clearTimeout(remoteSaveTimer);
+      if (!(await ensureRemoteSavedBeforeServerState())) { showToast('Ci sono modifiche da salvare: riprova appena il salvataggio è completato.'); return; }
       const payload = await apiRequest('purge_trash_item', { method: 'POST', body: JSON.stringify({ trashId }) });
       applyRemoteState(payload.state);
     } else {
@@ -3730,6 +4044,26 @@ function seedTestMandate() {
 }
 
 async function initialize() {
+  // Segnala al watchdog (e alla guardia anti-doppione) che lo script è in
+  // esecuzione: il watchdog smette di proporre un caricamento di ripiego.
+  window.czAppBooted = true;
+  try {
+    await initializeInternal();
+  } catch (error) {
+    // Un errore imprevisto durante l'avvio non deve lasciare la pagina sulla
+    // schermata di caricamento: si mostra il login e l'errore in console.
+    console.error('Errore di avvio dell’applicazione:', error);
+  } finally {
+    const loader = document.getElementById('loadingOverlay');
+    if (loader) loader.classList.add('d-none');
+    if (document.getElementById('loginView')?.classList.contains('d-none')
+      && document.getElementById('appView')?.classList.contains('d-none')) {
+      document.getElementById('loginView')?.classList.remove('d-none');
+    }
+  }
+}
+
+async function initializeInternal() {
   await loadRemoteState();
   ensureAuthModals();
   ensureCredentialModal();
@@ -3753,7 +4087,7 @@ async function initialize() {
   applyPermissions();
   bindInstitutionEvents();
   document.getElementById('loginForm').addEventListener('submit', submitLogin);
-  document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); await saveRemoteState(); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
+  document.getElementById('logoutButton').addEventListener('click', async () => { if (remoteMode) { try { clearTimeout(remoteSaveTimer); /* L'invio passa dalla coda serializzata: si attende l'esito vero prima di chiudere la sessione, così l'ultimo salvataggio non va perso. */ if (remoteSaveDirty) await flushRemoteSave('logout', { force: true }); await apiRequest('logout', { method: 'POST', body: '{}' }); } catch { /* fallback locale */ } } localStorage.removeItem(STORAGE_KEYS.session); localStorage.removeItem('cz_local_user'); location.reload(); });
   document.getElementById('requestRegistrationButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('registrationRequestModal')).show());
   document.getElementById('requestRecoveryButton').addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('recoveryRequestModal')).show());
   document.getElementById('registrationRequestForm').addEventListener('submit', submitRegistrationRequest);
@@ -4038,4 +4372,12 @@ function startGoogleNameWatcher() {
   window.addEventListener('focus', tick);
 }
 
-document.addEventListener('DOMContentLoaded', initialize)
+// Il loader degli asset inserisce app.js in modo dinamico: DOMContentLoaded
+// potrebbe essere già scattato quando questo script viene eseguito (tipico su
+// dispositivi mobili). Senza questo controllo l'inizializzazione non partirebbe
+// mai e la pagina resterebbe in caricamento perpetuo.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  initialize();
+}
